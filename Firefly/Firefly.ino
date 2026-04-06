@@ -684,17 +684,21 @@ void build_firefly_os() {
     lv_obj_add_flag(sleep_screen, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(sleep_screen, close_sleep_screen_cb, LV_EVENT_CLICKED, NULL);
 
+    sleep_icon_img = lv_img_create(sleep_screen);
+    lv_img_set_src(sleep_icon_img, get_sleep_icon_by_index(0));
+    lv_obj_align(sleep_icon_img, LV_ALIGN_TOP_MID, 0, 44);
+
     sleep_time_label = lv_label_create(sleep_screen);
     lv_obj_set_style_text_font(sleep_time_label, &lv_font_montserrat_48, 0);
-    lv_obj_set_style_text_color(sleep_time_label, lv_color_hex(0x5EEAFF), 0);
+    lv_obj_set_style_text_color(sleep_time_label, lv_color_hex(0x5FE7C7), 0);
     lv_label_set_text(sleep_time_label, "--:--");
-    lv_obj_align(sleep_time_label, LV_ALIGN_CENTER, 0, -16);
+    lv_obj_align(sleep_time_label, LV_ALIGN_TOP_MID, 0, 280);
 
     sleep_date_label = lv_label_create(sleep_screen);
     lv_obj_set_style_text_font(sleep_date_label, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(sleep_date_label, lv_color_hex(0x9FD8E3), 0);
     lv_label_set_text(sleep_date_label, "----/--/--");
-    lv_obj_align(sleep_date_label, LV_ALIGN_CENTER, 0, 44);
+    lv_obj_align(sleep_date_label, LV_ALIGN_TOP_MID, 0, 346);
 
     lv_timer_create(update_time_cb, 1000, NULL);
     lv_scr_load(scr_firefly);

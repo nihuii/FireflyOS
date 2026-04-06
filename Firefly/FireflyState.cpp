@@ -57,6 +57,7 @@ lv_obj_t * charge_overlay = NULL;
 lv_obj_t * charge_percent_label = NULL;
 lv_obj_t * charge_status_label = NULL;
 lv_obj_t * sleep_screen = NULL;
+lv_obj_t * sleep_icon_img = NULL;
 lv_obj_t * sleep_time_label = NULL;
 lv_obj_t * sleep_date_label = NULL;
 lv_obj_t * scr_firefly = NULL;

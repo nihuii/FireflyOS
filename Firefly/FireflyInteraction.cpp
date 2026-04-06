@@ -4,6 +4,9 @@
 
 namespace {
 
+uint8_t sleep_icon_index = 0;
+bool sleep_icon_has_been_shown = false;
+
 String two_digit_text(uint8_t value) {
     char buf[4];
     snprintf(buf, sizeof(buf), "%02u", value);
@@ -133,6 +136,19 @@ void wake_sleep_screen_from_blackout() {
     if(sleep_screen) {
         lv_obj_clear_flag(sleep_screen, LV_OBJ_FLAG_HIDDEN);
     }
+}
+
+void refresh_sleep_icon(bool advance) {
+    if(!sleep_icon_img) {
+        return;
+    }
+
+    if(advance && sleep_icon_has_been_shown) {
+        sleep_icon_index = (sleep_icon_index + 1U) % SLEEP_ICON_COUNT;
+    }
+
+    lv_img_set_src(sleep_icon_img, get_sleep_icon_by_index(sleep_icon_index));
+    sleep_icon_has_been_shown = true;
 }
 
 } // namespace
@@ -439,6 +455,7 @@ void enter_sleep_screen_mode() {
     if(notif_panel) {
         anim_notif_panel_cb(notif_panel, -502);
     }
+    refresh_sleep_icon(true);
     gfx_co5300->setBrightness(screen_brightness);
     lv_obj_clear_flag(sleep_screen, LV_OBJ_FLAG_HIDDEN);
 }

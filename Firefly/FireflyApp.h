@@ -4,6 +4,7 @@
 #include <lvgl.h>
 #include "Arduino_GFX_Library.h"
 #include "pin_config.h"
+#include "SleepIcons.h"
 #include <Wire.h>
 #include <Preferences.h>
 #include <time.h>
@@ -71,6 +72,7 @@ extern lv_obj_t * charge_overlay;
 extern lv_obj_t * charge_percent_label;
 extern lv_obj_t * charge_status_label;
 extern lv_obj_t * sleep_screen;
+extern lv_obj_t * sleep_icon_img;
 extern lv_obj_t * sleep_time_label;
 extern lv_obj_t * sleep_date_label;
 extern lv_obj_t * scr_firefly;
