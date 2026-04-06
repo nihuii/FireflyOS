@@ -4,6 +4,7 @@
 #include <lvgl.h>
 #include "Arduino_GFX_Library.h"
 #include "LockWallpaper.h"
+#include "SettingsWallpaper.h"
 #include "pin_config.h"
 #include "SleepIcons.h"
 #include <Wire.h>
@@ -135,6 +136,7 @@ void firefly_handle_short_press();
 void firefly_handle_auto_sleep();
 void start_firefly_background_task();
 void init_default_settings_theme();
+void init_settings_theme_from_wallpaper(const lv_img_dsc_t * wallpaper);
 
 void my_disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t * color_p);
 void my_rounder_cb(lv_disp_drv_t * disp_drv, lv_area_t * area);

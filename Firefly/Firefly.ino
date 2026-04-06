@@ -143,12 +143,24 @@ void build_firefly_os() {
     const lv_color_t control_card = lv_color_hex(0xD9F1F6);
     const lv_color_t control_text = lv_color_hex(0x0E4C5A);
     const lv_color_t control_subtext = lv_color_hex(0x3A6F7A);
+    const lv_coord_t settings_content_width = LCD_WIDTH - 32;
+    const lv_coord_t settings_page_top = 92;
+    const lv_coord_t settings_page_height = LCD_HEIGHT - settings_page_top;
+    const lv_coord_t settings_half_button_width = (settings_content_width - 10) / 2;
 
     auto style_card = [&](lv_obj_t * obj, lv_color_t color, lv_coord_t radius) {
         lv_obj_set_style_radius(obj, radius, 0);
         lv_obj_set_style_border_width(obj, 0, 0);
         lv_obj_set_style_bg_color(obj, color, 0);
         lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+    };
+
+    auto style_settings_card = [&](lv_obj_t * obj, lv_color_t color, lv_coord_t radius, lv_opa_t opacity = LV_OPA_80) {
+        style_card(obj, color, radius);
+        lv_obj_set_style_bg_opa(obj, opacity, 0);
+        lv_obj_set_style_border_width(obj, 1, 0);
+        lv_obj_set_style_border_color(obj, settings_theme_accent, 0);
+        lv_obj_set_style_border_opa(obj, LV_OPA_30, 0);
     };
 
     auto style_slider = [&](lv_obj_t * slider, lv_color_t track, lv_color_t indicator, lv_color_t knob) {
@@ -167,12 +179,29 @@ void build_firefly_os() {
         lv_obj_set_style_shadow_width(slider, 0, LV_PART_KNOB);
     };
 
+    auto style_switch = [&](lv_obj_t * sw) {
+        lv_obj_set_style_radius(sw, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_set_style_radius(sw, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
+        lv_obj_set_style_radius(sw, LV_RADIUS_CIRCLE, LV_PART_KNOB);
+        lv_obj_set_style_border_width(sw, 0, LV_PART_MAIN);
+        lv_obj_set_style_border_width(sw, 0, LV_PART_INDICATOR);
+        lv_obj_set_style_border_width(sw, 0, LV_PART_KNOB);
+        lv_obj_set_style_bg_opa(sw, LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(sw, settings_surface, LV_PART_INDICATOR);
+        lv_obj_set_style_bg_opa(sw, LV_OPA_70, LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(sw, settings_action, LV_PART_INDICATOR | LV_STATE_CHECKED);
+        lv_obj_set_style_bg_opa(sw, LV_OPA_90, LV_PART_INDICATOR | LV_STATE_CHECKED);
+        lv_obj_set_style_bg_color(sw, lv_color_white(), LV_PART_KNOB);
+        lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, LV_PART_KNOB);
+        lv_obj_set_style_shadow_width(sw, 0, LV_PART_KNOB);
+    };
+
     auto style_roller = [&](lv_obj_t * roller, lv_coord_t width, lv_coord_t height) {
         lv_obj_set_size(roller, width, height);
         lv_obj_set_style_radius(roller, 18, LV_PART_MAIN);
         lv_obj_set_style_border_width(roller, 0, LV_PART_MAIN);
         lv_obj_set_style_bg_color(roller, settings_surface_alt, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(roller, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(roller, LV_OPA_80, LV_PART_MAIN);
         lv_obj_set_style_text_color(roller, settings_text_secondary, LV_PART_MAIN);
         lv_obj_set_style_text_font(roller, &lv_font_montserrat_24, LV_PART_MAIN);
         lv_obj_set_style_pad_top(roller, 10, LV_PART_MAIN);
@@ -185,18 +214,18 @@ void build_firefly_os() {
 
     auto create_menu_button = [&](lv_coord_t y, const char * text, lv_event_cb_t cb) {
         lv_obj_t * button = lv_btn_create(settings_menu_container);
-        lv_obj_set_size(button, 330, 54);
+        lv_obj_set_size(button, settings_content_width, 58);
         lv_obj_align(button, LV_ALIGN_TOP_MID, 0, y);
-        style_card(button, settings_surface_alt, 22);
+        style_settings_card(button, settings_surface_alt, 22, LV_OPA_80);
         lv_obj_t * label = lv_label_create(button);
         lv_obj_set_style_text_font(label, &lv_font_montserrat_24, 0);
         lv_obj_set_style_text_color(label, settings_text_primary, 0);
         lv_label_set_text(label, text);
-        lv_obj_align(label, LV_ALIGN_LEFT_MID, 16, 0);
+        lv_obj_align(label, LV_ALIGN_LEFT_MID, 18, 0);
         lv_obj_t * arrow = lv_label_create(button);
         lv_obj_set_style_text_color(arrow, settings_text_secondary, 0);
         lv_label_set_text(arrow, LV_SYMBOL_RIGHT);
-        lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -14, 0);
+        lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -18, 0);
         lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, NULL);
     };
 
@@ -407,17 +436,21 @@ void build_firefly_os() {
 
     settings_panel = lv_obj_create(scr_firefly);
     lv_obj_set_size(settings_panel, LCD_WIDTH, LCD_HEIGHT);
-    lv_obj_set_style_bg_color(settings_panel, lv_color_hex(0x05080D), 0);
-    lv_obj_set_style_bg_opa(settings_panel, 230, 0);
+    lv_obj_set_style_bg_opa(settings_panel, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(settings_panel, 0, 0);
     lv_obj_set_style_radius(settings_panel, 0, 0);
     lv_obj_add_flag(settings_panel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(settings_panel, LV_OBJ_FLAG_SCROLLABLE);
 
+    lv_obj_t * settings_wallpaper = lv_img_create(settings_panel);
+    lv_img_set_src(settings_wallpaper, &settings_wallpaper_firefly_2);
+    lv_obj_align(settings_wallpaper, LV_ALIGN_CENTER, 0, 0);
+
     lv_obj_t * settings_shell = lv_obj_create(settings_panel);
-    lv_obj_set_size(settings_shell, 372, 454);
-    lv_obj_align(settings_shell, LV_ALIGN_CENTER, 0, 20);
-    style_card(settings_shell, settings_surface, 32);
+    lv_obj_set_size(settings_shell, LCD_WIDTH, LCD_HEIGHT);
+    lv_obj_align(settings_shell, LV_ALIGN_CENTER, 0, 0);
+    style_settings_card(settings_shell, settings_surface, 0, 108);
+    lv_obj_set_style_border_width(settings_shell, 0, 0);
     lv_obj_set_style_pad_all(settings_shell, 0, 0);
     lv_obj_clear_flag(settings_shell, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -425,13 +458,13 @@ void build_firefly_os() {
     lv_obj_set_style_text_font(settings_header, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(settings_header, settings_text_primary, 0);
     lv_label_set_text(settings_header, "Settings");
-    lv_obj_align(settings_header, LV_ALIGN_TOP_MID, 0, 22);
+    lv_obj_align(settings_header, LV_ALIGN_TOP_MID, 0, 24);
 
     lv_obj_t * settings_back = lv_label_create(settings_shell);
     lv_obj_set_style_text_font(settings_back, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(settings_back, settings_action, 0);
     lv_label_set_text(settings_back, LV_SYMBOL_LEFT " Back");
-    lv_obj_align(settings_back, LV_ALIGN_TOP_LEFT, 24, 22);
+    lv_obj_align(settings_back, LV_ALIGN_TOP_LEFT, 18, 24);
     lv_obj_add_flag(settings_back, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_ext_click_area(settings_back, 24);
     lv_obj_add_event_cb(settings_back, [](lv_event_t * e) {
@@ -451,10 +484,11 @@ void build_firefly_os() {
 
     lv_obj_t * pages[] = {settings_menu_container, settings_batt_container, settings_time_container, settings_sound_container, settings_display_container};
     for(uint8_t i = 0; i < 5; ++i) {
-        lv_obj_set_size(pages[i], 372, 374);
-        lv_obj_align(pages[i], LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_obj_set_size(pages[i], LCD_WIDTH, settings_page_height);
+        lv_obj_align(pages[i], LV_ALIGN_TOP_MID, 0, settings_page_top);
         lv_obj_set_style_bg_opa(pages[i], LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(pages[i], 0, 0);
+        lv_obj_set_style_pad_all(pages[i], 0, 0);
         lv_obj_set_scrollbar_mode(pages[i], LV_SCROLLBAR_MODE_OFF);
     }
     lv_obj_add_flag(settings_batt_container, LV_OBJ_FLAG_HIDDEN);
@@ -462,28 +496,28 @@ void build_firefly_os() {
     lv_obj_add_flag(settings_sound_container, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(settings_display_container, LV_OBJ_FLAG_HIDDEN);
 
-    create_menu_button(10, LV_SYMBOL_AUDIO "  Sound & Alarm", open_sound_page);
-    create_menu_button(76, LV_SYMBOL_EDIT "  Time & Date", open_time_page);
-    create_menu_button(142, LV_SYMBOL_BATTERY_FULL "  Battery & Power", open_battery_page);
-    create_menu_button(208, LV_SYMBOL_IMAGE "  Display & Sleep", open_display_page);
+    create_menu_button(12, LV_SYMBOL_AUDIO "  Sound & Alarm", open_sound_page);
+    create_menu_button(84, LV_SYMBOL_EDIT "  Time & Date", open_time_page);
+    create_menu_button(156, LV_SYMBOL_BATTERY_FULL "  Battery & Power", open_battery_page);
+    create_menu_button(228, LV_SYMBOL_IMAGE "  Display & Sleep", open_display_page);
 
     settings_batt_icon = lv_label_create(settings_batt_container);
     lv_obj_set_style_text_font(settings_batt_icon, &lv_font_montserrat_48, 0);
     lv_obj_set_style_text_color(settings_batt_icon, lv_color_hex(0x74F7A3), 0);
     lv_label_set_text(settings_batt_icon, LV_SYMBOL_BATTERY_FULL);
-    lv_obj_align(settings_batt_icon, LV_ALIGN_TOP_MID, 0, 6);
+    lv_obj_align(settings_batt_icon, LV_ALIGN_TOP_MID, 0, 20);
 
     settings_batt_info = lv_label_create(settings_batt_container);
-    lv_obj_set_width(settings_batt_info, 312);
+    lv_obj_set_width(settings_batt_info, settings_content_width - 24);
     lv_label_set_long_mode(settings_batt_info, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(settings_batt_info, settings_text_primary, 0);
     lv_label_set_text(settings_batt_info, "Loading...");
-    lv_obj_align(settings_batt_info, LV_ALIGN_TOP_LEFT, 30, 76);
+    lv_obj_align(settings_batt_info, LV_ALIGN_TOP_LEFT, 28, 96);
 
     lv_obj_t * date_card = lv_obj_create(settings_time_container);
-    lv_obj_set_size(date_card, 332, 126);
-    lv_obj_align(date_card, LV_ALIGN_TOP_MID, 0, 22);
-    style_card(date_card, settings_surface_alt, 22);
+    lv_obj_set_size(date_card, settings_content_width, 132);
+    lv_obj_align(date_card, LV_ALIGN_TOP_MID, 0, 18);
+    style_settings_card(date_card, settings_surface_alt, 22, LV_OPA_80);
     lv_obj_set_style_pad_all(date_card, 12, 0);
     lv_obj_clear_flag(date_card, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -505,9 +539,9 @@ void build_firefly_os() {
     style_roller(roller_day, 86, 92);
     lv_obj_align(roller_day, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_t * clock_card = lv_obj_create(settings_time_container);
-    lv_obj_set_size(clock_card, 332, 118);
-    lv_obj_align(clock_card, LV_ALIGN_TOP_MID, 0, 166);
-    style_card(clock_card, settings_surface_alt, 22);
+    lv_obj_set_size(clock_card, settings_content_width, 122);
+    lv_obj_align(clock_card, LV_ALIGN_TOP_MID, 0, 168);
+    style_settings_card(clock_card, settings_surface_alt, 22, LV_OPA_80);
     lv_obj_set_style_pad_all(clock_card, 12, 0);
     lv_obj_clear_flag(clock_card, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -530,9 +564,9 @@ void build_firefly_os() {
     lv_obj_align(roller_minute, LV_ALIGN_CENTER, 72, 0);
 
     lv_obj_t * btn_save_time = lv_btn_create(settings_time_container);
-    lv_obj_set_size(btn_save_time, 150, 44);
-    lv_obj_align(btn_save_time, LV_ALIGN_BOTTOM_LEFT, 20, -10);
-    style_card(btn_save_time, settings_action, 20);
+    lv_obj_set_size(btn_save_time, settings_half_button_width, 46);
+    lv_obj_align(btn_save_time, LV_ALIGN_BOTTOM_LEFT, 16, -12);
+    style_settings_card(btn_save_time, settings_action, 20, LV_OPA_90);
     lv_obj_add_event_cb(btn_save_time, save_time_from_rollers, LV_EVENT_CLICKED, NULL);
     lv_obj_t * btn_save_time_label = lv_label_create(btn_save_time);
     lv_obj_set_style_text_color(btn_save_time_label, settings_text_primary, 0);
@@ -540,9 +574,9 @@ void build_firefly_os() {
     lv_obj_center(btn_save_time_label);
 
     lv_obj_t * btn_load_rtc = lv_btn_create(settings_time_container);
-    lv_obj_set_size(btn_load_rtc, 150, 44);
-    lv_obj_align(btn_load_rtc, LV_ALIGN_BOTTOM_RIGHT, -20, -10);
-    style_card(btn_load_rtc, settings_surface_alt, 20);
+    lv_obj_set_size(btn_load_rtc, settings_half_button_width, 46);
+    lv_obj_align(btn_load_rtc, LV_ALIGN_BOTTOM_RIGHT, -16, -12);
+    style_settings_card(btn_load_rtc, settings_surface_alt, 20, LV_OPA_80);
     lv_obj_add_event_cb(btn_load_rtc, load_time_from_rtc, LV_EVENT_CLICKED, NULL);
     lv_obj_t * btn_load_rtc_label = lv_label_create(btn_load_rtc);
     lv_obj_set_style_text_color(btn_load_rtc_label, settings_text_primary, 0);
@@ -553,36 +587,37 @@ void build_firefly_os() {
     lv_obj_set_style_text_font(settings_alarm_status_label, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(settings_alarm_status_label, settings_text_primary, 0);
     lv_label_set_text(settings_alarm_status_label, "Alarm disabled");
-    lv_obj_align(settings_alarm_status_label, LV_ALIGN_TOP_LEFT, 24, 0);
+    lv_obj_align(settings_alarm_status_label, LV_ALIGN_TOP_LEFT, 18, 8);
 
     settings_alarm_time_label = lv_label_create(settings_sound_container);
     lv_obj_set_style_text_color(settings_alarm_time_label, settings_text_secondary, 0);
     lv_label_set_text(settings_alarm_time_label, "Time 07:30");
-    lv_obj_align(settings_alarm_time_label, LV_ALIGN_TOP_LEFT, 26, 34);
+    lv_obj_align(settings_alarm_time_label, LV_ALIGN_TOP_LEFT, 18, 42);
 
     lv_obj_t * sound_volume_title = lv_label_create(settings_sound_container);
     lv_obj_set_style_text_font(sound_volume_title, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(sound_volume_title, settings_text_primary, 0);
     lv_label_set_text(sound_volume_title, LV_SYMBOL_VOLUME_MAX " Volume");
-    lv_obj_align(sound_volume_title, LV_ALIGN_TOP_LEFT, 24, 74);
+    lv_obj_align(sound_volume_title, LV_ALIGN_TOP_LEFT, 18, 82);
 
     settings_volume_value_label = lv_label_create(settings_sound_container);
     lv_obj_set_style_text_color(settings_volume_value_label, settings_text_secondary, 0);
     lv_label_set_text(settings_volume_value_label, "70%");
-    lv_obj_align(settings_volume_value_label, LV_ALIGN_TOP_RIGHT, -24, 80);
+    lv_obj_align(settings_volume_value_label, LV_ALIGN_TOP_RIGHT, -18, 88);
 
     settings_volume_slider = lv_slider_create(settings_sound_container);
-    lv_obj_set_size(settings_volume_slider, 332, 30);
-    lv_obj_align(settings_volume_slider, LV_ALIGN_TOP_MID, 0, 114);
+    lv_obj_set_size(settings_volume_slider, settings_content_width, 30);
+    lv_obj_align(settings_volume_slider, LV_ALIGN_TOP_MID, 0, 122);
     lv_slider_set_range(settings_volume_slider, 0, 100);
     lv_slider_set_value(settings_volume_slider, volume_level, LV_ANIM_OFF);
     style_slider(settings_volume_slider, settings_surface_alt, settings_action, lv_color_white());
+    lv_obj_set_style_bg_opa(settings_volume_slider, LV_OPA_80, LV_PART_MAIN);
     lv_obj_add_event_cb(settings_volume_slider, slider_volume_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     lv_obj_t * alarm_switch_card = lv_obj_create(settings_sound_container);
-    lv_obj_set_size(alarm_switch_card, 332, 56);
-    lv_obj_align(alarm_switch_card, LV_ALIGN_TOP_MID, 0, 164);
-    style_card(alarm_switch_card, settings_surface_alt, 20);
+    lv_obj_set_size(alarm_switch_card, settings_content_width, 58);
+    lv_obj_align(alarm_switch_card, LV_ALIGN_TOP_MID, 0, 172);
+    style_settings_card(alarm_switch_card, settings_surface_alt, 20, LV_OPA_80);
     lv_obj_set_style_pad_left(alarm_switch_card, 16, 0);
     lv_obj_set_style_pad_right(alarm_switch_card, 16, 0);
     lv_obj_clear_flag(alarm_switch_card, LV_OBJ_FLAG_SCROLLABLE);
@@ -594,59 +629,61 @@ void build_firefly_os() {
 
     settings_alarm_switch = lv_switch_create(alarm_switch_card);
     lv_obj_align(settings_alarm_switch, LV_ALIGN_RIGHT_MID, 0, 0);
+    style_switch(settings_alarm_switch);
     lv_obj_add_event_cb(settings_alarm_switch, alarm_switch_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     lv_obj_t * alarm_time_title = lv_label_create(settings_sound_container);
     lv_obj_set_style_text_font(alarm_time_title, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(alarm_time_title, settings_text_primary, 0);
     lv_label_set_text(alarm_time_title, "Alarm Time");
-    lv_obj_align(alarm_time_title, LV_ALIGN_TOP_LEFT, 24, 236);
+    lv_obj_align(alarm_time_title, LV_ALIGN_TOP_LEFT, 18, 248);
 
     roller_alarm_hour = lv_roller_create(settings_sound_container);
     lv_roller_set_options(roller_alarm_hour, "00\n01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23", LV_ROLLER_MODE_NORMAL);
     lv_roller_set_visible_row_count(roller_alarm_hour, 3);
     style_roller(roller_alarm_hour, 104, 108);
-    lv_obj_align(roller_alarm_hour, LV_ALIGN_TOP_MID, -60, 270);
+    lv_obj_align(roller_alarm_hour, LV_ALIGN_TOP_MID, -60, 282);
     lv_obj_add_event_cb(roller_alarm_hour, alarm_hour_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     roller_alarm_minute = lv_roller_create(settings_sound_container);
     lv_roller_set_options(roller_alarm_minute, "00\n01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46\n47\n48\n49\n50\n51\n52\n53\n54\n55\n56\n57\n58\n59", LV_ROLLER_MODE_NORMAL);
     lv_roller_set_visible_row_count(roller_alarm_minute, 3);
     style_roller(roller_alarm_minute, 104, 108);
-    lv_obj_align(roller_alarm_minute, LV_ALIGN_TOP_MID, 60, 270);
+    lv_obj_align(roller_alarm_minute, LV_ALIGN_TOP_MID, 60, 282);
     lv_obj_add_event_cb(roller_alarm_minute, alarm_minute_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     lv_obj_t * display_title = lv_label_create(settings_display_container);
     lv_obj_set_style_text_font(display_title, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(display_title, settings_text_primary, 0);
     lv_label_set_text(display_title, LV_SYMBOL_IMAGE " Brightness");
-    lv_obj_align(display_title, LV_ALIGN_TOP_LEFT, 24, 0);
+    lv_obj_align(display_title, LV_ALIGN_TOP_LEFT, 18, 12);
 
     settings_brightness_value_label = lv_label_create(settings_display_container);
     lv_obj_set_style_text_color(settings_brightness_value_label, settings_text_secondary, 0);
     lv_label_set_text(settings_brightness_value_label, "78%");
-    lv_obj_align(settings_brightness_value_label, LV_ALIGN_TOP_RIGHT, -24, 6);
+    lv_obj_align(settings_brightness_value_label, LV_ALIGN_TOP_RIGHT, -18, 18);
 
     settings_brightness_slider = lv_slider_create(settings_display_container);
-    lv_obj_set_size(settings_brightness_slider, 332, 30);
-    lv_obj_align(settings_brightness_slider, LV_ALIGN_TOP_MID, 0, 42);
+    lv_obj_set_size(settings_brightness_slider, settings_content_width, 30);
+    lv_obj_align(settings_brightness_slider, LV_ALIGN_TOP_MID, 0, 58);
     lv_slider_set_range(settings_brightness_slider, 20, 255);
     lv_slider_set_value(settings_brightness_slider, screen_brightness, LV_ANIM_OFF);
     style_slider(settings_brightness_slider, settings_surface_alt, settings_action, lv_color_white());
+    lv_obj_set_style_bg_opa(settings_brightness_slider, LV_OPA_80, LV_PART_MAIN);
     lv_obj_add_event_cb(settings_brightness_slider, slider_brightness_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     lv_obj_t * sleep_title = lv_label_create(settings_display_container);
     lv_obj_set_style_text_font(sleep_title, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(sleep_title, settings_text_primary, 0);
     lv_label_set_text(sleep_title, LV_SYMBOL_POWER " Auto Sleep");
-    lv_obj_align(sleep_title, LV_ALIGN_TOP_LEFT, 24, 112);
+    lv_obj_align(sleep_title, LV_ALIGN_TOP_LEFT, 18, 132);
 
     settings_sleep_roller = lv_roller_create(settings_display_container);
     lv_roller_set_options(settings_sleep_roller, "OFF\n15 sec\n30 sec\n1 min\n2 min\n5 min", LV_ROLLER_MODE_NORMAL);
     lv_roller_set_visible_row_count(settings_sleep_roller, 3);
     lv_roller_set_selected(settings_sleep_roller, 2, LV_ANIM_OFF);
-    style_roller(settings_sleep_roller, 332, 126);
-    lv_obj_align(settings_sleep_roller, LV_ALIGN_TOP_MID, 0, 152);
+    style_roller(settings_sleep_roller, settings_content_width, 126);
+    lv_obj_align(settings_sleep_roller, LV_ALIGN_TOP_MID, 0, 172);
     lv_obj_add_event_cb(settings_sleep_roller, auto_sleep_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     alarm_overlay = lv_obj_create(scr_firefly);
