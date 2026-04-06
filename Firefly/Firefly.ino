@@ -200,6 +200,44 @@ void build_firefly_os() {
         lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, NULL);
     };
 
+    auto create_desktop_icon = [&](lv_coord_t x, lv_coord_t y, const char * symbol, const char * text, lv_event_cb_t cb, lv_color_t color) {
+        lv_obj_t * app = lv_obj_create(tile_sys);
+        lv_obj_set_size(app, 82, 110);
+        lv_obj_align(app, LV_ALIGN_TOP_MID, x, y);
+        lv_obj_set_style_bg_opa(app, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(app, 0, 0);
+        lv_obj_set_style_pad_all(app, 0, 0);
+        lv_obj_clear_flag(app, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t * button = lv_btn_create(app);
+        lv_obj_set_size(button, 72, 72);
+        lv_obj_align(button, LV_ALIGN_TOP_MID, 0, 0);
+        lv_obj_set_style_radius(button, 24, 0);
+        lv_obj_set_style_border_width(button, 1, 0);
+        lv_obj_set_style_border_color(button, lv_color_white(), 0);
+        lv_obj_set_style_border_opa(button, 70, 0);
+        lv_obj_set_style_bg_color(button, color, 0);
+        lv_obj_set_style_bg_opa(button, 170, 0);
+        lv_obj_set_style_shadow_width(button, 18, 0);
+        lv_obj_set_style_shadow_color(button, lv_color_black(), 0);
+        lv_obj_set_style_shadow_opa(button, 55, 0);
+        lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, NULL);
+
+        lv_obj_t * icon = lv_label_create(button);
+        lv_obj_set_style_text_font(icon, &lv_font_montserrat_24, 0);
+        lv_obj_set_style_text_color(icon, lv_color_white(), 0);
+        lv_label_set_text(icon, symbol);
+        lv_obj_center(icon);
+
+        lv_obj_t * label = lv_label_create(app);
+        lv_obj_set_width(label, 82);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(label, lv_color_hex(0xF6FBFF), 0);
+        lv_obj_set_style_text_opa(label, 235, 0);
+        lv_label_set_text(label, text);
+        lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, 0);
+    };
+
     scr_firefly = lv_obj_create(NULL);
     lv_obj_set_style_pad_all(scr_firefly, 0, 0);
     lv_obj_set_style_border_width(scr_firefly, 0, 0);
@@ -215,6 +253,10 @@ void build_firefly_os() {
     tile_lock = lv_tileview_add_tile(tv_main, 0, 0, LV_DIR_BOTTOM);
     lv_obj_set_style_bg_opa(tile_lock, LV_OPA_TRANSP, 0);
     lv_obj_set_scrollbar_mode(tile_lock, LV_SCROLLBAR_MODE_OFF);
+
+    lv_obj_t * lock_wallpaper = lv_img_create(tile_lock);
+    lv_img_set_src(lock_wallpaper, &lock_wallpaper_firefly_0);
+    lv_obj_align(lock_wallpaper, LV_ALIGN_CENTER, 0, 0);
 
     lock_date_label = lv_label_create(tile_lock);
     lv_obj_set_style_text_font(lock_date_label, &lv_font_montserrat_24, 0);
@@ -239,39 +281,29 @@ void build_firefly_os() {
     lv_label_set_text(lock_hint, "Swipe up");
     lv_obj_align(lock_hint, LV_ALIGN_BOTTOM_MID, 0, -24);
 
-    tile_sys = lv_tileview_add_tile(tv_main, 0, 1, LV_DIR_TOP);
+    tile_sys = lv_tileview_add_tile(tv_main, 0, 1, LV_DIR_NONE);
     lv_obj_set_style_bg_opa(tile_sys, LV_OPA_TRANSP, 0);
     lv_obj_set_scrollbar_mode(tile_sys, LV_SCROLLBAR_MODE_OFF);
 
-    lv_obj_t * home_card = lv_obj_create(tile_sys);
-    lv_obj_set_size(home_card, 340, 232);
-    lv_obj_align(home_card, LV_ALIGN_CENTER, 0, 16);
-    style_card(home_card, settings_surface, 30);
-    lv_obj_set_style_pad_all(home_card, 22, 0);
-    lv_obj_clear_flag(home_card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t * desktop_wallpaper = lv_img_create(tile_sys);
+    lv_img_set_src(desktop_wallpaper, &desktop_wallpaper_firefly_1);
+    lv_obj_align(desktop_wallpaper, LV_ALIGN_CENTER, 0, 0);
 
-    lv_obj_t * home_title = lv_label_create(home_card);
-    lv_obj_set_style_text_font(home_title, &lv_font_montserrat_48, 0);
-    lv_obj_set_style_text_color(home_title, settings_text_primary, 0);
-    lv_label_set_text(home_title, "Firefly");
-    lv_obj_align(home_title, LV_ALIGN_TOP_LEFT, 0, 4);
+    lv_obj_t * desktop_scrim = lv_obj_create(tile_sys);
+    lv_obj_set_size(desktop_scrim, LCD_WIDTH, LCD_HEIGHT);
+    lv_obj_set_style_radius(desktop_scrim, 0, 0);
+    lv_obj_set_style_border_width(desktop_scrim, 0, 0);
+    lv_obj_set_style_bg_color(desktop_scrim, lv_color_hex(0x071018), 0);
+    lv_obj_set_style_bg_opa(desktop_scrim, 44, 0);
+    lv_obj_clear_flag(desktop_scrim, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(desktop_scrim, LV_OBJ_FLAG_CLICKABLE);
 
-    lv_obj_t * home_subtitle = lv_label_create(home_card);
-    lv_obj_set_width(home_subtitle, 280);
-    lv_label_set_long_mode(home_subtitle, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_color(home_subtitle, settings_text_secondary, 0);
-    lv_label_set_text(home_subtitle, "Minimal copy build\nOnly sound, time, battery and display remain.");
-    lv_obj_align(home_subtitle, LV_ALIGN_TOP_LEFT, 0, 74);
+    create_desktop_icon(-150, 88, LV_SYMBOL_SETTINGS, "Settings", open_settings_menu, lv_color_hex(0x3D6AF2));
+    create_desktop_icon(-50, 88, LV_SYMBOL_AUDIO, "Sound", open_sound_page, lv_color_hex(0xE56C8A));
+    create_desktop_icon(50, 88, LV_SYMBOL_EDIT, "Clock", open_time_page, lv_color_hex(0x43BFA6));
+    create_desktop_icon(150, 88, LV_SYMBOL_BATTERY_FULL, "Power", open_battery_page, lv_color_hex(0xF5A742));
 
-    lv_obj_t * btn_settings = lv_btn_create(home_card);
-    lv_obj_set_size(btn_settings, 292, 58);
-    lv_obj_align(btn_settings, LV_ALIGN_BOTTOM_MID, 0, -20);
-    style_card(btn_settings, settings_action, 22);
-    lv_obj_add_event_cb(btn_settings, open_settings_menu, LV_EVENT_CLICKED, NULL);
-    lv_obj_t * btn_settings_label = lv_label_create(btn_settings);
-    lv_obj_set_style_text_color(btn_settings_label, settings_text_primary, 0);
-    lv_label_set_text(btn_settings_label, LV_SYMBOL_SETTINGS "  Open Settings");
-    lv_obj_center(btn_settings_label);
+    create_desktop_icon(-150, 210, LV_SYMBOL_IMAGE, "Display", open_display_page, lv_color_hex(0x5B8CFF));
 
     notif_panel = lv_obj_create(scr_firefly);
     lv_obj_set_size(notif_panel, LCD_WIDTH, LCD_HEIGHT);

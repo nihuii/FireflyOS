@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <lvgl.h>
 #include "Arduino_GFX_Library.h"
+#include "LockWallpaper.h"
 #include "pin_config.h"
 #include "SleepIcons.h"
 #include <Wire.h>
