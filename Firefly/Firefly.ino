@@ -299,11 +299,6 @@ void build_firefly_os() {
     lv_obj_add_flag(desktop_icon_layer, LV_OBJ_FLAG_HIDDEN);
 
     create_desktop_icon(-150, 88, LV_SYMBOL_SETTINGS, "Settings", open_settings_menu, lv_color_hex(0x3D6AF2));
-    create_desktop_icon(-50, 88, LV_SYMBOL_AUDIO, "Sound", open_sound_page, lv_color_hex(0xE56C8A));
-    create_desktop_icon(50, 88, LV_SYMBOL_EDIT, "Clock", open_time_page, lv_color_hex(0x43BFA6));
-    create_desktop_icon(150, 88, LV_SYMBOL_BATTERY_FULL, "Power", open_battery_page, lv_color_hex(0xF5A742));
-
-    create_desktop_icon(-150, 210, LV_SYMBOL_IMAGE, "Display", open_display_page, lv_color_hex(0x5B8CFF));
 
     notif_panel = lv_obj_create(scr_firefly);
     lv_obj_set_size(notif_panel, LCD_WIDTH, LCD_HEIGHT);
