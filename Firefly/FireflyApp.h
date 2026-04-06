@@ -43,6 +43,7 @@ extern lv_obj_t * notif_brightness_value_label;
 extern lv_obj_t * tile_lock;
 extern lv_obj_t * tile_sys;
 extern lv_obj_t * tv_main;
+extern lv_obj_t * desktop_icon_layer;
 extern lv_obj_t * settings_panel;
 extern lv_obj_t * settings_menu_container;
 extern lv_obj_t * settings_batt_container;

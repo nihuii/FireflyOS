@@ -201,7 +201,7 @@ void build_firefly_os() {
     };
 
     auto create_desktop_icon = [&](lv_coord_t x, lv_coord_t y, const char * symbol, const char * text, lv_event_cb_t cb, lv_color_t color) {
-        lv_obj_t * app = lv_obj_create(tile_sys);
+        lv_obj_t * app = lv_obj_create(desktop_icon_layer);
         lv_obj_set_size(app, 82, 110);
         lv_obj_align(app, LV_ALIGN_TOP_MID, x, y);
         lv_obj_set_style_bg_opa(app, LV_OPA_TRANSP, 0);
@@ -218,9 +218,7 @@ void build_firefly_os() {
         lv_obj_set_style_border_opa(button, 70, 0);
         lv_obj_set_style_bg_color(button, color, 0);
         lv_obj_set_style_bg_opa(button, 170, 0);
-        lv_obj_set_style_shadow_width(button, 18, 0);
-        lv_obj_set_style_shadow_color(button, lv_color_black(), 0);
-        lv_obj_set_style_shadow_opa(button, 55, 0);
+        lv_obj_set_style_shadow_width(button, 0, 0);
         lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, NULL);
 
         lv_obj_t * icon = lv_label_create(button);
@@ -249,6 +247,8 @@ void build_firefly_os() {
     lv_obj_set_style_bg_opa(tv_main, LV_OPA_TRANSP, 0);
     lv_obj_set_scrollbar_mode(tv_main, LV_SCROLLBAR_MODE_OFF);
     lv_obj_add_event_cb(tv_main, tv_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(tv_main, tv_event_cb, LV_EVENT_SCROLL_BEGIN, NULL);
+    lv_obj_add_event_cb(tv_main, tv_event_cb, LV_EVENT_SCROLL_END, NULL);
 
     tile_lock = lv_tileview_add_tile(tv_main, 0, 0, LV_DIR_BOTTOM);
     lv_obj_set_style_bg_opa(tile_lock, LV_OPA_TRANSP, 0);
@@ -289,14 +289,14 @@ void build_firefly_os() {
     lv_img_set_src(desktop_wallpaper, &desktop_wallpaper_firefly_1);
     lv_obj_align(desktop_wallpaper, LV_ALIGN_CENTER, 0, 0);
 
-    lv_obj_t * desktop_scrim = lv_obj_create(tile_sys);
-    lv_obj_set_size(desktop_scrim, LCD_WIDTH, LCD_HEIGHT);
-    lv_obj_set_style_radius(desktop_scrim, 0, 0);
-    lv_obj_set_style_border_width(desktop_scrim, 0, 0);
-    lv_obj_set_style_bg_color(desktop_scrim, lv_color_hex(0x071018), 0);
-    lv_obj_set_style_bg_opa(desktop_scrim, 44, 0);
-    lv_obj_clear_flag(desktop_scrim, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(desktop_scrim, LV_OBJ_FLAG_CLICKABLE);
+    desktop_icon_layer = lv_obj_create(tile_sys);
+    lv_obj_set_size(desktop_icon_layer, LCD_WIDTH, LCD_HEIGHT);
+    lv_obj_set_style_bg_opa(desktop_icon_layer, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(desktop_icon_layer, 0, 0);
+    lv_obj_set_style_pad_all(desktop_icon_layer, 0, 0);
+    lv_obj_set_style_radius(desktop_icon_layer, 0, 0);
+    lv_obj_clear_flag(desktop_icon_layer, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(desktop_icon_layer, LV_OBJ_FLAG_HIDDEN);
 
     create_desktop_icon(-150, 88, LV_SYMBOL_SETTINGS, "Settings", open_settings_menu, lv_color_hex(0x3D6AF2));
     create_desktop_icon(-50, 88, LV_SYMBOL_AUDIO, "Sound", open_sound_page, lv_color_hex(0xE56C8A));
@@ -776,9 +776,32 @@ void setup(void) {
 
     lv_init();
 
-    const size_t buffer_size = LCD_WIDTH * 80U;
+    const size_t preferred_buffer_size = LCD_WIDTH * 120U;
+    size_t buffer_size = preferred_buffer_size;
     lv_color_t * buf1 = (lv_color_t *)heap_caps_malloc(buffer_size * sizeof(lv_color_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     lv_color_t * buf2 = (lv_color_t *)heap_caps_malloc(buffer_size * sizeof(lv_color_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if(!buf1 || !buf2) {
+        if(buf1) {
+            heap_caps_free(buf1);
+            buf1 = NULL;
+        }
+        if(buf2) {
+            heap_caps_free(buf2);
+            buf2 = NULL;
+        }
+
+        buffer_size = LCD_WIDTH * 80U;
+        buf1 = (lv_color_t *)heap_caps_malloc(buffer_size * sizeof(lv_color_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        buf2 = (lv_color_t *)heap_caps_malloc(buffer_size * sizeof(lv_color_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+
+    if(!buf1 || !buf2) {
+        Serial.println("LVGL draw buffer allocation failed.");
+        while(true) {
+            delay(1000);
+        }
+    }
+
     lv_disp_draw_buf_init(&draw_buf, buf1, buf2, buffer_size);
 
     static lv_disp_drv_t disp_drv;

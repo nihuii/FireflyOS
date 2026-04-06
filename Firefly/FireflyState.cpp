@@ -27,6 +27,7 @@ lv_obj_t * notif_brightness_value_label = NULL;
 lv_obj_t * tile_lock = NULL;
 lv_obj_t * tile_sys = NULL;
 lv_obj_t * tv_main = NULL;
+lv_obj_t * desktop_icon_layer = NULL;
 lv_obj_t * settings_panel = NULL;
 lv_obj_t * settings_menu_container = NULL;
 lv_obj_t * settings_batt_container = NULL;

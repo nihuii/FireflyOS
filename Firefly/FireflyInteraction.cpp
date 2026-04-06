@@ -35,6 +35,28 @@ String brightness_percent_text() {
     return String((screen_brightness * 100U) / 255U) + "%";
 }
 
+void update_desktop_transition_ui(lv_obj_t * active_tile) {
+    const bool on_desktop = (active_tile == tile_sys);
+
+    is_on_lockscreen = !on_desktop;
+
+    if(top_status_bar) {
+        if(on_desktop) {
+            lv_obj_clear_flag(top_status_bar, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(top_status_bar, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    if(desktop_icon_layer) {
+        if(on_desktop) {
+            lv_obj_clear_flag(desktop_icon_layer, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(desktop_icon_layer, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
 void refresh_control_center_ui_impl() {
     const int battery_percent = power.getBatteryPercent();
 
@@ -326,20 +348,20 @@ void update_charging_overlay() {
 }
 
 void tv_event_cb(lv_event_t * e) {
+    const lv_event_code_t code = lv_event_get_code(e);
     lv_obj_t * tv = lv_event_get_target(e);
-    lv_obj_t * active = lv_tileview_get_tile_act(tv);
-
-    if(active == tile_sys) {
-        is_on_lockscreen = false;
-        if(top_status_bar) {
-            lv_obj_clear_flag(top_status_bar, LV_OBJ_FLAG_HIDDEN);
+    if(code == LV_EVENT_SCROLL_BEGIN) {
+        if(desktop_icon_layer) {
+            lv_obj_add_flag(desktop_icon_layer, LV_OBJ_FLAG_HIDDEN);
         }
-    } else {
-        is_on_lockscreen = true;
-        if(top_status_bar) {
-            lv_obj_add_flag(top_status_bar, LV_OBJ_FLAG_HIDDEN);
-        }
+        return;
     }
+
+    if(code != LV_EVENT_SCROLL_END && code != LV_EVENT_VALUE_CHANGED) {
+        return;
+    }
+
+    update_desktop_transition_ui(lv_tileview_get_tile_act(tv));
 }
 
 void anim_notif_panel_cb(void * var, int32_t v) {
