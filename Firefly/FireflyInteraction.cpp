@@ -1,11 +1,130 @@
 #include "FireflyApp.h"
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <sys/time.h>
 
 namespace {
 
 uint8_t sleep_icon_index = 0;
 bool sleep_icon_has_been_shown = false;
+
+constexpr uint32_t FIREFLY_BG_EVENT_SHORT_PRESS = 1UL << 0;
+constexpr uint32_t FIREFLY_BG_EVENT_ENTER_SLEEP = 1UL << 1;
+constexpr uint32_t FIREFLY_BG_EVENT_SLEEP_BLACKOUT = 1UL << 2;
+
+TaskHandle_t firefly_background_task_handle = NULL;
+bool firefly_background_task_running = false;
+volatile uint32_t firefly_background_events = 0;
+portMUX_TYPE firefly_background_event_mux = portMUX_INITIALIZER_UNLOCKED;
+
+void post_background_event(uint32_t event_mask) {
+    portENTER_CRITICAL(&firefly_background_event_mux);
+    firefly_background_events |= event_mask;
+    portEXIT_CRITICAL(&firefly_background_event_mux);
+}
+
+bool take_background_event(uint32_t event_mask) {
+    bool has_event = false;
+
+    portENTER_CRITICAL(&firefly_background_event_mux);
+    has_event = (firefly_background_events & event_mask) != 0;
+    firefly_background_events &= ~event_mask;
+    portEXIT_CRITICAL(&firefly_background_event_mux);
+
+    return has_event;
+}
+
+bool poll_short_press_source() {
+    static bool last_btn_state = HIGH;
+    static unsigned long btn_press_time = 0;
+    const bool current_btn_state = digitalRead(0);
+    bool short_press_detected = false;
+
+    if(last_btn_state == HIGH && current_btn_state == LOW) {
+        btn_press_time = millis();
+    }
+
+    if(last_btn_state == LOW && current_btn_state == HIGH) {
+        short_press_detected = (millis() - btn_press_time) < 800UL;
+    }
+
+    last_btn_state = current_btn_state;
+    return short_press_detected;
+}
+
+bool should_blackout_sleep_now(unsigned long now) {
+    const unsigned long entered_at = sleep_entered_at;
+    return is_sleeping && !sleep_display_off && entered_at > 0 && now - entered_at >= 2000UL;
+}
+
+bool should_auto_enter_sleep_now(unsigned long now) {
+    const unsigned long last_activity = last_activity_time;
+    const uint32_t auto_sleep = auto_sleep_ms;
+
+    if(is_sleeping || !is_on_lockscreen || auto_sleep == 0 || last_activity == 0) {
+        return false;
+    }
+
+    return now - last_activity > auto_sleep;
+}
+
+void apply_sleep_blackout() {
+    if(!is_sleeping || sleep_display_off) {
+        return;
+    }
+
+    sleep_display_off = true;
+    gfx_co5300->setBrightness(0);
+    if(sleep_screen) {
+        lv_obj_add_flag(sleep_screen, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void wake_sleep_screen_from_blackout();
+
+void run_short_press_action() {
+    if(settings_panel && !lv_obj_has_flag(settings_panel, LV_OBJ_FLAG_HIDDEN)) {
+        if(settings_menu_container && lv_obj_has_flag(settings_menu_container, LV_OBJ_FLAG_HIDDEN)) {
+            set_settings_subpage(NULL);
+        } else {
+            close_settings_panel();
+        }
+    } else if(is_sleeping && sleep_display_off) {
+        wake_sleep_screen_from_blackout();
+    } else if(is_sleeping) {
+        exit_sleep_screen_mode();
+    } else if(alarm_ringing) {
+        dismiss_alarm_alert();
+    } else if(is_on_lockscreen) {
+        enter_sleep_screen_mode();
+    } else if(tv_main) {
+        lv_obj_set_tile_id(tv_main, 0, 0, LV_ANIM_ON);
+        if(notif_panel) {
+            anim_notif_panel_cb(notif_panel, -502);
+        }
+    }
+}
+
+void firefly_background_task(void * parameter) {
+    LV_UNUSED(parameter);
+
+    for(;;) {
+        const unsigned long now = millis();
+
+        if(poll_short_press_source()) {
+            post_background_event(FIREFLY_BG_EVENT_SHORT_PRESS);
+        }
+
+        if(should_blackout_sleep_now(now)) {
+            post_background_event(FIREFLY_BG_EVENT_SLEEP_BLACKOUT);
+        } else if(should_auto_enter_sleep_now(now)) {
+            post_background_event(FIREFLY_BG_EVENT_ENTER_SLEEP);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
 
 String two_digit_text(uint8_t value) {
     char buf[4];
@@ -174,6 +293,35 @@ void refresh_sleep_icon(bool advance) {
 }
 
 } // namespace
+
+void start_firefly_background_task() {
+#if defined(CONFIG_FREERTOS_UNICORE) && CONFIG_FREERTOS_UNICORE
+    firefly_background_task_running = false;
+#else
+    if(firefly_background_task_handle) {
+        firefly_background_task_running = true;
+        return;
+    }
+
+    const BaseType_t ui_core = xPortGetCoreID();
+    const BaseType_t background_core = (ui_core == 0) ? 1 : 0;
+    const BaseType_t result = xTaskCreatePinnedToCore(
+        firefly_background_task,
+        "firefly_bg",
+        4096,
+        NULL,
+        1,
+        &firefly_background_task_handle,
+        background_core
+    );
+
+    firefly_background_task_running = (result == pdPASS);
+    if(!firefly_background_task_running) {
+        firefly_background_task_handle = NULL;
+        Serial.println("Failed to start Firefly background task. Falling back to single-core polling.");
+    }
+#endif
+}
 
 void sync_time_to_system_from_rtc(const RTC_DateTime& dt) {
     struct tm timeinfo = {0};
@@ -496,58 +644,32 @@ void exit_sleep_screen_mode() {
 }
 
 void firefly_handle_short_press() {
-    static bool last_btn_state = HIGH;
-    static unsigned long btn_press_time = 0;
-    const bool current_btn_state = digitalRead(0);
+    const bool short_press_detected = firefly_background_task_running
+        ? take_background_event(FIREFLY_BG_EVENT_SHORT_PRESS)
+        : poll_short_press_source();
 
-    if(last_btn_state == HIGH && current_btn_state == LOW) {
-        btn_press_time = millis();
+    if(short_press_detected) {
+        run_short_press_action();
     }
-
-    if(last_btn_state == LOW && current_btn_state == HIGH) {
-        if(millis() - btn_press_time < 800) {
-            if(settings_panel && !lv_obj_has_flag(settings_panel, LV_OBJ_FLAG_HIDDEN)) {
-                if(settings_menu_container && lv_obj_has_flag(settings_menu_container, LV_OBJ_FLAG_HIDDEN)) {
-                    set_settings_subpage(NULL);
-                } else {
-                    close_settings_panel();
-                }
-            } else if(is_sleeping && sleep_display_off) {
-                wake_sleep_screen_from_blackout();
-            } else if(is_sleeping) {
-                exit_sleep_screen_mode();
-            } else if(alarm_ringing) {
-                dismiss_alarm_alert();
-            } else if(is_on_lockscreen) {
-                enter_sleep_screen_mode();
-            } else if(tv_main) {
-                lv_obj_set_tile_id(tv_main, 0, 0, LV_ANIM_ON);
-                if(notif_panel) {
-                    anim_notif_panel_cb(notif_panel, -502);
-                }
-            }
-        }
-    }
-
-    last_btn_state = current_btn_state;
 }
 
 void firefly_handle_auto_sleep() {
-    if(is_sleeping && !sleep_display_off && sleep_entered_at > 0 && millis() - sleep_entered_at >= 2000UL) {
-        sleep_display_off = true;
-        gfx_co5300->setBrightness(0);
-        if(sleep_screen) {
-            lv_obj_add_flag(sleep_screen, LV_OBJ_FLAG_HIDDEN);
-        }
+    const unsigned long now = millis();
+
+    const bool should_blackout = firefly_background_task_running
+        ? take_background_event(FIREFLY_BG_EVENT_SLEEP_BLACKOUT)
+        : should_blackout_sleep_now(now);
+
+    if(should_blackout) {
+        apply_sleep_blackout();
         return;
     }
 
-    if(!is_sleeping && is_on_lockscreen && auto_sleep_ms > 0) {
-        if(last_activity_time == 0) {
-            last_activity_time = millis();
-        }
-        if(millis() - last_activity_time > auto_sleep_ms) {
-            enter_sleep_screen_mode();
-        }
+    const bool should_enter_sleep = firefly_background_task_running
+        ? take_background_event(FIREFLY_BG_EVENT_ENTER_SLEEP)
+        : should_auto_enter_sleep_now(now);
+
+    if(should_enter_sleep) {
+        enter_sleep_screen_mode();
     }
 }

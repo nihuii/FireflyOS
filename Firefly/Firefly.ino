@@ -826,6 +826,7 @@ void setup(void) {
 
     pinMode(0, INPUT_PULLUP);
     last_activity_time = millis();
+    start_firefly_background_task();
 }
 
 void loop() {

@@ -81,22 +81,22 @@ extern lv_obj_t * scr_firefly;
 
 extern lv_coord_t drag_start_y;
 extern bool is_dragging_notif;
-extern bool is_sleeping;
-extern bool sleep_display_off;
-extern bool is_on_lockscreen;
+extern volatile bool is_sleeping;
+extern volatile bool sleep_display_off;
+extern volatile bool is_on_lockscreen;
 
 extern uint8_t screen_brightness;
 extern uint8_t volume_level;
-extern uint32_t auto_sleep_ms;
-extern unsigned long last_activity_time;
-extern unsigned long sleep_entered_at;
-extern unsigned long charge_overlay_started_at;
+extern volatile uint32_t auto_sleep_ms;
+extern volatile unsigned long last_activity_time;
+extern volatile unsigned long sleep_entered_at;
+extern volatile unsigned long charge_overlay_started_at;
 extern bool alarm_enabled;
 extern uint8_t alarm_hour;
 extern uint8_t alarm_minute;
 extern bool alarm_ringing;
 extern String alarm_last_trigger_key;
-extern bool charging_overlay_visible;
+extern volatile bool charging_overlay_visible;
 extern bool charging_last_state;
 
 extern lv_color_t settings_theme_accent;
@@ -133,6 +133,7 @@ void update_charging_overlay();
 void build_firefly_os();
 void firefly_handle_short_press();
 void firefly_handle_auto_sleep();
+void start_firefly_background_task();
 void init_default_settings_theme();
 
 void my_disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t * color_p);

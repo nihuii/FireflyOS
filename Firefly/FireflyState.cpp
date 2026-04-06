@@ -65,22 +65,22 @@ lv_obj_t * scr_firefly = NULL;
 
 lv_coord_t drag_start_y = 0;
 bool is_dragging_notif = false;
-bool is_sleeping = false;
-bool sleep_display_off = false;
-bool is_on_lockscreen = true;
+volatile bool is_sleeping = false;
+volatile bool sleep_display_off = false;
+volatile bool is_on_lockscreen = true;
 
 uint8_t screen_brightness = 200;
 uint8_t volume_level = 70;
-uint32_t auto_sleep_ms = 30000UL;
-unsigned long last_activity_time = 0;
-unsigned long sleep_entered_at = 0;
-unsigned long charge_overlay_started_at = 0;
+volatile uint32_t auto_sleep_ms = 30000UL;
+volatile unsigned long last_activity_time = 0;
+volatile unsigned long sleep_entered_at = 0;
+volatile unsigned long charge_overlay_started_at = 0;
 bool alarm_enabled = false;
 uint8_t alarm_hour = 7;
 uint8_t alarm_minute = 30;
 bool alarm_ringing = false;
 String alarm_last_trigger_key = "";
-bool charging_overlay_visible = false;
+volatile bool charging_overlay_visible = false;
 bool charging_last_state = false;
 
 lv_color_t settings_theme_accent = LV_COLOR_MAKE(0x6E, 0xC4, 0xD6);
