@@ -1,0 +1,4 @@
+搭载 ESP32-S3R8 高性能 Xtensa 32 位 LX7 双核处理器，主频高达 240MHz
+支持 2.4GHz Wi-Fi (802.11 b/g/n) 和 Bluetooth 5 (LE)，板载天线
+内置 512KB 的 SRAM 和 384KB ROM，叠封 8MB PSRAM 和外接 32MB Flash
+采用 Type-C 接口，提高了用户的使用便捷性和设备的兼容性
