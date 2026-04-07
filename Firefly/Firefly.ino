@@ -2,6 +2,8 @@
 
 namespace {
 
+int8_t active_alarm_editor_slot = -1;
+
 void open_settings_menu(lv_event_t * e) {
     LV_UNUSED(e);
     open_settings_panel();
@@ -36,6 +38,162 @@ void open_sound_page(lv_event_t * e) {
     set_settings_subpage(settings_sound_container);
 }
 
+uint8_t alarm_slot_from_event(lv_event_t * e) {
+    return static_cast<uint8_t>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+}
+
+void hide_alarm_editor() {
+    if(settings_alarm_editor_keyboard) {
+        lv_keyboard_set_textarea(settings_alarm_editor_keyboard, NULL);
+        lv_obj_add_flag(settings_alarm_editor_keyboard, LV_OBJ_FLAG_HIDDEN);
+    }
+    if(settings_alarm_editor) {
+        lv_obj_add_flag(settings_alarm_editor, LV_OBJ_FLAG_HIDDEN);
+    }
+    active_alarm_editor_slot = -1;
+}
+
+void open_alarm_editor_for_slot(uint8_t slot, bool creating) {
+    if(slot >= FIREFLY_ALARM_SLOT_COUNT || !settings_alarm_editor) {
+        return;
+    }
+
+    active_alarm_editor_slot = static_cast<int8_t>(slot);
+    const FireflyAlarm & alarm = firefly_alarms[slot];
+    const bool use_existing = alarm.configured && !creating;
+    const String default_name = "Alarm " + String(slot + 1U);
+
+    if(settings_alarm_editor_title) {
+        lv_label_set_text(settings_alarm_editor_title, use_existing ? "Edit Alarm" : "New Alarm");
+    }
+    if(settings_alarm_editor_hour_roller) {
+        lv_roller_set_selected(settings_alarm_editor_hour_roller, use_existing ? alarm.hour : 7, LV_ANIM_OFF);
+    }
+    if(settings_alarm_editor_minute_roller) {
+        lv_roller_set_selected(settings_alarm_editor_minute_roller, use_existing ? alarm.minute : 30, LV_ANIM_OFF);
+    }
+    if(settings_alarm_editor_ringtone_roller) {
+        lv_roller_set_selected(settings_alarm_editor_ringtone_roller, use_existing ? alarm.ringtone_index : 0, LV_ANIM_OFF);
+    }
+    if(settings_alarm_editor_days_roller) {
+        lv_roller_set_selected(
+            settings_alarm_editor_days_roller,
+            use_existing ? firefly_alarm_option_from_days_mask(alarm.days_mask) : 0,
+            LV_ANIM_OFF
+        );
+    }
+    if(settings_alarm_editor_name_ta) {
+        lv_textarea_set_text(
+            settings_alarm_editor_name_ta,
+            use_existing ? alarm.name : default_name.c_str()
+        );
+        lv_obj_clear_state(settings_alarm_editor_name_ta, LV_STATE_FOCUSED);
+    }
+    if(settings_alarm_editor_keyboard) {
+        lv_keyboard_set_textarea(settings_alarm_editor_keyboard, NULL);
+        lv_obj_add_flag(settings_alarm_editor_keyboard, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    lv_obj_clear_flag(settings_alarm_editor, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(settings_alarm_editor);
+}
+
+void open_alarm_page(lv_event_t * e) {
+    LV_UNUSED(e);
+    open_settings_panel();
+    refresh_sound_alarm_ui();
+    set_settings_subpage(settings_alarm_container);
+}
+
+void open_alarm_add_page(lv_event_t * e) {
+    LV_UNUSED(e);
+    for(uint8_t slot = 0; slot < FIREFLY_ALARM_SLOT_COUNT; ++slot) {
+        if(!firefly_alarms[slot].configured) {
+            open_alarm_editor_for_slot(slot, true);
+            return;
+        }
+    }
+}
+
+void open_alarm_card_page(lv_event_t * e) {
+    const uint8_t slot = alarm_slot_from_event(e);
+    if(slot >= FIREFLY_ALARM_SLOT_COUNT) {
+        return;
+    }
+    open_alarm_editor_for_slot(slot, !firefly_alarms[slot].configured);
+}
+
+void alarm_slot_switch_cb(lv_event_t * e) {
+    const uint8_t slot = alarm_slot_from_event(e);
+    if(slot >= FIREFLY_ALARM_SLOT_COUNT || !firefly_alarms[slot].configured) {
+        return;
+    }
+
+    firefly_alarms[slot].enabled = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    save_alarm_preferences();
+    clear_alarm_trigger_history();
+    refresh_sound_alarm_ui();
+}
+
+void alarm_editor_cancel_cb(lv_event_t * e) {
+    LV_UNUSED(e);
+    hide_alarm_editor();
+}
+
+void alarm_editor_confirm_cb(lv_event_t * e) {
+    LV_UNUSED(e);
+    if(active_alarm_editor_slot < 0 || active_alarm_editor_slot >= FIREFLY_ALARM_SLOT_COUNT) {
+        return;
+    }
+
+    FireflyAlarm & alarm = firefly_alarms[active_alarm_editor_slot];
+    const bool preserve_enabled = alarm.configured ? alarm.enabled : true;
+    alarm.configured = true;
+    alarm.enabled = preserve_enabled;
+    alarm.hour = static_cast<uint8_t>(lv_roller_get_selected(settings_alarm_editor_hour_roller));
+    alarm.minute = static_cast<uint8_t>(lv_roller_get_selected(settings_alarm_editor_minute_roller));
+    alarm.ringtone_index = static_cast<uint8_t>(lv_roller_get_selected(settings_alarm_editor_ringtone_roller));
+    alarm.days_mask = firefly_alarm_days_mask_from_option(static_cast<uint8_t>(lv_roller_get_selected(settings_alarm_editor_days_roller)));
+
+    String name = settings_alarm_editor_name_ta ? String(lv_textarea_get_text(settings_alarm_editor_name_ta)) : "";
+    name.trim();
+    if(name.length() == 0) {
+        name = "Alarm " + String(active_alarm_editor_slot + 1);
+    }
+    strncpy(alarm.name, name.c_str(), sizeof(alarm.name) - 1U);
+    alarm.name[sizeof(alarm.name) - 1U] = '\0';
+
+    save_alarm_preferences();
+    clear_alarm_trigger_history();
+    refresh_sound_alarm_ui();
+    hide_alarm_editor();
+}
+
+void alarm_editor_name_event_cb(lv_event_t * e) {
+    if(lv_event_get_code(e) != LV_EVENT_FOCUSED || !settings_alarm_editor_keyboard) {
+        return;
+    }
+
+    lv_keyboard_set_textarea(settings_alarm_editor_keyboard, lv_event_get_target(e));
+    lv_obj_clear_flag(settings_alarm_editor_keyboard, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(settings_alarm_editor_keyboard);
+}
+
+void alarm_editor_keyboard_event_cb(lv_event_t * e) {
+    const lv_event_code_t code = lv_event_get_code(e);
+    if(code != LV_EVENT_READY && code != LV_EVENT_CANCEL) {
+        return;
+    }
+
+    if(settings_alarm_editor_keyboard) {
+        lv_keyboard_set_textarea(settings_alarm_editor_keyboard, NULL);
+        lv_obj_add_flag(settings_alarm_editor_keyboard, LV_OBJ_FLAG_HIDDEN);
+    }
+    if(settings_alarm_editor_name_ta) {
+        lv_obj_clear_state(settings_alarm_editor_name_ta, LV_STATE_FOCUSED);
+    }
+}
+
 void open_time_page(lv_event_t * e) {
     LV_UNUSED(e);
     open_settings_panel();
@@ -67,7 +225,7 @@ void save_time_from_rollers(lv_event_t * e) {
 
     rtc.setDateTime(year, month, day, hour, minute, 0);
     sync_time_to_system_from_rtc(rtc.getDateTime());
-    alarm_last_trigger_key = "";
+    clear_alarm_trigger_history();
     update_time_cb(NULL);
     set_settings_subpage(NULL);
 }
@@ -80,7 +238,7 @@ void load_time_from_rtc(lv_event_t * e) {
     }
 
     sync_time_to_system_from_rtc(dt);
-    alarm_last_trigger_key = "";
+    clear_alarm_trigger_history();
     load_time_rollers_from_current();
     update_time_cb(NULL);
 }
@@ -107,24 +265,6 @@ void slider_brightness_cb(lv_event_t * e) {
     set_screen_brightness_level((uint8_t)lv_slider_get_value(lv_event_get_target(e)));
 }
 
-void alarm_switch_cb(lv_event_t * e) {
-    alarm_enabled = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-    save_alarm_preferences();
-    refresh_sound_alarm_ui();
-}
-
-void alarm_hour_cb(lv_event_t * e) {
-    alarm_hour = (uint8_t)lv_roller_get_selected(lv_event_get_target(e));
-    save_alarm_preferences();
-    refresh_sound_alarm_ui();
-}
-
-void alarm_minute_cb(lv_event_t * e) {
-    alarm_minute = (uint8_t)lv_roller_get_selected(lv_event_get_target(e));
-    save_alarm_preferences();
-    refresh_sound_alarm_ui();
-}
-
 void auto_sleep_cb(lv_event_t * e) {
     static const uint32_t timeouts[] = {0, 15000, 30000, 60000, 120000, 300000};
     const uint16_t selected = lv_roller_get_selected(lv_event_get_target(e));
@@ -147,6 +287,15 @@ void build_firefly_os() {
     const lv_coord_t settings_page_top = 92;
     const lv_coord_t settings_page_height = LCD_HEIGHT - settings_page_top;
     const lv_coord_t settings_half_button_width = (settings_content_width - 10) / 2;
+    const lv_coord_t rounded_screen_side_inset = 28;
+    const lv_coord_t rounded_screen_bottom_inset = 26;
+    const lv_coord_t alarm_editor_card_width = LCD_WIDTH - (rounded_screen_side_inset * 2);
+    const lv_coord_t alarm_editor_inner_width = alarm_editor_card_width - 32;
+    const lv_coord_t alarm_editor_offset_x = -16;
+    const lv_coord_t alarm_editor_header_offset_x = -12;
+    const lv_coord_t alarm_editor_time_card_y = 82;
+    const lv_coord_t alarm_editor_bottom_card_height = 236;
+    const lv_coord_t alarm_editor_bottom_card_bottom_inset = 22;
 
     auto style_card = [&](lv_obj_t * obj, lv_color_t color, lv_coord_t radius) {
         lv_obj_set_style_radius(obj, radius, 0);
@@ -210,6 +359,24 @@ void build_firefly_os() {
         lv_obj_set_style_bg_opa(roller, LV_OPA_COVER, LV_PART_SELECTED);
         lv_obj_set_style_text_color(roller, settings_text_primary, LV_PART_SELECTED);
         lv_obj_set_style_border_width(roller, 0, LV_PART_SELECTED);
+    };
+
+    auto style_textarea = [&](lv_obj_t * ta, lv_coord_t height) {
+        lv_obj_set_size(ta, settings_content_width, height);
+        lv_obj_set_style_radius(ta, 20, 0);
+        lv_obj_set_style_border_width(ta, 1, 0);
+        lv_obj_set_style_border_color(ta, settings_theme_accent, 0);
+        lv_obj_set_style_border_opa(ta, LV_OPA_30, 0);
+        lv_obj_set_style_bg_color(ta, settings_surface_alt, 0);
+        lv_obj_set_style_bg_opa(ta, LV_OPA_80, 0);
+        lv_obj_set_style_text_color(ta, settings_text_primary, 0);
+        lv_obj_set_style_text_font(ta, &lv_font_montserrat_24, 0);
+        lv_obj_set_style_pad_left(ta, 16, 0);
+        lv_obj_set_style_pad_right(ta, 16, 0);
+        lv_obj_set_style_pad_top(ta, 12, 0);
+        lv_obj_set_style_pad_bottom(ta, 12, 0);
+        lv_textarea_set_one_line(ta, true);
+        lv_textarea_set_max_length(ta, 23);
     };
 
     auto create_menu_button = [&](lv_coord_t y, const char * text, lv_event_cb_t cb) {
@@ -480,10 +647,18 @@ void build_firefly_os() {
     settings_batt_container = lv_obj_create(settings_shell);
     settings_time_container = lv_obj_create(settings_shell);
     settings_sound_container = lv_obj_create(settings_shell);
+    settings_alarm_container = lv_obj_create(settings_shell);
     settings_display_container = lv_obj_create(settings_shell);
 
-    lv_obj_t * pages[] = {settings_menu_container, settings_batt_container, settings_time_container, settings_sound_container, settings_display_container};
-    for(uint8_t i = 0; i < 5; ++i) {
+    lv_obj_t * pages[] = {
+        settings_menu_container,
+        settings_batt_container,
+        settings_time_container,
+        settings_sound_container,
+        settings_alarm_container,
+        settings_display_container
+    };
+    for(uint8_t i = 0; i < 6; ++i) {
         lv_obj_set_size(pages[i], LCD_WIDTH, settings_page_height);
         lv_obj_align(pages[i], LV_ALIGN_TOP_MID, 0, settings_page_top);
         lv_obj_set_style_bg_opa(pages[i], LV_OPA_TRANSP, 0);
@@ -494,12 +669,14 @@ void build_firefly_os() {
     lv_obj_add_flag(settings_batt_container, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(settings_time_container, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(settings_sound_container, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(settings_alarm_container, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(settings_display_container, LV_OBJ_FLAG_HIDDEN);
 
-    create_menu_button(12, LV_SYMBOL_AUDIO "  Sound & Alarm", open_sound_page);
-    create_menu_button(84, LV_SYMBOL_EDIT "  Time & Date", open_time_page);
-    create_menu_button(156, LV_SYMBOL_BATTERY_FULL "  Battery & Power", open_battery_page);
-    create_menu_button(228, LV_SYMBOL_IMAGE "  Display & Sleep", open_display_page);
+    create_menu_button(12, LV_SYMBOL_VOLUME_MAX "  Sound", open_sound_page);
+    create_menu_button(84, LV_SYMBOL_BELL "  Alarm", open_alarm_page);
+    create_menu_button(156, LV_SYMBOL_EDIT "  Time & Date", open_time_page);
+    create_menu_button(228, LV_SYMBOL_BATTERY_FULL "  Battery & Power", open_battery_page);
+    create_menu_button(300, LV_SYMBOL_IMAGE "  Display & Sleep", open_display_page);
 
     settings_batt_icon = lv_label_create(settings_batt_container);
     lv_obj_set_style_text_font(settings_batt_icon, &lv_font_montserrat_48, 0);
@@ -583,74 +760,209 @@ void build_firefly_os() {
     lv_label_set_text(btn_load_rtc_label, LV_SYMBOL_REFRESH " Load RTC");
     lv_obj_center(btn_load_rtc_label);
 
-    settings_alarm_status_label = lv_label_create(settings_sound_container);
-    lv_obj_set_style_text_font(settings_alarm_status_label, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(settings_alarm_status_label, settings_text_primary, 0);
-    lv_label_set_text(settings_alarm_status_label, "Alarm disabled");
-    lv_obj_align(settings_alarm_status_label, LV_ALIGN_TOP_LEFT, 18, 8);
-
-    settings_alarm_time_label = lv_label_create(settings_sound_container);
-    lv_obj_set_style_text_color(settings_alarm_time_label, settings_text_secondary, 0);
-    lv_label_set_text(settings_alarm_time_label, "Time 07:30");
-    lv_obj_align(settings_alarm_time_label, LV_ALIGN_TOP_LEFT, 18, 42);
-
     lv_obj_t * sound_volume_title = lv_label_create(settings_sound_container);
     lv_obj_set_style_text_font(sound_volume_title, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(sound_volume_title, settings_text_primary, 0);
     lv_label_set_text(sound_volume_title, LV_SYMBOL_VOLUME_MAX " Volume");
-    lv_obj_align(sound_volume_title, LV_ALIGN_TOP_LEFT, 18, 82);
+    lv_obj_align(sound_volume_title, LV_ALIGN_TOP_LEFT, 18, 18);
 
     settings_volume_value_label = lv_label_create(settings_sound_container);
     lv_obj_set_style_text_color(settings_volume_value_label, settings_text_secondary, 0);
     lv_label_set_text(settings_volume_value_label, "50%");
-    lv_obj_align(settings_volume_value_label, LV_ALIGN_TOP_RIGHT, -18, 88);
+    lv_obj_align(settings_volume_value_label, LV_ALIGN_TOP_RIGHT, -18, 24);
 
     settings_volume_slider = lv_slider_create(settings_sound_container);
     lv_obj_set_size(settings_volume_slider, settings_content_width, 30);
-    lv_obj_align(settings_volume_slider, LV_ALIGN_TOP_MID, 0, 122);
+    lv_obj_align(settings_volume_slider, LV_ALIGN_TOP_MID, 0, 58);
     lv_slider_set_range(settings_volume_slider, 0, 100);
     lv_slider_set_value(settings_volume_slider, volume_level, LV_ANIM_OFF);
     style_slider(settings_volume_slider, settings_surface_alt, settings_action, lv_color_white());
     lv_obj_set_style_bg_opa(settings_volume_slider, LV_OPA_80, LV_PART_MAIN);
     lv_obj_add_event_cb(settings_volume_slider, slider_volume_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-    lv_obj_t * alarm_switch_card = lv_obj_create(settings_sound_container);
-    lv_obj_set_size(alarm_switch_card, settings_content_width, 58);
-    lv_obj_align(alarm_switch_card, LV_ALIGN_TOP_MID, 0, 172);
-    style_settings_card(alarm_switch_card, settings_surface_alt, 20, LV_OPA_80);
-    lv_obj_set_style_pad_left(alarm_switch_card, 16, 0);
-    lv_obj_set_style_pad_right(alarm_switch_card, 16, 0);
-    lv_obj_clear_flag(alarm_switch_card, LV_OBJ_FLAG_SCROLLABLE);
+    settings_alarm_summary_label = lv_label_create(settings_alarm_container);
+    lv_obj_set_width(settings_alarm_summary_label, settings_content_width);
+    lv_obj_set_style_text_align(settings_alarm_summary_label, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_color(settings_alarm_summary_label, settings_text_primary, 0);
+    lv_obj_set_style_text_font(settings_alarm_summary_label, &lv_font_montserrat_24, 0);
+    lv_label_set_text(settings_alarm_summary_label, "No alarms scheduled");
+    lv_obj_align(settings_alarm_summary_label, LV_ALIGN_TOP_LEFT, 18, 8);
 
-    lv_obj_t * alarm_switch_label = lv_label_create(alarm_switch_card);
-    lv_obj_set_style_text_color(alarm_switch_label, settings_text_primary, 0);
-    lv_label_set_text(alarm_switch_label, LV_SYMBOL_BELL " Enable Alarm");
-    lv_obj_align(alarm_switch_label, LV_ALIGN_LEFT_MID, 0, 0);
+    const lv_coord_t alarm_card_y[FIREFLY_ALARM_SLOT_COUNT] = {72, 186};
+    for(uint8_t slot = 0; slot < FIREFLY_ALARM_SLOT_COUNT; ++slot) {
+        settings_alarm_cards[slot] = lv_btn_create(settings_alarm_container);
+        lv_obj_set_size(settings_alarm_cards[slot], settings_content_width, 96);
+        lv_obj_align(settings_alarm_cards[slot], LV_ALIGN_TOP_MID, 0, alarm_card_y[slot]);
+        style_settings_card(settings_alarm_cards[slot], settings_surface_alt, 24, LV_OPA_80);
+        lv_obj_set_style_pad_all(settings_alarm_cards[slot], 0, 0);
+        lv_obj_add_event_cb(settings_alarm_cards[slot], open_alarm_card_page, LV_EVENT_CLICKED, reinterpret_cast<void *>(slot));
 
-    settings_alarm_switch = lv_switch_create(alarm_switch_card);
-    lv_obj_align(settings_alarm_switch, LV_ALIGN_RIGHT_MID, 0, 0);
-    style_switch(settings_alarm_switch);
-    lv_obj_add_event_cb(settings_alarm_switch, alarm_switch_cb, LV_EVENT_VALUE_CHANGED, NULL);
+        settings_alarm_time_labels[slot] = lv_label_create(settings_alarm_cards[slot]);
+        lv_obj_set_style_text_font(settings_alarm_time_labels[slot], &lv_font_montserrat_48, 0);
+        lv_obj_set_style_text_color(settings_alarm_time_labels[slot], settings_text_primary, 0);
+        lv_label_set_text(settings_alarm_time_labels[slot], "--:--");
+        lv_obj_align(settings_alarm_time_labels[slot], LV_ALIGN_TOP_LEFT, 16, 10);
 
-    lv_obj_t * alarm_time_title = lv_label_create(settings_sound_container);
-    lv_obj_set_style_text_font(alarm_time_title, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(alarm_time_title, settings_text_primary, 0);
-    lv_label_set_text(alarm_time_title, "Alarm Time");
-    lv_obj_align(alarm_time_title, LV_ALIGN_TOP_LEFT, 18, 248);
+        settings_alarm_days_labels[slot] = lv_label_create(settings_alarm_cards[slot]);
+        lv_obj_set_style_text_color(settings_alarm_days_labels[slot], settings_text_secondary, 0);
+        lv_label_set_text(settings_alarm_days_labels[slot], "No schedule");
+        lv_obj_align(settings_alarm_days_labels[slot], LV_ALIGN_BOTTOM_LEFT, 18, -12);
 
-    roller_alarm_hour = lv_roller_create(settings_sound_container);
-    lv_roller_set_options(roller_alarm_hour, "00\n01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23", LV_ROLLER_MODE_NORMAL);
-    lv_roller_set_visible_row_count(roller_alarm_hour, 3);
-    style_roller(roller_alarm_hour, 104, 108);
-    lv_obj_align(roller_alarm_hour, LV_ALIGN_TOP_MID, -60, 282);
-    lv_obj_add_event_cb(roller_alarm_hour, alarm_hour_cb, LV_EVENT_VALUE_CHANGED, NULL);
+        settings_alarm_name_labels[slot] = lv_label_create(settings_alarm_cards[slot]);
+        lv_obj_set_width(settings_alarm_name_labels[slot], 118);
+        lv_label_set_long_mode(settings_alarm_name_labels[slot], LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_font(settings_alarm_name_labels[slot], &lv_font_montserrat_24, 0);
+        lv_obj_set_style_text_color(settings_alarm_name_labels[slot], settings_text_primary, 0);
+        lv_label_set_text(settings_alarm_name_labels[slot], "Empty alarm");
+        lv_obj_align(settings_alarm_name_labels[slot], LV_ALIGN_LEFT_MID, 160, -8);
 
-    roller_alarm_minute = lv_roller_create(settings_sound_container);
-    lv_roller_set_options(roller_alarm_minute, "00\n01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46\n47\n48\n49\n50\n51\n52\n53\n54\n55\n56\n57\n58\n59", LV_ROLLER_MODE_NORMAL);
-    lv_roller_set_visible_row_count(roller_alarm_minute, 3);
-    style_roller(roller_alarm_minute, 104, 108);
-    lv_obj_align(roller_alarm_minute, LV_ALIGN_TOP_MID, 60, 282);
-    lv_obj_add_event_cb(roller_alarm_minute, alarm_minute_cb, LV_EVENT_VALUE_CHANGED, NULL);
+        settings_alarm_empty_labels[slot] = lv_label_create(settings_alarm_cards[slot]);
+        lv_obj_set_width(settings_alarm_empty_labels[slot], 140);
+        lv_label_set_long_mode(settings_alarm_empty_labels[slot], LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_color(settings_alarm_empty_labels[slot], settings_text_secondary, 0);
+        lv_label_set_text(settings_alarm_empty_labels[slot], "Tap + to add");
+        lv_obj_align(settings_alarm_empty_labels[slot], LV_ALIGN_LEFT_MID, 160, 22);
+
+        settings_alarm_switches[slot] = lv_switch_create(settings_alarm_cards[slot]);
+        lv_obj_align(settings_alarm_switches[slot], LV_ALIGN_RIGHT_MID, -16, 0);
+        style_switch(settings_alarm_switches[slot]);
+        lv_obj_clear_flag(settings_alarm_switches[slot], LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_obj_add_event_cb(settings_alarm_switches[slot], alarm_slot_switch_cb, LV_EVENT_VALUE_CHANGED, reinterpret_cast<void *>(slot));
+    }
+
+    settings_alarm_add_button = lv_btn_create(settings_alarm_container);
+    lv_obj_set_size(settings_alarm_add_button, 58, 58);
+    lv_obj_align(settings_alarm_add_button, LV_ALIGN_BOTTOM_RIGHT, -rounded_screen_side_inset, -rounded_screen_bottom_inset);
+    style_settings_card(settings_alarm_add_button, settings_action, 29, LV_OPA_90);
+    lv_obj_add_event_cb(settings_alarm_add_button, open_alarm_add_page, LV_EVENT_CLICKED, NULL);
+    lv_obj_t * settings_alarm_add_icon = lv_label_create(settings_alarm_add_button);
+    lv_obj_set_style_text_font(settings_alarm_add_icon, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(settings_alarm_add_icon, settings_text_primary, 0);
+    lv_label_set_text(settings_alarm_add_icon, LV_SYMBOL_PLUS);
+    lv_obj_center(settings_alarm_add_icon);
+
+    settings_alarm_editor = lv_obj_create(settings_panel);
+    lv_obj_set_size(settings_alarm_editor, LCD_WIDTH, LCD_HEIGHT);
+    lv_obj_set_style_bg_opa(settings_alarm_editor, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(settings_alarm_editor, 0, 0);
+    lv_obj_set_style_radius(settings_alarm_editor, 0, 0);
+    lv_obj_add_flag(settings_alarm_editor, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(settings_alarm_editor, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t * settings_alarm_editor_wallpaper = lv_img_create(settings_alarm_editor);
+    lv_img_set_src(settings_alarm_editor_wallpaper, &settings_wallpaper_firefly_2);
+    lv_obj_align(settings_alarm_editor_wallpaper, LV_ALIGN_CENTER, 0, 0);
+
+    lv_obj_t * settings_alarm_editor_shell = lv_obj_create(settings_alarm_editor);
+    lv_obj_set_size(settings_alarm_editor_shell, LCD_WIDTH, LCD_HEIGHT);
+    lv_obj_align(settings_alarm_editor_shell, LV_ALIGN_CENTER, 0, 0);
+    style_settings_card(settings_alarm_editor_shell, settings_surface, 0, 118);
+    lv_obj_set_style_border_width(settings_alarm_editor_shell, 0, 0);
+    lv_obj_set_style_pad_all(settings_alarm_editor_shell, 0, 0);
+    lv_obj_clear_flag(settings_alarm_editor_shell, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t * settings_alarm_editor_cancel = lv_label_create(settings_alarm_editor_shell);
+    lv_obj_set_style_text_font(settings_alarm_editor_cancel, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(settings_alarm_editor_cancel, settings_action, 0);
+    lv_label_set_text(settings_alarm_editor_cancel, LV_SYMBOL_CLOSE);
+    lv_obj_align(settings_alarm_editor_cancel, LV_ALIGN_TOP_LEFT, rounded_screen_side_inset + alarm_editor_header_offset_x, 28);
+    lv_obj_add_flag(settings_alarm_editor_cancel, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(settings_alarm_editor_cancel, 24);
+    lv_obj_add_event_cb(settings_alarm_editor_cancel, alarm_editor_cancel_cb, LV_EVENT_CLICKED, NULL);
+
+    settings_alarm_editor_title = lv_label_create(settings_alarm_editor_shell);
+    lv_obj_set_style_text_font(settings_alarm_editor_title, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(settings_alarm_editor_title, settings_text_primary, 0);
+    lv_label_set_text(settings_alarm_editor_title, "New Alarm");
+    lv_obj_align(settings_alarm_editor_title, LV_ALIGN_TOP_MID, alarm_editor_header_offset_x, 28);
+
+    lv_obj_t * settings_alarm_editor_confirm = lv_label_create(settings_alarm_editor_shell);
+    lv_obj_set_style_text_font(settings_alarm_editor_confirm, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(settings_alarm_editor_confirm, settings_action, 0);
+    lv_label_set_text(settings_alarm_editor_confirm, LV_SYMBOL_OK);
+    lv_obj_align(settings_alarm_editor_confirm, LV_ALIGN_TOP_RIGHT, -(rounded_screen_side_inset - alarm_editor_header_offset_x), 28);
+    lv_obj_add_flag(settings_alarm_editor_confirm, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(settings_alarm_editor_confirm, 24);
+    lv_obj_add_event_cb(settings_alarm_editor_confirm, alarm_editor_confirm_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t * alarm_editor_time_card = lv_obj_create(settings_alarm_editor_shell);
+    lv_obj_set_size(alarm_editor_time_card, alarm_editor_card_width, 136);
+    lv_obj_align(alarm_editor_time_card, LV_ALIGN_TOP_MID, alarm_editor_offset_x, alarm_editor_time_card_y);
+    style_settings_card(alarm_editor_time_card, settings_surface_alt, 26, LV_OPA_80);
+    lv_obj_set_style_pad_all(alarm_editor_time_card, 12, 0);
+    lv_obj_clear_flag(alarm_editor_time_card, LV_OBJ_FLAG_SCROLLABLE);
+
+    settings_alarm_editor_hour_roller = lv_roller_create(alarm_editor_time_card);
+    lv_roller_set_options(settings_alarm_editor_hour_roller, "00\n01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23", LV_ROLLER_MODE_NORMAL);
+    lv_roller_set_visible_row_count(settings_alarm_editor_hour_roller, 3);
+    style_roller(settings_alarm_editor_hour_roller, 108, 102);
+    lv_obj_align(settings_alarm_editor_hour_roller, LV_ALIGN_CENTER, -72, 0);
+
+    lv_obj_t * alarm_editor_colon = lv_label_create(alarm_editor_time_card);
+    lv_obj_set_style_text_font(alarm_editor_colon, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_color(alarm_editor_colon, settings_action, 0);
+    lv_label_set_text(alarm_editor_colon, ":");
+    lv_obj_align(alarm_editor_colon, LV_ALIGN_CENTER, 0, -4);
+
+    settings_alarm_editor_minute_roller = lv_roller_create(alarm_editor_time_card);
+    lv_roller_set_options(settings_alarm_editor_minute_roller, "00\n01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46\n47\n48\n49\n50\n51\n52\n53\n54\n55\n56\n57\n58\n59", LV_ROLLER_MODE_NORMAL);
+    lv_roller_set_visible_row_count(settings_alarm_editor_minute_roller, 3);
+    style_roller(settings_alarm_editor_minute_roller, 108, 102);
+    lv_obj_align(settings_alarm_editor_minute_roller, LV_ALIGN_CENTER, 72, 0);
+
+    lv_obj_t * alarm_editor_list = lv_obj_create(settings_alarm_editor_shell);
+    lv_obj_set_size(alarm_editor_list, alarm_editor_card_width, alarm_editor_bottom_card_height);
+    lv_obj_align(alarm_editor_list, LV_ALIGN_BOTTOM_MID, alarm_editor_offset_x, -alarm_editor_bottom_card_bottom_inset);
+    style_settings_card(alarm_editor_list, settings_surface_alt, 24, LV_OPA_70);
+    lv_obj_set_style_pad_left(alarm_editor_list, 16, 0);
+    lv_obj_set_style_pad_right(alarm_editor_list, 16, 0);
+    lv_obj_set_style_pad_top(alarm_editor_list, 16, 0);
+    lv_obj_set_style_pad_bottom(alarm_editor_list, 16, 0);
+    lv_obj_set_scroll_dir(alarm_editor_list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(alarm_editor_list, LV_SCROLLBAR_MODE_OFF);
+
+    lv_obj_t * alarm_editor_ringtone_title = lv_label_create(alarm_editor_list);
+    lv_obj_set_style_text_font(alarm_editor_ringtone_title, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(alarm_editor_ringtone_title, settings_text_primary, 0);
+    lv_label_set_text(alarm_editor_ringtone_title, "Ringtone");
+    lv_obj_align(alarm_editor_ringtone_title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    settings_alarm_editor_ringtone_roller = lv_roller_create(alarm_editor_list);
+    lv_roller_set_options(settings_alarm_editor_ringtone_roller, firefly_alarm_ringtone_options_text(), LV_ROLLER_MODE_NORMAL);
+    lv_roller_set_visible_row_count(settings_alarm_editor_ringtone_roller, 3);
+    style_roller(settings_alarm_editor_ringtone_roller, alarm_editor_inner_width, 96);
+    lv_obj_align(settings_alarm_editor_ringtone_roller, LV_ALIGN_TOP_LEFT, 0, 32);
+
+    lv_obj_t * alarm_editor_days_title = lv_label_create(alarm_editor_list);
+    lv_obj_set_style_text_font(alarm_editor_days_title, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(alarm_editor_days_title, settings_text_primary, 0);
+    lv_label_set_text(alarm_editor_days_title, "Repeat");
+    lv_obj_align(alarm_editor_days_title, LV_ALIGN_TOP_LEFT, 0, 144);
+
+    settings_alarm_editor_days_roller = lv_roller_create(alarm_editor_list);
+    lv_roller_set_options(settings_alarm_editor_days_roller, firefly_alarm_day_options_text(), LV_ROLLER_MODE_NORMAL);
+    lv_roller_set_visible_row_count(settings_alarm_editor_days_roller, 3);
+    style_roller(settings_alarm_editor_days_roller, alarm_editor_inner_width, 96);
+    lv_obj_align(settings_alarm_editor_days_roller, LV_ALIGN_TOP_LEFT, 0, 176);
+
+    lv_obj_t * alarm_editor_name_title = lv_label_create(alarm_editor_list);
+    lv_obj_set_style_text_font(alarm_editor_name_title, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(alarm_editor_name_title, settings_text_primary, 0);
+    lv_label_set_text(alarm_editor_name_title, "Alarm Name");
+    lv_obj_align(alarm_editor_name_title, LV_ALIGN_TOP_LEFT, 0, 288);
+
+    settings_alarm_editor_name_ta = lv_textarea_create(alarm_editor_list);
+    style_textarea(settings_alarm_editor_name_ta, 56);
+    lv_obj_set_width(settings_alarm_editor_name_ta, alarm_editor_inner_width);
+    lv_textarea_set_placeholder_text(settings_alarm_editor_name_ta, "Alarm name");
+    lv_obj_align(settings_alarm_editor_name_ta, LV_ALIGN_TOP_LEFT, 0, 320);
+    lv_obj_add_event_cb(settings_alarm_editor_name_ta, alarm_editor_name_event_cb, LV_EVENT_FOCUSED, NULL);
+
+    settings_alarm_editor_keyboard = lv_keyboard_create(settings_alarm_editor);
+    lv_obj_set_size(settings_alarm_editor_keyboard, LCD_WIDTH, 168);
+    lv_obj_align(settings_alarm_editor_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_add_flag(settings_alarm_editor_keyboard, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(settings_alarm_editor_keyboard, alarm_editor_keyboard_event_cb, LV_EVENT_ALL, NULL);
 
     lv_obj_t * display_title = lv_label_create(settings_display_container);
     lv_obj_set_style_text_font(display_title, &lv_font_montserrat_24, 0);

@@ -132,8 +132,16 @@ String two_digit_text(uint8_t value) {
     return String(buf);
 }
 
-String alarm_time_text() {
-    return two_digit_text(alarm_hour) + ":" + two_digit_text(alarm_minute);
+String alarm_time_text(const FireflyAlarm & alarm) {
+    return two_digit_text(alarm.hour) + ":" + two_digit_text(alarm.minute);
+}
+
+String alarm_name_text(const FireflyAlarm & alarm, uint8_t slot) {
+    if(alarm.name[0] != '\0') {
+        return String(alarm.name);
+    }
+
+    return "Alarm " + String(slot + 1U);
 }
 
 const char * battery_symbol_for_percent(int percent) {
@@ -246,7 +254,8 @@ void show_charge_overlay() {
     }
 }
 
-void trigger_alarm_alert(const String& current_time) {
+void trigger_alarm_alert(uint8_t slot, const String& current_time) {
+    const FireflyAlarm & alarm = firefly_alarms[slot];
     alarm_ringing = true;
 
     if(is_sleeping) {
@@ -254,10 +263,15 @@ void trigger_alarm_alert(const String& current_time) {
     }
 
     if(alarm_overlay_title) {
-        lv_label_set_text(alarm_overlay_title, "Alarm");
+        lv_label_set_text(alarm_overlay_title, alarm_name_text(alarm, slot).c_str());
     }
     if(alarm_overlay_detail) {
-        String detail = "It is " + current_time + "\nVolume " + String(volume_level) + "%";
+        String detail = "It is " + current_time;
+        detail += "\n";
+        detail += firefly_alarm_day_label(alarm.days_mask);
+        detail += "  ";
+        detail += firefly_alarm_ringtone_name(alarm.ringtone_index);
+        detail += "\nVolume " + String(volume_level) + "%";
         lv_label_set_text(alarm_overlay_detail, detail.c_str());
     }
     if(alarm_overlay) {
@@ -279,6 +293,43 @@ void wake_sleep_screen_from_blackout() {
     }
     lv_refr_now(NULL);
     gfx_co5300->setBrightness(screen_brightness);
+}
+
+void refresh_alarm_card_ui(uint8_t slot) {
+    if(slot >= FIREFLY_ALARM_SLOT_COUNT) {
+        return;
+    }
+
+    const FireflyAlarm & alarm = firefly_alarms[slot];
+    if(settings_alarm_time_labels[slot]) {
+        lv_label_set_text(settings_alarm_time_labels[slot], alarm.configured ? alarm_time_text(alarm).c_str() : "--:--");
+    }
+    if(settings_alarm_days_labels[slot]) {
+        lv_label_set_text(settings_alarm_days_labels[slot], alarm.configured ? firefly_alarm_day_label(alarm.days_mask) : "No schedule");
+    }
+    if(settings_alarm_name_labels[slot]) {
+        lv_label_set_text(settings_alarm_name_labels[slot], alarm.configured ? alarm_name_text(alarm, slot).c_str() : "Empty alarm");
+    }
+    if(settings_alarm_empty_labels[slot]) {
+        if(alarm.configured) {
+            lv_obj_add_flag(settings_alarm_empty_labels[slot], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_label_set_text(settings_alarm_empty_labels[slot], "Tap + to add");
+            lv_obj_clear_flag(settings_alarm_empty_labels[slot], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if(settings_alarm_switches[slot]) {
+        if(alarm.configured) {
+            lv_obj_clear_flag(settings_alarm_switches[slot], LV_OBJ_FLAG_HIDDEN);
+            if(alarm.enabled) {
+                lv_obj_add_state(settings_alarm_switches[slot], LV_STATE_CHECKED);
+            } else {
+                lv_obj_clear_state(settings_alarm_switches[slot], LV_STATE_CHECKED);
+            }
+        } else {
+            lv_obj_add_flag(settings_alarm_switches[slot], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
 }
 
 void refresh_sleep_icon(bool advance) {
@@ -347,11 +398,55 @@ void load_sound_alarm_preferences() {
     volume_level = prefs.getUChar(UI_PREF_VOLUME_KEY, 50);
     if(volume_level > 100) volume_level = 100;
 
-    alarm_enabled = prefs.getBool(UI_PREF_ALARM_ENABLED_KEY, false);
-    alarm_hour = prefs.getUChar(UI_PREF_ALARM_HOUR_KEY, 7);
-    alarm_minute = prefs.getUChar(UI_PREF_ALARM_MINUTE_KEY, 30);
-    if(alarm_hour > 23) alarm_hour = 7;
-    if(alarm_minute > 59) alarm_minute = 30;
+    bool has_configured_alarm = false;
+    for(uint8_t slot = 0; slot < FIREFLY_ALARM_SLOT_COUNT; ++slot) {
+        FireflyAlarm & alarm = firefly_alarms[slot];
+        firefly_alarm_reset(alarm, slot);
+
+        char key[20];
+        snprintf(key, sizeof(key), "al%u_cfg", static_cast<unsigned>(slot));
+        alarm.configured = prefs.getBool(key, false);
+        snprintf(key, sizeof(key), "al%u_en", static_cast<unsigned>(slot));
+        alarm.enabled = prefs.getBool(key, false);
+        snprintf(key, sizeof(key), "al%u_hr", static_cast<unsigned>(slot));
+        alarm.hour = prefs.getUChar(key, alarm.hour);
+        snprintf(key, sizeof(key), "al%u_mn", static_cast<unsigned>(slot));
+        alarm.minute = prefs.getUChar(key, alarm.minute);
+        snprintf(key, sizeof(key), "al%u_dy", static_cast<unsigned>(slot));
+        alarm.days_mask = prefs.getUChar(key, firefly_alarm_days_mask_from_option(0));
+        snprintf(key, sizeof(key), "al%u_rg", static_cast<unsigned>(slot));
+        alarm.ringtone_index = prefs.getUChar(key, 0);
+        snprintf(key, sizeof(key), "al%u_nm", static_cast<unsigned>(slot));
+        const String stored_name = prefs.getString(key, alarm.name);
+        strncpy(alarm.name, stored_name.c_str(), sizeof(alarm.name) - 1U);
+        alarm.name[sizeof(alarm.name) - 1U] = '\0';
+
+        if(alarm.hour > 23) alarm.hour = 7;
+        if(alarm.minute > 59) alarm.minute = 30;
+        if(alarm.days_mask == 0) alarm.days_mask = firefly_alarm_days_mask_from_option(0);
+        if(alarm.ringtone_index >= FIREFLY_ALARM_RINGTONE_COUNT) alarm.ringtone_index = 0;
+        if(alarm.configured) {
+            has_configured_alarm = true;
+        }
+    }
+
+    if(!has_configured_alarm) {
+        const bool legacy_enabled = prefs.getBool(UI_PREF_ALARM_ENABLED_KEY, false);
+        const uint8_t legacy_hour = prefs.getUChar(UI_PREF_ALARM_HOUR_KEY, 7);
+        const uint8_t legacy_minute = prefs.getUChar(UI_PREF_ALARM_MINUTE_KEY, 30);
+        if(legacy_enabled) {
+            FireflyAlarm & alarm = firefly_alarms[0];
+            alarm.configured = true;
+            alarm.enabled = true;
+            alarm.hour = legacy_hour > 23 ? 7 : legacy_hour;
+            alarm.minute = legacy_minute > 59 ? 30 : legacy_minute;
+            alarm.days_mask = firefly_alarm_days_mask_from_option(0);
+            strncpy(alarm.name, "Alarm 1", sizeof(alarm.name) - 1U);
+            alarm.name[sizeof(alarm.name) - 1U] = '\0';
+        }
+    }
+
+    clear_alarm_trigger_history();
 }
 
 void save_volume_preference() {
@@ -359,9 +454,30 @@ void save_volume_preference() {
 }
 
 void save_alarm_preferences() {
-    prefs.putBool(UI_PREF_ALARM_ENABLED_KEY, alarm_enabled);
-    prefs.putUChar(UI_PREF_ALARM_HOUR_KEY, alarm_hour);
-    prefs.putUChar(UI_PREF_ALARM_MINUTE_KEY, alarm_minute);
+    for(uint8_t slot = 0; slot < FIREFLY_ALARM_SLOT_COUNT; ++slot) {
+        const FireflyAlarm & alarm = firefly_alarms[slot];
+        char key[20];
+        snprintf(key, sizeof(key), "al%u_cfg", static_cast<unsigned>(slot));
+        prefs.putBool(key, alarm.configured);
+        snprintf(key, sizeof(key), "al%u_en", static_cast<unsigned>(slot));
+        prefs.putBool(key, alarm.enabled);
+        snprintf(key, sizeof(key), "al%u_hr", static_cast<unsigned>(slot));
+        prefs.putUChar(key, alarm.hour);
+        snprintf(key, sizeof(key), "al%u_mn", static_cast<unsigned>(slot));
+        prefs.putUChar(key, alarm.minute);
+        snprintf(key, sizeof(key), "al%u_dy", static_cast<unsigned>(slot));
+        prefs.putUChar(key, alarm.days_mask);
+        snprintf(key, sizeof(key), "al%u_rg", static_cast<unsigned>(slot));
+        prefs.putUChar(key, alarm.ringtone_index);
+        snprintf(key, sizeof(key), "al%u_nm", static_cast<unsigned>(slot));
+        prefs.putString(key, String(alarm.name));
+    }
+}
+
+void clear_alarm_trigger_history() {
+    for(uint8_t slot = 0; slot < FIREFLY_ALARM_SLOT_COUNT; ++slot) {
+        firefly_alarm_last_trigger_keys[slot] = "";
+    }
 }
 
 void open_settings_panel() {
@@ -381,10 +497,17 @@ void close_settings_panel() {
 }
 
 void set_settings_subpage(lv_obj_t * page) {
+    if(settings_alarm_editor) {
+        lv_obj_add_flag(settings_alarm_editor, LV_OBJ_FLAG_HIDDEN);
+    }
+    if(settings_alarm_editor_keyboard) {
+        lv_obj_add_flag(settings_alarm_editor_keyboard, LV_OBJ_FLAG_HIDDEN);
+    }
     if(settings_menu_container) lv_obj_add_flag(settings_menu_container, LV_OBJ_FLAG_HIDDEN);
     if(settings_batt_container) lv_obj_add_flag(settings_batt_container, LV_OBJ_FLAG_HIDDEN);
     if(settings_time_container) lv_obj_add_flag(settings_time_container, LV_OBJ_FLAG_HIDDEN);
     if(settings_sound_container) lv_obj_add_flag(settings_sound_container, LV_OBJ_FLAG_HIDDEN);
+    if(settings_alarm_container) lv_obj_add_flag(settings_alarm_container, LV_OBJ_FLAG_HIDDEN);
     if(settings_display_container) lv_obj_add_flag(settings_display_container, LV_OBJ_FLAG_HIDDEN);
 
     if(page) {
@@ -423,24 +546,24 @@ void refresh_sound_alarm_ui() {
     if(settings_volume_value_label) {
         lv_label_set_text(settings_volume_value_label, (String(volume_level) + "%").c_str());
     }
-    if(settings_alarm_status_label) {
-        lv_label_set_text(settings_alarm_status_label, alarm_enabled ? "Alarm enabled" : "Alarm disabled");
+
+    if(settings_alarm_summary_label) {
+        lv_label_set_text(settings_alarm_summary_label, firefly_alarm_minutes_until_text(time(NULL)).c_str());
     }
-    if(settings_alarm_time_label) {
-        lv_label_set_text(settings_alarm_time_label, ("Time " + alarm_time_text()).c_str());
-    }
-    if(settings_alarm_switch) {
-        if(alarm_enabled) {
-            lv_obj_add_state(settings_alarm_switch, LV_STATE_CHECKED);
-        } else {
-            lv_obj_clear_state(settings_alarm_switch, LV_STATE_CHECKED);
+
+    bool has_empty_slot = false;
+    for(uint8_t slot = 0; slot < FIREFLY_ALARM_SLOT_COUNT; ++slot) {
+        refresh_alarm_card_ui(slot);
+        if(!firefly_alarms[slot].configured) {
+            has_empty_slot = true;
         }
     }
-    if(roller_alarm_hour) {
-        lv_roller_set_selected(roller_alarm_hour, alarm_hour, LV_ANIM_OFF);
-    }
-    if(roller_alarm_minute) {
-        lv_roller_set_selected(roller_alarm_minute, alarm_minute, LV_ANIM_OFF);
+    if(settings_alarm_add_button) {
+        if(has_empty_slot) {
+            lv_obj_clear_flag(settings_alarm_add_button, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(settings_alarm_add_button, LV_OBJ_FLAG_HIDDEN);
+        }
     }
 
     refresh_runtime_status_ui();
@@ -605,13 +728,27 @@ void update_time_cb(lv_timer_t * timer) {
     if(sleep_date_label) lv_label_set_text(sleep_date_label, date_str);
 
     const String current_alarm_key = String(date_str) + " " + time_str;
-    if(alarm_enabled && !alarm_ringing && timeinfo.tm_hour == alarm_hour && timeinfo.tm_min == alarm_minute) {
-        if(alarm_last_trigger_key != current_alarm_key) {
-            alarm_last_trigger_key = current_alarm_key;
-            trigger_alarm_alert(time_str);
+    if(!alarm_ringing) {
+        for(uint8_t slot = 0; slot < FIREFLY_ALARM_SLOT_COUNT; ++slot) {
+            const FireflyAlarm & alarm = firefly_alarms[slot];
+            if(!alarm.configured || !alarm.enabled) {
+                continue;
+            }
+            if(!firefly_alarm_matches_weekday(alarm.days_mask, timeinfo.tm_wday)) {
+                continue;
+            }
+            if(timeinfo.tm_hour == alarm.hour && timeinfo.tm_min == alarm.minute) {
+                const String trigger_key = String(slot) + " " + current_alarm_key;
+                if(firefly_alarm_last_trigger_keys[slot] != trigger_key) {
+                    firefly_alarm_last_trigger_keys[slot] = trigger_key;
+                    trigger_alarm_alert(slot, time_str);
+                    break;
+                }
+            }
         }
     }
 
+    refresh_sound_alarm_ui();
     refresh_battery_ui();
 }
 

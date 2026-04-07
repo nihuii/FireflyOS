@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <lvgl.h>
 #include "Arduino_GFX_Library.h"
+#include "FireflyAlarm.h"
 #include "LockWallpaper.h"
 #include "SettingsWallpaper.h"
 #include "pin_config.h"
@@ -52,17 +53,29 @@ extern lv_obj_t * settings_batt_icon;
 extern lv_obj_t * settings_batt_info;
 extern lv_obj_t * settings_time_container;
 extern lv_obj_t * settings_sound_container;
+extern lv_obj_t * settings_alarm_container;
 extern lv_obj_t * settings_display_container;
 extern lv_obj_t * settings_volume_slider;
 extern lv_obj_t * settings_volume_value_label;
-extern lv_obj_t * settings_alarm_status_label;
-extern lv_obj_t * settings_alarm_time_label;
-extern lv_obj_t * settings_alarm_switch;
 extern lv_obj_t * settings_brightness_slider;
 extern lv_obj_t * settings_brightness_value_label;
 extern lv_obj_t * settings_sleep_roller;
-extern lv_obj_t * roller_alarm_hour;
-extern lv_obj_t * roller_alarm_minute;
+extern lv_obj_t * settings_alarm_summary_label;
+extern lv_obj_t * settings_alarm_cards[FIREFLY_ALARM_SLOT_COUNT];
+extern lv_obj_t * settings_alarm_time_labels[FIREFLY_ALARM_SLOT_COUNT];
+extern lv_obj_t * settings_alarm_days_labels[FIREFLY_ALARM_SLOT_COUNT];
+extern lv_obj_t * settings_alarm_name_labels[FIREFLY_ALARM_SLOT_COUNT];
+extern lv_obj_t * settings_alarm_empty_labels[FIREFLY_ALARM_SLOT_COUNT];
+extern lv_obj_t * settings_alarm_switches[FIREFLY_ALARM_SLOT_COUNT];
+extern lv_obj_t * settings_alarm_add_button;
+extern lv_obj_t * settings_alarm_editor;
+extern lv_obj_t * settings_alarm_editor_title;
+extern lv_obj_t * settings_alarm_editor_hour_roller;
+extern lv_obj_t * settings_alarm_editor_minute_roller;
+extern lv_obj_t * settings_alarm_editor_ringtone_roller;
+extern lv_obj_t * settings_alarm_editor_days_roller;
+extern lv_obj_t * settings_alarm_editor_name_ta;
+extern lv_obj_t * settings_alarm_editor_keyboard;
 extern lv_obj_t * roller_year;
 extern lv_obj_t * roller_month;
 extern lv_obj_t * roller_day;
@@ -92,11 +105,7 @@ extern volatile uint32_t auto_sleep_ms;
 extern volatile unsigned long last_activity_time;
 extern volatile unsigned long sleep_entered_at;
 extern volatile unsigned long charge_overlay_started_at;
-extern bool alarm_enabled;
-extern uint8_t alarm_hour;
-extern uint8_t alarm_minute;
 extern bool alarm_ringing;
-extern String alarm_last_trigger_key;
 extern volatile bool charging_overlay_visible;
 extern bool charging_last_state;
 
@@ -128,6 +137,7 @@ void load_sound_alarm_preferences();
 void save_volume_preference();
 void save_alarm_preferences();
 void refresh_sound_alarm_ui();
+void clear_alarm_trigger_history();
 void set_screen_brightness_level(uint8_t brightness);
 void dismiss_alarm_alert();
 void update_charging_overlay();
