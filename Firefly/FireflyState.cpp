@@ -69,8 +69,8 @@ volatile bool is_sleeping = false;
 volatile bool sleep_display_off = false;
 volatile bool is_on_lockscreen = true;
 
-uint8_t screen_brightness = 200;
-uint8_t volume_level = 70;
+uint8_t screen_brightness = 128;
+uint8_t volume_level = 50;
 volatile uint32_t auto_sleep_ms = 30000UL;
 volatile unsigned long last_activity_time = 0;
 volatile unsigned long sleep_entered_at = 0;

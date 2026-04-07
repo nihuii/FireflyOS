@@ -368,7 +368,7 @@ void build_firefly_os() {
 
     notif_volume_value_label = lv_label_create(volume_card);
     lv_obj_set_style_text_color(notif_volume_value_label, control_subtext, 0);
-    lv_label_set_text(notif_volume_value_label, "70%");
+    lv_label_set_text(notif_volume_value_label, "50%");
     lv_obj_align(notif_volume_value_label, LV_ALIGN_TOP_RIGHT, 0, 4);
 
     notif_volume_slider = lv_slider_create(volume_card);
@@ -394,7 +394,7 @@ void build_firefly_os() {
 
     notif_brightness_value_label = lv_label_create(brightness_card);
     lv_obj_set_style_text_color(notif_brightness_value_label, control_subtext, 0);
-    lv_label_set_text(notif_brightness_value_label, "78%");
+    lv_label_set_text(notif_brightness_value_label, "50%");
     lv_obj_align(notif_brightness_value_label, LV_ALIGN_TOP_RIGHT, 0, 4);
 
     notif_brightness_slider = lv_slider_create(brightness_card);
@@ -602,7 +602,7 @@ void build_firefly_os() {
 
     settings_volume_value_label = lv_label_create(settings_sound_container);
     lv_obj_set_style_text_color(settings_volume_value_label, settings_text_secondary, 0);
-    lv_label_set_text(settings_volume_value_label, "70%");
+    lv_label_set_text(settings_volume_value_label, "50%");
     lv_obj_align(settings_volume_value_label, LV_ALIGN_TOP_RIGHT, -18, 88);
 
     settings_volume_slider = lv_slider_create(settings_sound_container);
@@ -660,7 +660,7 @@ void build_firefly_os() {
 
     settings_brightness_value_label = lv_label_create(settings_display_container);
     lv_obj_set_style_text_color(settings_brightness_value_label, settings_text_secondary, 0);
-    lv_label_set_text(settings_brightness_value_label, "78%");
+    lv_label_set_text(settings_brightness_value_label, "50%");
     lv_obj_align(settings_brightness_value_label, LV_ALIGN_TOP_RIGHT, -18, 18);
 
     settings_brightness_slider = lv_slider_create(settings_display_container);
@@ -705,7 +705,7 @@ void build_firefly_os() {
     lv_obj_set_style_text_align(alarm_overlay_detail, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(alarm_overlay_detail, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(alarm_overlay_detail, lv_color_hex(0xC3CDD8), 0);
-    lv_label_set_text(alarm_overlay_detail, "It is 07:30\nVolume 70%");
+    lv_label_set_text(alarm_overlay_detail, "It is 07:30\nVolume 50%");
     lv_obj_align(alarm_overlay_detail, LV_ALIGN_CENTER, 0, -10);
 
     lv_obj_t * alarm_stop_button = lv_btn_create(alarm_overlay);

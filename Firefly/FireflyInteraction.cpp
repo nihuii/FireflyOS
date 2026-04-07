@@ -273,10 +273,12 @@ void wake_sleep_screen_from_blackout() {
 
     sleep_display_off = false;
     sleep_entered_at = millis();
-    gfx_co5300->setBrightness(screen_brightness);
     if(sleep_screen) {
         lv_obj_clear_flag(sleep_screen, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(sleep_screen);
     }
+    lv_refr_now(NULL);
+    gfx_co5300->setBrightness(screen_brightness);
 }
 
 void refresh_sleep_icon(bool advance) {
@@ -342,7 +344,7 @@ void sync_time_to_system_from_rtc(const RTC_DateTime& dt) {
 }
 
 void load_sound_alarm_preferences() {
-    volume_level = prefs.getUChar(UI_PREF_VOLUME_KEY, 70);
+    volume_level = prefs.getUChar(UI_PREF_VOLUME_KEY, 50);
     if(volume_level > 100) volume_level = 100;
 
     alarm_enabled = prefs.getBool(UI_PREF_ALARM_ENABLED_KEY, false);
