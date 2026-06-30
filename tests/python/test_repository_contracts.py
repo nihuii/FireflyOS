@@ -30,6 +30,11 @@ class RepositoryContracts(unittest.TestCase):
         for field in ("startup_ms", "internal_free", "internal_min", "psram_free", "psram_size"):
             self.assertIn(field, text)
 
+    def test_fireflyos_library_manifest_exists(self):
+        manifest = ROOT / "libraries" / "FireflyOS" / "library.properties"
+        self.assertTrue(manifest.is_file(), "FireflyOS library manifest must exist")
+        self.assertIn("name=FireflyOS", manifest.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()
