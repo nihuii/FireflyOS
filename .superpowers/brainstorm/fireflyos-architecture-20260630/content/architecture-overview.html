@@ -1,0 +1,182 @@
+<style>
+  :root {
+    --ff-bg: #05090c;
+    --ff-panel: #0c1820;
+    --ff-panel-2: #10242b;
+    --ff-green: #5fe7c7;
+    --ff-cyan: #6ec4d6;
+    --ff-violet: #a89bcb;
+    --sam-green: #a8ff60;
+    --sam-orange: #ff8a45;
+    --text: #d8f7ee;
+    --muted: #8ca9ad;
+  }
+
+  .hero {
+    border: 1px solid rgba(95, 231, 199, .35);
+    border-radius: 24px;
+    padding: 28px;
+    background:
+      radial-gradient(circle at 15% 10%, rgba(95, 231, 199, .16), transparent 32%),
+      radial-gradient(circle at 88% 12%, rgba(168, 255, 96, .11), transparent 24%),
+      linear-gradient(145deg, #071016, #05090c 62%);
+    color: var(--text);
+    margin-bottom: 24px;
+  }
+
+  .hero h2 { margin-bottom: 8px; color: #effffb; }
+  .hero .subtitle { color: var(--muted); margin-bottom: 18px; }
+  .principles { display: flex; gap: 10px; flex-wrap: wrap; }
+  .pill {
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(110, 196, 214, .35);
+    background: rgba(12, 24, 32, .8);
+    color: var(--ff-cyan);
+    font-size: 13px;
+  }
+
+  .architecture {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 220px;
+    gap: 20px;
+    align-items: stretch;
+  }
+
+  .stack { display: grid; gap: 10px; }
+  .layer {
+    position: relative;
+    padding: 16px 18px;
+    border-radius: 16px;
+    background: var(--ff-panel);
+    border: 1px solid rgba(110, 196, 214, .23);
+    color: var(--text);
+  }
+  .layer::after {
+    content: "↓";
+    position: absolute;
+    left: 50%; bottom: -17px;
+    transform: translateX(-50%);
+    color: var(--ff-green);
+    z-index: 2;
+  }
+  .layer:last-child::after { display: none; }
+  .layer h3 { margin: 0 0 5px; font-size: 16px; color: #effffb; }
+  .layer p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--muted); }
+  .layer.app { border-left: 4px solid var(--ff-violet); }
+  .layer.shell { border-left: 4px solid var(--ff-green); }
+  .layer.ux { border-left: 4px solid var(--ff-cyan); }
+  .layer.service { border-left: 4px solid var(--sam-green); }
+  .layer.core { border-left: 4px solid var(--sam-orange); }
+  .layer.hal { border-left: 4px solid #eef5f4; }
+
+  .companion {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 14px;
+    border-radius: 20px;
+    padding: 18px;
+    background: linear-gradient(180deg, rgba(16,36,43,.9), rgba(5,9,12,.96));
+    border: 1px dashed rgba(95, 231, 199, .42);
+    color: var(--text);
+  }
+  .companion h3 { color: var(--ff-green); margin: 0; }
+  .companion p { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 0; }
+  .linkline { text-align: center; color: var(--sam-green); font-size: 22px; }
+
+  .flow {
+    margin-top: 24px;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+  }
+  .flow-step {
+    min-height: 94px;
+    padding: 13px;
+    border-radius: 14px;
+    background: rgba(12,24,32,.92);
+    border: 1px solid rgba(110,196,214,.2);
+  }
+  .flow-step strong { display: block; color: var(--ff-green); margin-bottom: 5px; }
+  .flow-step span { color: var(--muted); font-size: 12px; line-height: 1.45; }
+
+  .legend {
+    margin-top: 20px;
+    padding: 16px 18px;
+    border-radius: 14px;
+    background: rgba(168,255,96,.06);
+    border: 1px solid rgba(168,255,96,.18);
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.65;
+  }
+
+  @media (max-width: 900px) {
+    .architecture { grid-template-columns: 1fr; }
+    .flow { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+
+<div class="hero">
+  <h2>FireflyOS 系统总体架构</h2>
+  <p class="subtitle">像手机一样完整，像嵌入式系统一样克制：离线独立运行，手机连接只做增强。</p>
+  <div class="principles">
+    <span class="pill">410 × 502 AMOLED</span>
+    <span class="pill">ESP32-S3 双核</span>
+    <span class="pill">400mAh / 一天续航</span>
+    <span class="pill">LVGL 8 单核 UI</span>
+    <span class="pill">流萤日常 × 萨姆守护</span>
+  </div>
+</div>
+
+<div class="architecture">
+  <div class="stack">
+    <div class="layer app">
+      <h3>⑥ 应用层</h3>
+      <p>时钟、日历、活动、天气、音乐、录音、文件、工具、设置与诊断；按需创建和回收。</p>
+    </div>
+    <div class="layer shell">
+      <h3>⑤ 系统 UI Shell</h3>
+      <p>息屏、锁屏、桌面、状态栏、控制中心、通知中心、导航栈和高优先级覆盖层。</p>
+    </div>
+    <div class="layer ux">
+      <h3>④ 体验基础层</h3>
+      <p>流萤/SAM 主题、中文字体、组件库、圆角安全区、动效令牌与资源生命周期。</p>
+    </div>
+    <div class="layer service">
+      <h3>③ 系统服务层</h3>
+      <p>时间、闹钟、电源、IMU、音频、存储、连接、通知、天气、OTA 和诊断服务。</p>
+    </div>
+    <div class="layer core">
+      <h3>② 系统核心层</h3>
+      <p>生命周期、静态应用注册、事件总线、状态快照、能力注册与资源治理。</p>
+    </div>
+    <div class="layer hal">
+      <h3>① 硬件抽象层</h3>
+      <p>显示、触摸、按键、RTC、PMU、IMU、ES8311、SD、Wi-Fi、BLE 与 NVS。</p>
+    </div>
+  </div>
+
+  <aside class="companion">
+    <h3>Android 伴侣应用</h3>
+    <p>通知同步、天气、远程配置、媒体控制、找设备、配网和 OTA。</p>
+    <div class="linkline">⇄ BLE</div>
+    <p>BLE 是低功耗常规通道；Wi-Fi 只在 OTA、天气直连或大文件传输时按需开启。</p>
+    <div class="linkline">⇄ Wi-Fi</div>
+    <p>手机断连后，时间、闹钟、活动、本地媒体与系统设置仍独立工作。</p>
+  </aside>
+</div>
+
+<div class="flow">
+  <div class="flow-step"><strong>输入</strong><span>触摸、按键、RTC、PMU、IMU、手机消息</span></div>
+  <div class="flow-step"><strong>后台服务</strong><span>读取硬件、更新模型，不直接调用 LVGL</span></div>
+  <div class="flow-step"><strong>事件与状态</strong><span>有界事件队列 + 最新状态快照</span></div>
+  <div class="flow-step"><strong>UI Core</strong><span>统一消费事件，只刷新当前可见控件</span></div>
+  <div class="flow-step"><strong>输出</strong><span>AMOLED、音频、存储、BLE/Wi-Fi 响应</span></div>
+</div>
+
+<div class="legend">
+  <strong style="color:#d8f7ee">核心设计判断：</strong>
+  FireflyOS 在体验上采用手机式应用、系统面板与通知结构；在实现上坚持静态模块、单核 LVGL、事件驱动和按需服务。这样既能继续扩展硬件能力，也不会让 ESP32-S3 承担通用手机 OS 的进程与窗口成本。
+</div>

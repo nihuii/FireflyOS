@@ -1,0 +1,758 @@
+[
+  {
+    "id": "W01_boot",
+    "title": "启动画面",
+    "category": "系统与外壳",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W01_boot.png"
+  },
+  {
+    "id": "W02_glance",
+    "title": "一瞥息屏",
+    "category": "系统与外壳",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W02_glance.png"
+  },
+  {
+    "id": "W03_lock",
+    "title": "锁屏",
+    "category": "系统与外壳",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W03_lock.png"
+  },
+  {
+    "id": "W04_home_1",
+    "title": "应用主页第1页",
+    "category": "系统与外壳",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W04_home_1.png"
+  },
+  {
+    "id": "W05_home_2",
+    "title": "应用主页第2页",
+    "category": "系统与外壳",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W05_home_2.png"
+  },
+  {
+    "id": "W06_control_center",
+    "title": "控制中心",
+    "category": "系统与外壳",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W06_control_center.png"
+  },
+  {
+    "id": "W07_notifications",
+    "title": "通知中心",
+    "category": "系统与外壳",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W07_notifications.png"
+  },
+  {
+    "id": "W08_notifications_empty",
+    "title": "通知中心空状态",
+    "category": "系统与外壳",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W08_notifications_empty.png"
+  },
+  {
+    "id": "W09_notification_detail",
+    "title": "通知详情",
+    "category": "系统与外壳",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W09_notification_detail.png"
+  },
+  {
+    "id": "W10_power_menu",
+    "title": "电源菜单",
+    "category": "系统与外壳",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W10_power_menu.png"
+  },
+  {
+    "id": "W11_charging",
+    "title": "充电覆盖层",
+    "category": "系统与外壳",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W11_charging.png"
+  },
+  {
+    "id": "W12_alarm_ringing",
+    "title": "闹钟响铃",
+    "category": "SAM高优先级",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W12_alarm_ringing.png"
+  },
+  {
+    "id": "W13_critical_battery",
+    "title": "严重低电量",
+    "category": "SAM高优先级",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W13_critical_battery.png"
+  },
+  {
+    "id": "W14_pairing_confirm",
+    "title": "手表配对确认",
+    "category": "连接与权限",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W14_pairing_confirm.png"
+  },
+  {
+    "id": "W15_pairing_result",
+    "title": "配对成功",
+    "category": "连接与权限",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W15_pairing_result.png"
+  },
+  {
+    "id": "W16_hardware_degraded",
+    "title": "硬件降级提示",
+    "category": "系统与外壳",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W16_hardware_degraded.png"
+  },
+  {
+    "id": "W17_permission_prompt",
+    "title": "麦克风权限",
+    "category": "连接与权限",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W17_permission_prompt.png"
+  },
+  {
+    "id": "W18_clock_hub",
+    "title": "时钟中心",
+    "category": "时钟与日程",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W18_clock_hub.png"
+  },
+  {
+    "id": "W19_alarm_list",
+    "title": "闹钟列表",
+    "category": "时钟与日程",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W19_alarm_list.png"
+  },
+  {
+    "id": "W20_alarm_editor",
+    "title": "闹钟编辑",
+    "category": "时钟与日程",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W20_alarm_editor.png"
+  },
+  {
+    "id": "W21_alarm_keyboard",
+    "title": "闹钟名称键盘",
+    "category": "时钟与日程",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W21_alarm_keyboard.png"
+  },
+  {
+    "id": "W22_timer_idle",
+    "title": "计时器待机",
+    "category": "时钟与日程",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W22_timer_idle.png"
+  },
+  {
+    "id": "W23_timer_running",
+    "title": "计时器运行",
+    "category": "时钟与日程",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W23_timer_running.png"
+  },
+  {
+    "id": "W24_stopwatch",
+    "title": "秒表",
+    "category": "时钟与日程",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W24_stopwatch.png"
+  },
+  {
+    "id": "W25_calendar_month",
+    "title": "日历月视图",
+    "category": "时钟与日程",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W25_calendar_month.png"
+  },
+  {
+    "id": "W26_calendar_agenda",
+    "title": "日历日程视图",
+    "category": "时钟与日程",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W26_calendar_agenda.png"
+  },
+  {
+    "id": "W27_settings_main",
+    "title": "设置主页",
+    "category": "设置",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W27_settings_main.png"
+  },
+  {
+    "id": "W28_settings_sound",
+    "title": "声音设置",
+    "category": "设置",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W28_settings_sound.png"
+  },
+  {
+    "id": "W29_settings_time",
+    "title": "时间设置",
+    "category": "设置",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W29_settings_time.png"
+  },
+  {
+    "id": "W30_settings_battery",
+    "title": "电池设置",
+    "category": "设置",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W30_settings_battery.png"
+  },
+  {
+    "id": "W31_settings_display",
+    "title": "显示设置",
+    "category": "设置",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W31_settings_display.png"
+  },
+  {
+    "id": "W32_settings_connectivity",
+    "title": "连接设置",
+    "category": "设置",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W32_settings_connectivity.png"
+  },
+  {
+    "id": "W33_settings_notifications",
+    "title": "通知与隐私设置",
+    "category": "设置",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W33_settings_notifications.png"
+  },
+  {
+    "id": "W34_settings_themes",
+    "title": "主题设置",
+    "category": "设置",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W34_settings_themes.png"
+  },
+  {
+    "id": "W35_device_info",
+    "title": "设备信息",
+    "category": "设置",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W35_device_info.png"
+  },
+  {
+    "id": "W36_diagnostics",
+    "title": "系统诊断",
+    "category": "设置",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W36_diagnostics.png"
+  },
+  {
+    "id": "W37_activity_today",
+    "title": "今日活动",
+    "category": "活动与工具",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W37_activity_today.png"
+  },
+  {
+    "id": "W38_activity_details",
+    "title": "活动详情",
+    "category": "活动与工具",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W38_activity_details.png"
+  },
+  {
+    "id": "W39_motion_unavailable",
+    "title": "运动传感器不可用",
+    "category": "活动与工具",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W39_motion_unavailable.png"
+  },
+  {
+    "id": "W40_calculator",
+    "title": "计算器",
+    "category": "活动与工具",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W40_calculator.png"
+  },
+  {
+    "id": "W41_flashlight",
+    "title": "屏幕手电筒",
+    "category": "活动与工具",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W41_flashlight.png"
+  },
+  {
+    "id": "W42_files_root",
+    "title": "文件根目录",
+    "category": "存储与媒体",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W42_files_root.png"
+  },
+  {
+    "id": "W43_files_list",
+    "title": "文件列表",
+    "category": "存储与媒体",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W43_files_list.png"
+  },
+  {
+    "id": "W44_sd_unavailable",
+    "title": "SD 卡不可用",
+    "category": "存储与媒体",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W44_sd_unavailable.png"
+  },
+  {
+    "id": "W45_music_library",
+    "title": "音乐库",
+    "category": "存储与媒体",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W45_music_library.png"
+  },
+  {
+    "id": "W46_music_now_playing",
+    "title": "正在播放",
+    "category": "存储与媒体",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W46_music_now_playing.png"
+  },
+  {
+    "id": "W47_music_empty",
+    "title": "音乐空状态",
+    "category": "存储与媒体",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W47_music_empty.png"
+  },
+  {
+    "id": "W48_recorder_idle",
+    "title": "录音待机",
+    "category": "存储与媒体",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W48_recorder_idle.png"
+  },
+  {
+    "id": "W49_recorder_recording",
+    "title": "正在录音",
+    "category": "存储与媒体",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W49_recorder_recording.png"
+  },
+  {
+    "id": "W50_recordings_list",
+    "title": "录音列表",
+    "category": "存储与媒体",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W50_recordings_list.png"
+  },
+  {
+    "id": "W51_themes_gallery",
+    "title": "主题图库",
+    "category": "主题",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W51_themes_gallery.png"
+  },
+  {
+    "id": "W52_theme_detail",
+    "title": "主题详情",
+    "category": "主题",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W52_theme_detail.png"
+  },
+  {
+    "id": "W53_theme_import_error",
+    "title": "主题导入失败",
+    "category": "主题",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W53_theme_import_error.png"
+  },
+  {
+    "id": "W54_storage_info",
+    "title": "存储详情",
+    "category": "存储与媒体",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W54_storage_info.png"
+  },
+  {
+    "id": "W55_weather_fresh",
+    "title": "天气正常",
+    "category": "网络服务",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W55_weather_fresh.png"
+  },
+  {
+    "id": "W56_weather_stale",
+    "title": "天气缓存过期",
+    "category": "网络服务",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W56_weather_stale.png"
+  },
+  {
+    "id": "W57_weather_no_location",
+    "title": "天气无城市",
+    "category": "网络服务",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W57_weather_no_location.png"
+  },
+  {
+    "id": "W58_wifi_provision",
+    "title": "Wi-Fi 配网",
+    "category": "网络服务",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W58_wifi_provision.png"
+  },
+  {
+    "id": "W59_transfer_receiving",
+    "title": "文件接收",
+    "category": "连接与传输",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W59_transfer_receiving.png"
+  },
+  {
+    "id": "W60_update_available",
+    "title": "发现更新",
+    "category": "系统更新",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W60_update_available.png"
+  },
+  {
+    "id": "W61_update_download",
+    "title": "下载更新",
+    "category": "系统更新",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W61_update_download.png"
+  },
+  {
+    "id": "W62_update_installing",
+    "title": "安装更新",
+    "category": "系统更新",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W62_update_installing.png"
+  },
+  {
+    "id": "W63_update_rollback",
+    "title": "更新回滚",
+    "category": "系统更新",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W63_update_rollback.png"
+  },
+  {
+    "id": "W64_find_watch",
+    "title": "查找手表",
+    "category": "SAM高优先级",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W64_find_watch.png"
+  },
+  {
+    "id": "W65_factory_reset",
+    "title": "恢复出厂确认",
+    "category": "系统与外壳",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W65_factory_reset.png"
+  },
+  {
+    "id": "W66_low_memory",
+    "title": "低内存保护",
+    "category": "SAM高优先级",
+    "platform": "watch",
+    "width": 410,
+    "height": 502,
+    "path": "watch/W66_low_memory.png"
+  },
+  {
+    "id": "A01_welcome",
+    "title": "欢迎与未连接",
+    "category": "首次连接",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A01_welcome.png"
+  },
+  {
+    "id": "A02_device_scan",
+    "title": "扫描设备",
+    "category": "首次连接",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A02_device_scan.png"
+  },
+  {
+    "id": "A03_pairing_code",
+    "title": "配对码确认",
+    "category": "首次连接",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A03_pairing_code.png"
+  },
+  {
+    "id": "A04_dashboard_connected",
+    "title": "已连接仪表盘",
+    "category": "设备",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A04_dashboard_connected.png"
+  },
+  {
+    "id": "A05_dashboard_offline",
+    "title": "离线仪表盘",
+    "category": "设备",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A05_dashboard_offline.png"
+  },
+  {
+    "id": "A06_notification_permission",
+    "title": "通知权限引导",
+    "category": "通知",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A06_notification_permission.png"
+  },
+  {
+    "id": "A07_notification_filter",
+    "title": "通知应用筛选",
+    "category": "通知",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A07_notification_filter.png"
+  },
+  {
+    "id": "A08_settings_sync",
+    "title": "设备同步设置",
+    "category": "设置",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A08_settings_sync.png"
+  },
+  {
+    "id": "A09_theme_manager",
+    "title": "主题管理",
+    "category": "主题",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A09_theme_manager.png"
+  },
+  {
+    "id": "A10_weather_city",
+    "title": "天气城市",
+    "category": "天气",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A10_weather_city.png"
+  },
+  {
+    "id": "A11_calendar_permission",
+    "title": "日历同步权限",
+    "category": "日历",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A11_calendar_permission.png"
+  },
+  {
+    "id": "A12_media_remote",
+    "title": "媒体遥控",
+    "category": "媒体",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A12_media_remote.png"
+  },
+  {
+    "id": "A13_find_device",
+    "title": "查找设备",
+    "category": "设备",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A13_find_device.png"
+  },
+  {
+    "id": "A14_wifi_provision",
+    "title": "Wi-Fi 配网",
+    "category": "网络",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A14_wifi_provision.png"
+  },
+  {
+    "id": "A15_transfer_manager",
+    "title": "传输管理",
+    "category": "传输",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A15_transfer_manager.png"
+  },
+  {
+    "id": "A16_update_available",
+    "title": "固件更新可用",
+    "category": "更新",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A16_update_available.png"
+  },
+  {
+    "id": "A17_update_progress",
+    "title": "固件更新传输",
+    "category": "更新",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A17_update_progress.png"
+  },
+  {
+    "id": "A18_unbind_confirm",
+    "title": "解除绑定确认",
+    "category": "设备",
+    "platform": "android",
+    "width": 432,
+    "height": 960,
+    "path": "android/A18_unbind_confirm.png"
+  }
+]
