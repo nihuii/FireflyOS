@@ -1171,6 +1171,15 @@ void setup(void) {
     pinMode(0, INPUT_PULLUP);
     last_activity_time = millis();
     start_firefly_background_task();
+
+    Serial.printf(
+        "FIREFLY_BASELINE startup_ms=%lu internal_free=%u internal_min=%u psram_free=%u psram_size=%u\n",
+        static_cast<unsigned long>(millis()),
+        ESP.getFreeHeap(),
+        ESP.getMinFreeHeap(),
+        ESP.getFreePsram(),
+        ESP.getPsramSize()
+    );
 }
 
 void loop() {
