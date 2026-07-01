@@ -1,5 +1,21 @@
 ﻿# Sleep Icon Change Log
 
+## 模块化核心状态
+
+主工程现已接入本地 `FireflyOS` Arduino 库。库内提供有界事件队列、系统状态快照、硬件能力/应用注册、生命周期、资源仲裁和 HAL 接口；现有 UI 页面仍保留在 `Firefly/` 中并渐进迁移。
+
+- UI/LVGL 仍只由 Arduino `loop()` 所在核心调用。
+- 后台任务只检测按键与息屏时序，并向容量 16 的 `EventBus` 投递事件。
+- `loop()` 统一消费事件后执行页面动作；后台任务不可用时回退为单核轮询。
+- `LegacyBoardAdapter` 包裹现有 RTC、PMU 和 CO5300 对象，旧全局对象暂时保留，避免影响当前页面。
+- 新 HAL 的 I2C 事务通过带超时的 FreeRTOS mutex 串行化；持锁期间不更新 UI。
+
+统一验证入口为：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\verify_all.ps1
+```
+
 ## 本次功能
 
 为 FireflyOS 的息屏界面增加了 4 张循环显示的流萤图片，素材来源于 `image/sleep/` 目录下的 4 张 PNG。
@@ -62,7 +78,7 @@
 
 - 后台核不直接调用任何 `lv_obj_*` / `lv_label_set_text` / `lv_img_set_src` 等 LVGL 接口。
 - 后台核也不直接访问 PMU / RTC 的 I2C 读取逻辑，避免和 UI 核上的状态刷新产生总线竞争。
-- 后台核只负责置位事件，真正的界面动作仍由 UI 核执行。
+- 后台核只负责向有界 `EventBus` 投递事件，真正的界面动作仍由 UI 核执行。
 
 Arduino IDE `Tools` 中和双核相关的两项，当前建议也补充说明如下：
 
@@ -133,7 +149,7 @@ Arduino IDE `Tools` 中和双核相关的两项，当前建议也补充说明如
   - `tileview` 滑动开始时隐藏桌面图标层，滑动结束并真正进入桌面后再显示。
   - 新增固定到另一核心的后台任务。
   - 后台任务只负责 `BOOT` 短按事件与自动息屏/黑屏时序检测。
-  - UI 核通过事件标志消费后台任务结果，保持 LVGL 单核访问。
+  - UI 核通过 `EventBus` 消费后台任务结果，保持 LVGL 单核访问。
 
 - `Firefly/Firefly.ino`
   - 在息屏页面中加入图片控件。
