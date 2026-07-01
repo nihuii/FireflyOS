@@ -21,6 +21,7 @@ void GlanceScreen::bind(lv_obj_t * root, lv_obj_t * image, lv_obj_t * time,
     provider_ = provider;
     image_count_ = image_count;
     presentCurrentImage();
+    has_presented_ = false;
 }
 
 void GlanceScreen::show() {

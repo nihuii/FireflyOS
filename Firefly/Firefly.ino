@@ -4,12 +4,6 @@ namespace {
 
 int8_t active_alarm_editor_slot = -1;
 
-void open_settings_menu(lv_event_t * e) {
-    LV_UNUSED(e);
-    open_settings_panel();
-    set_settings_subpage(NULL);
-}
-
 firefly::Route route_for_app(const char * id) {
     if(!id) return firefly::Route::Home;
     if(strcmp(id, "settings") == 0) return firefly::Route::Settings;
@@ -23,12 +17,77 @@ firefly::Route route_for_app(const char * id) {
     return firefly::Route::Diagnostics;
 }
 
+const char * title_for_route(firefly::Route route) {
+    switch(route) {
+        case firefly::Route::Clock: return "Clock";
+        case firefly::Route::Calendar: return "Calendar";
+        case firefly::Route::Activity: return "Activity";
+        case firefly::Route::Weather: return "Weather";
+        case firefly::Route::Music: return "Music";
+        case firefly::Route::Recorder: return "Recorder";
+        case firefly::Route::Files: return "Files";
+        case firefly::Route::Themes: return "Themes";
+        case firefly::Route::Tools: return "Tools";
+        case firefly::Route::Diagnostics: return "Diagnostics";
+        default: return "FireflyOS";
+    }
+}
+
+void handle_shell_route(firefly::Route previous, firefly::Route current) {
+    LV_UNUSED(previous);
+    close_settings_panel();
+    app_shell_screen.hide();
+
+    if(current == firefly::Route::Lock) {
+        if(tv_main) lv_obj_set_tile_id(tv_main, 0, 0, LV_ANIM_ON);
+        return;
+    }
+    if(current == firefly::Route::Home) {
+        if(tv_main) lv_obj_set_tile_id(tv_main, 0, 1, LV_ANIM_ON);
+        return;
+    }
+    if(current == firefly::Route::Settings) {
+        open_settings_panel();
+        ui_shell.bringAppToFront(settings_panel);
+        return;
+    }
+
+    app_shell_screen.setTitle(title_for_route(current));
+    app_shell_screen.show();
+    ui_shell.bringAppToFront(app_shell_screen.root());
+}
+
 void open_home_app(lv_event_t * e) {
     const firefly::AppDescriptor * app =
         static_cast<const firefly::AppDescriptor *>(lv_event_get_user_data(e));
     if(!app) return;
     ui_shell.showRoute(route_for_app(app->id));
-    if(strcmp(app->id, "settings") == 0) open_settings_menu(e);
+}
+
+void show_notifications_cb(lv_event_t * e) {
+    LV_UNUSED(e);
+    ui_shell.showNotificationCenter(true);
+}
+
+void show_controls_cb(lv_event_t * e) {
+    LV_UNUSED(e);
+    ui_shell.showControlCenter(true);
+}
+
+void clear_notifications_cb(lv_event_t * e) {
+    LV_UNUSED(e);
+    notification_center.clear();
+}
+
+void power_save_toggle_cb(lv_event_t * e) {
+    lv_obj_t * button = lv_event_get_target(e);
+    auto_sleep_ms = lv_obj_has_state(button, LV_STATE_CHECKED) ? 15000UL : 30000UL;
+}
+
+void lock_now_cb(lv_event_t * e) {
+    LV_UNUSED(e);
+    if(notif_panel) anim_notif_panel_cb(notif_panel, -LCD_HEIGHT);
+    ui_shell.showRoute(firefly::Route::Lock);
 }
 
 const void * sleep_image_provider(uint8_t index) {
@@ -468,6 +527,8 @@ void build_firefly_os() {
     }
     home_screen.create(desktop_icon_layer, ui_tokens);
     home_screen.populate(ui_app_registry, open_home_app);
+    app_shell_screen.create(ui_shell.appHost(), ui_tokens);
+    ui_shell.setRouteHandler(handle_shell_route);
 
     notif_panel = lv_obj_create(ui_shell.panelHost());
     lv_obj_set_size(notif_panel, LCD_WIDTH, LCD_HEIGHT);
@@ -481,21 +542,35 @@ void build_firefly_os() {
     lv_obj_clear_flag(notif_panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(notif_panel, status_drag_cb, LV_EVENT_ALL, NULL);
 
+    control_center.create(notif_panel, ui_tokens);
+    lv_obj_t * control_root = control_center.root();
+
     lv_obj_t * notif_handle = lv_obj_create(notif_panel);
     lv_obj_set_size(notif_handle, 84, 6);
     lv_obj_align(notif_handle, LV_ALIGN_TOP_MID, 0, 12);
     firefly::UiComponents::styleCard(notif_handle, lv_color_hex(0x97DDE9), 8);
+    lv_obj_add_event_cb(notif_handle, status_drag_cb, LV_EVENT_ALL, NULL);
 
-    notif_detail_label = lv_label_create(notif_panel);
+    lv_obj_t * notification_button = lv_btn_create(control_root);
+    lv_obj_set_size(notification_button, 112, 48);
+    lv_obj_align(notification_button, LV_ALIGN_TOP_RIGHT, -24, 28);
+    lv_obj_set_style_bg_color(notification_button, control_card, 0);
+    lv_obj_set_style_shadow_width(notification_button, 0, 0);
+    lv_obj_add_event_cb(notification_button, show_notifications_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t * notification_button_label = lv_label_create(notification_button);
+    lv_label_set_text(notification_button_label, "Alerts");
+    lv_obj_center(notification_button_label);
+
+    notif_detail_label = lv_label_create(control_root);
     lv_obj_set_width(notif_detail_label, 340);
     lv_label_set_long_mode(notif_detail_label, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_font(notif_detail_label, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(notif_detail_label, control_subtext, 0);
     lv_label_set_text(notif_detail_label, "Battery --%\nVolume and brightness");
-    lv_obj_align(notif_detail_label, LV_ALIGN_TOP_LEFT, 34, 90);
-    lv_obj_t * volume_card = lv_obj_create(notif_panel);
-    lv_obj_set_size(volume_card, 354, 88);
-    lv_obj_align(volume_card, LV_ALIGN_TOP_MID, 0, 182);
+    lv_obj_align(notif_detail_label, LV_ALIGN_TOP_LEFT, 34, 82);
+    lv_obj_t * volume_card = lv_obj_create(control_root);
+    lv_obj_set_size(volume_card, 354, 96);
+    lv_obj_align(volume_card, LV_ALIGN_TOP_MID, 0, 146);
     firefly::UiComponents::styleCard(volume_card, control_card, 28);
     lv_obj_set_style_pad_all(volume_card, 16, 0);
     lv_obj_clear_flag(volume_card, LV_OBJ_FLAG_SCROLLABLE);
@@ -513,15 +588,16 @@ void build_firefly_os() {
 
     notif_volume_slider = lv_slider_create(volume_card);
     lv_obj_set_size(notif_volume_slider, 320, 24);
+    lv_obj_set_ext_click_area(notif_volume_slider, 12);
     lv_obj_align(notif_volume_slider, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_slider_set_range(notif_volume_slider, 0, 100);
     lv_slider_set_value(notif_volume_slider, volume_level, LV_ANIM_OFF);
     firefly::UiComponents::styleSlider(notif_volume_slider, lv_color_hex(0xC7E9F0), settings_action, lv_color_white());
     lv_obj_add_event_cb(notif_volume_slider, slider_volume_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-    lv_obj_t * brightness_card = lv_obj_create(notif_panel);
-    lv_obj_set_size(brightness_card, 354, 88);
-    lv_obj_align(brightness_card, LV_ALIGN_TOP_MID, 0, 290);
+    lv_obj_t * brightness_card = lv_obj_create(control_root);
+    lv_obj_set_size(brightness_card, 354, 96);
+    lv_obj_align(brightness_card, LV_ALIGN_TOP_MID, 0, 254);
     firefly::UiComponents::styleCard(brightness_card, control_card, 28);
     lv_obj_set_style_pad_all(brightness_card, 16, 0);
     lv_obj_clear_flag(brightness_card, LV_OBJ_FLAG_SCROLLABLE);
@@ -539,11 +615,46 @@ void build_firefly_os() {
 
     notif_brightness_slider = lv_slider_create(brightness_card);
     lv_obj_set_size(notif_brightness_slider, 320, 24);
+    lv_obj_set_ext_click_area(notif_brightness_slider, 12);
     lv_obj_align(notif_brightness_slider, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_slider_set_range(notif_brightness_slider, 20, 255);
     lv_slider_set_value(notif_brightness_slider, screen_brightness, LV_ANIM_OFF);
     firefly::UiComponents::styleSlider(notif_brightness_slider, lv_color_hex(0xC7E9F0), settings_action, lv_color_white());
     lv_obj_add_event_cb(notif_brightness_slider, slider_brightness_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    auto create_quick_button = [&](lv_coord_t x, const char * symbol,
+                                   const char * label, bool checkable,
+                                   lv_event_cb_t callback) {
+        lv_obj_t * button = lv_btn_create(control_root);
+        lv_obj_set_size(button, 82, 72);
+        lv_obj_set_pos(button, x, 374);
+        firefly::UiComponents::styleCard(button, control_card, 22);
+        if(checkable) lv_obj_add_flag(button, LV_OBJ_FLAG_CHECKABLE);
+        lv_obj_set_style_bg_color(button, settings_action, LV_STATE_CHECKED);
+        lv_obj_set_style_bg_opa(button, LV_OPA_COVER, LV_STATE_CHECKED);
+        if(callback) lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, NULL);
+        lv_obj_t * icon = lv_label_create(button);
+        lv_label_set_text(icon, symbol);
+        lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, -2);
+        lv_obj_t * text = lv_label_create(button);
+        lv_label_set_text(text, label);
+        lv_obj_align(text, LV_ALIGN_BOTTOM_MID, 0, 2);
+        return button;
+    };
+    create_quick_button(24, LV_SYMBOL_BLUETOOTH, "BLE", true, NULL);
+    create_quick_button(116, LV_SYMBOL_WIFI, "Wi-Fi", true, NULL);
+    create_quick_button(208, LV_SYMBOL_POWER, "Eco", true, power_save_toggle_cb);
+    create_quick_button(300, LV_SYMBOL_HOME, "Lock", false, lock_now_cb);
+
+    control_center.bind(control_root, notif_detail_label, notif_volume_slider,
+                        notif_volume_value_label, notif_brightness_slider,
+                        notif_brightness_value_label);
+    notification_center.create(notif_panel, ui_tokens);
+    notification_center.setControlCallback(show_controls_cb);
+    notification_center.setClearCallback(clear_notifications_cb);
+    ui_shell.bindPanelPages(control_center.root(), notification_center.root());
+    ui_shell.showControlCenter(true);
+    lv_obj_move_foreground(notif_handle);
 
     top_status_bar = lv_obj_create(ui_shell.statusBarHost());
     lv_obj_set_size(top_status_bar, LCD_WIDTH, 60);
@@ -612,7 +723,7 @@ void build_firefly_os() {
         if(settings_menu_container && lv_obj_has_flag(settings_menu_container, LV_OBJ_FLAG_HIDDEN)) {
             set_settings_subpage(NULL);
         } else {
-            close_settings_panel();
+            ui_shell.back();
         }
     }, LV_EVENT_CLICKED, NULL);
 

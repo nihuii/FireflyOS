@@ -253,6 +253,15 @@ static void test_navigation_stack() {
                 "lock resets navigation");
 }
 
+static void test_overlay_priority_policy() {
+    expect_true(firefly::SystemOverlayHost::acceptsPriority(2, 4),
+                "alarm can cover charging");
+    expect_true(!firefly::SystemOverlayHost::acceptsPriority(4, 2),
+                "charging cannot cover alarm");
+    expect_true(!firefly::SystemOverlayHost::acceptsPriority(0, 0),
+                "priority zero is invalid");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -269,6 +278,7 @@ void setup() {
     test_hardware_abstraction();
     test_default_theme_tokens();
     test_navigation_stack();
+    test_overlay_priority_policy();
     Serial.printf("FIREFLY_TEST_RESULT failures=%u\n", failures);
 }
 

@@ -25,3 +25,6 @@
 #include "firefly/ui/screens/GlanceScreen.h"
 #include "firefly/ui/screens/LockScreen.h"
 #include "firefly/ui/screens/HomeScreen.h"
+#include "firefly/ui/screens/AppShellScreen.h"
+#include "firefly/ui/screens/ControlCenter.h"
+#include "firefly/ui/screens/NotificationCenter.h"

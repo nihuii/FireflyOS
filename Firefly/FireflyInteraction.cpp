@@ -60,10 +60,9 @@ void apply_sleep_blackout() {
     }
 
     sleep_display_off = true;
+    ui_state_store.setSleepState(true, true);
     firefly_board.setDisplayBrightness(0);
-    if(sleep_screen) {
-        lv_obj_add_flag(sleep_screen, LV_OBJ_FLAG_HIDDEN);
-    }
+    glance_screen.hide();
 }
 
 void wake_sleep_screen_from_blackout();
@@ -73,7 +72,7 @@ void run_short_press_action() {
         if(settings_menu_container && lv_obj_has_flag(settings_menu_container, LV_OBJ_FLAG_HIDDEN)) {
             set_settings_subpage(NULL);
         } else {
-            close_settings_panel();
+            ui_shell.back();
         }
     } else if(is_sleeping && sleep_display_off) {
         wake_sleep_screen_from_blackout();
@@ -83,8 +82,8 @@ void run_short_press_action() {
         dismiss_alarm_alert();
     } else if(is_on_lockscreen) {
         enter_sleep_screen_mode();
-    } else if(tv_main) {
-        lv_obj_set_tile_id(tv_main, 0, 0, LV_ANIM_ON);
+    } else {
+        ui_shell.back();
         if(notif_panel) {
             anim_notif_panel_cb(notif_panel, -502);
         }
@@ -168,6 +167,7 @@ void update_desktop_transition_ui(lv_obj_t * active_tile) {
     }
 
     is_on_lockscreen = !on_desktop;
+    ui_shell.syncRoute(on_desktop ? firefly::Route::Home : firefly::Route::Lock);
 
     if(top_status_bar) {
         if(on_desktop) {
@@ -177,39 +177,12 @@ void update_desktop_transition_ui(lv_obj_t * active_tile) {
         }
     }
 
-    if(desktop_icon_layer) {
-        if(on_desktop) {
-            lv_obj_clear_flag(desktop_icon_layer, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(desktop_icon_layer, LV_OBJ_FLAG_HIDDEN);
-        }
-    }
+    if(on_desktop) home_screen.show();
+    else home_screen.hide();
 }
 
 void refresh_control_center_ui_impl(const firefly::BatteryState & battery) {
-    const int battery_percent = battery.percent;
-
-    if(notif_detail_label) {
-        String detail = "Battery " + String(battery_percent) + "%";
-        if(battery.charging) {
-            detail += "  Charging";
-        }
-        detail += "\nVolume " + String(volume_level) + "%  Brightness " + brightness_percent_text();
-        lv_label_set_text(notif_detail_label, detail.c_str());
-    }
-
-    if(notif_volume_slider) {
-        lv_slider_set_value(notif_volume_slider, volume_level, LV_ANIM_OFF);
-    }
-    if(notif_volume_value_label) {
-        lv_label_set_text(notif_volume_value_label, (String(volume_level) + "%").c_str());
-    }
-    if(notif_brightness_slider) {
-        lv_slider_set_value(notif_brightness_slider, screen_brightness, LV_ANIM_OFF);
-    }
-    if(notif_brightness_value_label) {
-        lv_label_set_text(notif_brightness_value_label, brightness_percent_text().c_str());
-    }
+    LV_UNUSED(battery);
     if(settings_brightness_slider) {
         lv_slider_set_value(settings_brightness_slider, screen_brightness, LV_ANIM_OFF);
     }
@@ -235,9 +208,7 @@ void refresh_battery_details_label(const firefly::BatteryState & battery) {
 
 void hide_charge_overlay() {
     charging_overlay_visible = false;
-    if(charge_overlay) {
-        lv_obj_add_flag(charge_overlay, LV_OBJ_FLAG_HIDDEN);
-    }
+    ui_shell.closeOverlay(charge_overlay);
 }
 
 void show_charge_overlay(const firefly::BatteryState & battery) {
@@ -250,10 +221,7 @@ void show_charge_overlay(const firefly::BatteryState & battery) {
     if(charge_status_label) {
         lv_label_set_text(charge_status_label, battery.charging ? "Charging" : "Power Connected");
     }
-    if(charge_overlay) {
-        lv_obj_clear_flag(charge_overlay, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(charge_overlay);
-    }
+    ui_shell.showOverlay(2, charge_overlay);
 }
 
 void trigger_alarm_alert(uint8_t slot, const String& current_time) {
@@ -276,10 +244,7 @@ void trigger_alarm_alert(uint8_t slot, const String& current_time) {
         detail += "\nVolume " + String(volume_level) + "%";
         lv_label_set_text(alarm_overlay_detail, detail.c_str());
     }
-    if(alarm_overlay) {
-        lv_obj_clear_flag(alarm_overlay, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(alarm_overlay);
-    }
+    ui_shell.showOverlay(4, alarm_overlay);
 }
 
 void wake_sleep_screen_from_blackout() {
@@ -289,10 +254,9 @@ void wake_sleep_screen_from_blackout() {
 
     sleep_display_off = false;
     sleep_entered_at = millis();
-    if(sleep_screen) {
-        lv_obj_clear_flag(sleep_screen, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(sleep_screen);
-    }
+    ui_state_store.setSleepState(true, false);
+    glance_screen.show();
+    ui_shell.bringAppToFront(sleep_screen);
     lv_refr_now(NULL);
     firefly_board.setDisplayBrightness(screen_brightness);
 }
@@ -506,7 +470,15 @@ void set_settings_subpage(lv_obj_t * page) {
 }
 
 void refresh_runtime_status_ui() {
-    refresh_control_center_ui_impl(firefly_board.readBattery());
+    const firefly::BatteryState battery = firefly_board.readBattery();
+    ui_state_store.setBattery(battery);
+    const firefly::SystemState state = ui_state_store.snapshot();
+    control_center.refresh(state, volume_level, screen_brightness,
+                           ui_state_store.revision());
+    lock_screen.refresh(state);
+    home_screen.refresh(state);
+    notification_center.refresh(state);
+    ui_shell.refresh(state, ui_state_store.revision());
 }
 
 void refresh_battery_ui() {
@@ -526,6 +498,12 @@ void refresh_battery_ui() {
 
     refresh_battery_details_label(battery);
     refresh_control_center_ui_impl(battery);
+    ui_state_store.setBattery(battery);
+    const firefly::SystemState state = ui_state_store.snapshot();
+    control_center.refresh(state, volume_level, screen_brightness,
+                           ui_state_store.revision());
+    lock_screen.refresh(state);
+    ui_shell.refresh(state, ui_state_store.revision());
 }
 
 void refresh_sound_alarm_ui() {
@@ -560,7 +538,6 @@ void refresh_sound_alarm_ui() {
 
 void set_screen_brightness_level(uint8_t brightness) {
     if(brightness < 20) brightness = 20;
-    if(brightness > 255) brightness = 255;
     screen_brightness = brightness;
     if(!sleep_display_off) {
         firefly_board.setDisplayBrightness(screen_brightness);
@@ -570,9 +547,7 @@ void set_screen_brightness_level(uint8_t brightness) {
 
 void dismiss_alarm_alert() {
     alarm_ringing = false;
-    if(alarm_overlay) {
-        lv_obj_add_flag(alarm_overlay, LV_OBJ_FLAG_HIDDEN);
-    }
+    ui_shell.closeOverlay(alarm_overlay);
 }
 
 void update_charging_overlay() {
@@ -620,9 +595,7 @@ void tv_event_cb(lv_event_t * e) {
         return;
     }
     if(code == LV_EVENT_SCROLL_BEGIN) {
-        if(desktop_icon_layer) {
-            lv_obj_add_flag(desktop_icon_layer, LV_OBJ_FLAG_HIDDEN);
-        }
+        home_screen.hide();
         return;
     }
 
@@ -690,7 +663,7 @@ void status_drag_cb(lv_event_t * e) {
         lv_anim_init(&anim);
         lv_anim_set_var(&anim, notif_panel);
         lv_anim_set_values(&anim, y, y > -250 ? 0 : -502);
-        lv_anim_set_time(&anim, 260);
+        lv_anim_set_time(&anim, 180);
         lv_anim_set_exec_cb(&anim, anim_notif_panel_cb);
         lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
         lv_anim_start(&anim);
@@ -722,6 +695,20 @@ void update_time_cb(lv_timer_t * timer) {
     if(notif_time_label) lv_label_set_text(notif_time_label, time_str);
     if(sleep_time_label) lv_label_set_text(sleep_time_label, time_str);
     if(sleep_date_label) lv_label_set_text(sleep_date_label, date_str);
+
+    int next_alarm_slot = -1;
+    time_t next_alarm_ts = 0;
+    char next_alarm_text[48] = "NEXT  --:--";
+    if(firefly_alarm_find_next(time(NULL), next_alarm_slot, next_alarm_ts)) {
+        struct tm next_alarm_tm{};
+        if(localtime_r(&next_alarm_ts, &next_alarm_tm)) {
+            snprintf(next_alarm_text, sizeof(next_alarm_text), "NEXT  %02d:%02d  %s",
+                     next_alarm_tm.tm_hour, next_alarm_tm.tm_min,
+                     alarm_name_text(firefly_alarms[next_alarm_slot],
+                                     static_cast<uint8_t>(next_alarm_slot)).c_str());
+        }
+    }
+    lock_screen.setNextAlarm(next_alarm_text);
 
     const String current_alarm_key = String(date_str) + " " + time_str;
     if(!alarm_ringing) {
@@ -756,13 +743,15 @@ void enter_sleep_screen_mode() {
     is_sleeping = true;
     sleep_display_off = false;
     sleep_entered_at = millis();
+    ui_state_store.setSleepState(true, false);
     close_settings_panel();
     if(notif_panel) {
         anim_notif_panel_cb(notif_panel, -502);
     }
     refresh_sleep_icon(true);
     firefly_board.setDisplayBrightness(screen_brightness);
-    lv_obj_clear_flag(sleep_screen, LV_OBJ_FLAG_HIDDEN);
+    glance_screen.show();
+    ui_shell.bringAppToFront(sleep_screen);
 }
 
 void exit_sleep_screen_mode() {
@@ -773,9 +762,10 @@ void exit_sleep_screen_mode() {
     is_sleeping = false;
     sleep_display_off = false;
     sleep_entered_at = 0;
+    ui_state_store.setSleepState(false, false);
     last_activity_time = millis();
     firefly_board.setDisplayBrightness(screen_brightness);
-    lv_obj_add_flag(sleep_screen, LV_OBJ_FLAG_HIDDEN);
+    glance_screen.hide();
 }
 
 void firefly_process_system_events() {

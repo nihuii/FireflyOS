@@ -119,6 +119,82 @@ class RepositoryContracts(unittest.TestCase):
         self.assertIn("UiComponents::styleSlider", sketch)
         self.assertIn("UiComponents::styleSwitch", sketch)
 
+    def test_ui_shell_limits_and_placeholder_pipeline(self):
+        navigation = (ROOT / "libraries" / "FireflyOS" / "src" / "firefly" / "ui" /
+                      "NavigationController.h").read_text(encoding="utf-8")
+        notifications = (ROOT / "libraries" / "FireflyOS" / "src" / "firefly" / "ui" /
+                         "screens" / "NotificationCenter.h").read_text(encoding="utf-8")
+        tokens = (ROOT / "libraries" / "FireflyOS" / "src" / "firefly" / "ui" /
+                  "UiTokens.h").read_text(encoding="utf-8")
+        art = (ROOT / "docs" / "模块说明" / "02-美术资源规范.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("kDepth = 6", navigation)
+        self.assertIn("kVisibleLimit = 3", notifications)
+        self.assertIn("touch_min", tokens)
+        self.assertIn("72 × 72", art)
+        self.assertIn("LVGL Symbol", art)
+        self.assertTrue((ROOT / "tools" / "assets" / "system_glyphs.txt").exists())
+        self.assertTrue((ROOT / "tools" / "assets" / "build_fonts.ps1").exists())
+
+    def test_ui_shell_routes_drive_real_pages(self):
+        shell = (ROOT / "libraries" / "FireflyOS" / "src" / "firefly" / "ui" /
+                 "UiShell.h").read_text(encoding="utf-8")
+        sketch = (ROOT / "Firefly" / "Firefly.ino").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        interaction = (ROOT / "Firefly" / "FireflyInteraction.cpp").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        self.assertIn("RouteHandler", shell)
+        self.assertIn("setRouteHandler", shell)
+        self.assertIn("Route back()", shell)
+        self.assertIn("bindPanelPages", shell)
+        self.assertIn("bringAppToFront", shell)
+        self.assertIn("handle_shell_route", sketch)
+        self.assertTrue(
+            (ROOT / "libraries" / "FireflyOS" / "src" / "firefly" / "ui" /
+             "screens" / "AppShellScreen.h").is_file()
+        )
+        self.assertIn("app_shell_screen", sketch)
+        self.assertIn("ui_shell.back();", sketch)
+        self.assertIn("ui_shell.back()", interaction)
+        self.assertNotIn("lv_obj_move_foreground(sleep_screen)", interaction)
+
+    def test_system_panels_are_peers_and_touch_targets_are_large_enough(self):
+        sketch = (ROOT / "Firefly" / "Firefly.ino").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        controls = (ROOT / "libraries" / "FireflyOS" / "src" / "firefly" / "ui" /
+                    "screens" / "ControlCenter.h").read_text(encoding="utf-8")
+        notifications = (ROOT / "libraries" / "FireflyOS" / "src" / "firefly" /
+                         "ui" / "screens" / "NotificationCenter.h").read_text(
+                             encoding="utf-8"
+                         )
+        self.assertIn("lv_obj_t * root() const", controls)
+        self.assertIn("void clear()", notifications)
+        self.assertIn("clear_notifications_cb", sketch)
+        self.assertIn("ui_shell.bindPanelPages", sketch)
+        self.assertIn("lv_obj_set_ext_click_area(notif_volume_slider, 12)", sketch)
+        self.assertIn("lv_obj_set_ext_click_area(notif_brightness_slider, 12)", sketch)
+
+    def test_lock_screen_is_bound_to_next_alarm(self):
+        interaction = (ROOT / "Firefly" / "FireflyInteraction.cpp").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        self.assertIn("firefly_alarm_find_next", interaction)
+        self.assertIn("lock_screen.setNextAlarm", interaction)
+
+    def test_home_pager_updates_its_position_indicator(self):
+        header = (ROOT / "libraries" / "FireflyOS" / "src" / "firefly" / "ui" /
+                  "screens" / "HomeScreen.h").read_text(encoding="utf-8")
+        source = (ROOT / "libraries" / "FireflyOS" / "src" / "firefly" / "ui" /
+                  "screens" / "HomeScreen.cpp").read_text(encoding="utf-8")
+        self.assertIn("pagerEventCallback", header)
+        self.assertIn("updateDots", source)
+        self.assertIn("LV_EVENT_VALUE_CHANGED", source)
+
 
 if __name__ == "__main__":
     unittest.main()

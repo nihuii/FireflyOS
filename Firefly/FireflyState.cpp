@@ -111,6 +111,10 @@ firefly::UiShell ui_shell;
 firefly::GlanceScreen glance_screen;
 firefly::LockScreen lock_screen;
 firefly::HomeScreen home_screen;
+firefly::AppShellScreen app_shell_screen;
 firefly::AppRegistry ui_app_registry;
+firefly::ControlCenter control_center;
+firefly::NotificationCenter notification_center;
+firefly::StateStore ui_state_store;
 
 lv_disp_draw_buf_t draw_buf;

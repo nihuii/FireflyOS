@@ -22,18 +22,54 @@ bool UiShell::create(lv_obj_t * screen, const UiTokens &) {
     return app_host_ && status_bar_ && panel_host_ && overlay_host_;
 }
 
-void UiShell::showRoute(Route route) {
+bool UiShell::showRoute(Route route) {
+    const Route previous = navigation_.current();
+    if(route == previous) return true;
+    if(!navigation_.open(route)) return false;
+    if(route_handler_) route_handler_(previous, navigation_.current());
+    return true;
+}
+
+Route UiShell::back() {
+    const Route previous = navigation_.current();
+    const Route current = navigation_.back();
+    if(route_handler_ && previous != current) route_handler_(previous, current);
+    return current;
+}
+
+void UiShell::syncRoute(Route route) {
+    if(route == navigation_.current()) return;
     navigation_.open(route);
 }
 
+void UiShell::bindPanelPages(lv_obj_t * control_page,
+                             lv_obj_t * notification_page) {
+    control_page_ = control_page;
+    notification_page_ = notification_page;
+}
+
 void UiShell::showControlCenter(bool visible) {
-    if(!panel_host_) return;
-    if(visible) lv_obj_clear_flag(panel_host_, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(panel_host_, LV_OBJ_FLAG_HIDDEN);
+    if(!control_page_) return;
+    if(visible) {
+        lv_obj_clear_flag(control_page_, LV_OBJ_FLAG_HIDDEN);
+        if(notification_page_) lv_obj_add_flag(notification_page_, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(control_page_, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void UiShell::showNotificationCenter(bool visible) {
-    showControlCenter(visible);
+    if(!notification_page_) return;
+    if(visible) {
+        lv_obj_clear_flag(notification_page_, LV_OBJ_FLAG_HIDDEN);
+        if(control_page_) lv_obj_add_flag(control_page_, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(notification_page_, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void UiShell::bringAppToFront(lv_obj_t * app) {
+    if(app && lv_obj_get_parent(app) == app_host_) lv_obj_move_foreground(app);
 }
 
 bool UiShell::showOverlay(uint8_t priority, lv_obj_t * overlay) {

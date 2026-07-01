@@ -13,7 +13,29 @@ bool HomeScreen::create(lv_obj_t * parent, const UiTokens & tokens) {
     lv_obj_set_size(pager_, LV_PCT(100), LV_PCT(100));
     lv_obj_set_style_bg_opa(pager_, LV_OPA_TRANSP, 0);
     lv_obj_set_scrollbar_mode(pager_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_add_event_cb(pager_, pagerEventCallback, LV_EVENT_VALUE_CHANGED, this);
     return true;
+}
+
+void HomeScreen::pagerEventCallback(lv_event_t * event) {
+    HomeScreen * screen = static_cast<HomeScreen *>(lv_event_get_user_data(event));
+    if(!screen || !screen->pager_) return;
+    lv_obj_t * active = lv_tileview_get_tile_act(screen->pager_);
+    for(uint8_t page = 0; page < screen->page_count_; ++page) {
+        if(screen->pages_[page] == active) {
+            screen->updateDots(page);
+            return;
+        }
+    }
+}
+
+void HomeScreen::updateDots(uint8_t active_page) {
+    if(!dots_) return;
+    static const char * two_pages[] = {"●  ○", "○  ●"};
+    static const char * three_pages[] = {"●  ○  ○", "○  ●  ○", "○  ○  ●"};
+    if(page_count_ <= 1) lv_label_set_text(dots_, "●");
+    else if(page_count_ == 2) lv_label_set_text(dots_, two_pages[active_page < 2 ? active_page : 0]);
+    else lv_label_set_text(dots_, three_pages[active_page < 3 ? active_page : 0]);
 }
 
 const char * HomeScreen::symbolFor(const char * id) {
@@ -30,10 +52,12 @@ const char * HomeScreen::symbolFor(const char * id) {
 
 bool HomeScreen::populate(const AppRegistry & registry, lv_event_cb_t callback) {
     if(!pager_) return false;
-    const uint8_t page_count = (registry.count() + 5U) / 6U;
-    for(uint8_t page = 0; page < page_count; ++page) {
+    page_count_ = (registry.count() + 5U) / 6U;
+    if(page_count_ > kMaxPages) page_count_ = kMaxPages;
+    for(uint8_t page = 0; page < page_count_; ++page) {
         lv_obj_t * tile = lv_tileview_add_tile(pager_, page, 0,
-            page_count > 1 ? LV_DIR_HOR : LV_DIR_NONE);
+            page_count_ > 1 ? LV_DIR_HOR : LV_DIR_NONE);
+        pages_[page] = tile;
         lv_obj_set_style_bg_opa(tile, LV_OPA_TRANSP, 0);
         lv_obj_set_scrollbar_mode(tile, LV_SCROLLBAR_MODE_OFF);
         for(uint8_t slot = 0; slot < 6; ++slot) {
@@ -65,8 +89,8 @@ bool HomeScreen::populate(const AppRegistry & registry, lv_event_cb_t callback) 
     }
     dots_ = lv_label_create(root_);
     lv_obj_set_style_text_color(dots_, lv_color_hex(tokens_.text_secondary), 0);
-    lv_label_set_text(dots_, page_count > 1 ? "●  ○" : "●");
     lv_obj_align(dots_, LV_ALIGN_BOTTOM_MID, 0, -20);
+    updateDots(0);
     return true;
 }
 

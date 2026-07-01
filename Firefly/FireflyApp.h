@@ -31,7 +31,11 @@ extern firefly::UiShell ui_shell;
 extern firefly::GlanceScreen glance_screen;
 extern firefly::LockScreen lock_screen;
 extern firefly::HomeScreen home_screen;
+extern firefly::AppShellScreen app_shell_screen;
 extern firefly::AppRegistry ui_app_registry;
+extern firefly::ControlCenter control_center;
+extern firefly::NotificationCenter notification_center;
+extern firefly::StateStore ui_state_store;
 
 extern const char * UI_PREF_NAMESPACE;
 extern const char * UI_PREF_VOLUME_KEY;
