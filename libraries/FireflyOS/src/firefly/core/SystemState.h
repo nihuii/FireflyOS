@@ -8,6 +8,7 @@ struct BatteryState {
     int16_t percent = -1;
     int16_t temperature_c = 0;
     uint16_t battery_mv = 0;
+    uint16_t system_mv = 0;
     bool charging = false;
     bool vbus_present = false;
     bool valid = false;

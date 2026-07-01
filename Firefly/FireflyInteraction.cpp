@@ -13,6 +13,15 @@ bool sleep_icon_has_been_shown = false;
 
 TaskHandle_t firefly_background_task_handle = NULL;
 bool firefly_background_task_running = false;
+volatile uint32_t event_post_failures = 0;
+uint32_t desktop_transition_released_at = 0;
+uint32_t desktop_transition_max_ms = 0;
+
+void post_background_system_event(const firefly::SystemEvent & event) {
+    if(!system_event_bus.post(event)) {
+        ++event_post_failures;
+    }
+}
 
 bool poll_short_press_source() {
     static bool last_btn_state = HIGH;
@@ -54,7 +63,7 @@ void apply_sleep_blackout() {
     }
 
     sleep_display_off = true;
-    gfx_co5300->setBrightness(0);
+    firefly_board.setDisplayBrightness(0);
     if(sleep_screen) {
         lv_obj_add_flag(sleep_screen, LV_OBJ_FLAG_HIDDEN);
     }
@@ -92,22 +101,22 @@ void firefly_background_task(void * parameter) {
         const unsigned long now = millis();
 
         if(poll_short_press_source()) {
-            system_event_bus.post({firefly::EventType::ShortPress,
-                                   0,
-                                   now,
-                                   firefly::EventPriority::Critical});
+            post_background_system_event({firefly::EventType::ShortPress,
+                                          0,
+                                          now,
+                                          firefly::EventPriority::Critical});
         }
 
         if(should_blackout_sleep_now(now)) {
-            system_event_bus.post({firefly::EventType::SleepBlackout,
-                                   0,
-                                   now,
-                                   firefly::EventPriority::Refresh});
+            post_background_system_event({firefly::EventType::SleepBlackout,
+                                          0,
+                                          now,
+                                          firefly::EventPriority::Refresh});
         } else if(should_auto_enter_sleep_now(now)) {
-            system_event_bus.post({firefly::EventType::EnterSleep,
-                                   0,
-                                   now,
-                                   firefly::EventPriority::Refresh});
+            post_background_system_event({firefly::EventType::EnterSleep,
+                                          0,
+                                          now,
+                                          firefly::EventPriority::Refresh});
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -153,6 +162,14 @@ String brightness_percent_text() {
 void update_desktop_transition_ui(lv_obj_t * active_tile) {
     const bool on_desktop = (active_tile == tile_sys);
 
+    if(on_desktop && desktop_transition_released_at > 0) {
+        const uint32_t elapsed = millis() - desktop_transition_released_at;
+        if(elapsed > desktop_transition_max_ms) {
+            desktop_transition_max_ms = elapsed;
+        }
+        desktop_transition_released_at = 0;
+    }
+
     is_on_lockscreen = !on_desktop;
 
     if(top_status_bar) {
@@ -172,12 +189,12 @@ void update_desktop_transition_ui(lv_obj_t * active_tile) {
     }
 }
 
-void refresh_control_center_ui_impl() {
-    const int battery_percent = power.getBatteryPercent();
+void refresh_control_center_ui_impl(const firefly::BatteryState & battery) {
+    const int battery_percent = battery.percent;
 
     if(notif_detail_label) {
         String detail = "Battery " + String(battery_percent) + "%";
-        if(power.isCharging()) {
+        if(battery.charging) {
             detail += "  Charging";
         }
         detail += "\nVolume " + String(volume_level) + "%  Brightness " + brightness_percent_text();
@@ -204,18 +221,18 @@ void refresh_control_center_ui_impl() {
     }
 }
 
-void refresh_battery_details_label() {
+void refresh_battery_details_label(const firefly::BatteryState & battery) {
     if(!settings_batt_info) {
         return;
     }
 
     String info = "";
-    info += "Battery " + String(power.getBatteryPercent()) + "%\n";
-    info += "Temperature " + String(power.getTemperature()) + " C\n";
-    info += "Charging " + String(power.isCharging() ? "YES" : "NO") + "\n";
-    info += "VBUS " + String(power.isVbusIn() ? "YES" : "NO") + "\n";
-    info += "Batt " + String(power.getBattVoltage()) + " mV\n";
-    info += "System " + String(power.getSystemVoltage()) + " mV";
+    info += "Battery " + String(battery.percent) + "%\n";
+    info += "Temperature " + String(battery.temperature_c) + " C\n";
+    info += "Charging " + String(battery.charging ? "YES" : "NO") + "\n";
+    info += "VBUS " + String(battery.vbus_present ? "YES" : "NO") + "\n";
+    info += "Batt " + String(battery.battery_mv) + " mV\n";
+    info += "System " + String(battery.system_mv) + " mV";
     lv_label_set_text(settings_batt_info, info.c_str());
 }
 
@@ -226,15 +243,15 @@ void hide_charge_overlay() {
     }
 }
 
-void show_charge_overlay() {
+void show_charge_overlay(const firefly::BatteryState & battery) {
     charging_overlay_visible = true;
     charge_overlay_started_at = millis();
 
     if(charge_percent_label) {
-        lv_label_set_text(charge_percent_label, (String(power.getBatteryPercent()) + "%").c_str());
+        lv_label_set_text(charge_percent_label, (String(battery.percent) + "%").c_str());
     }
     if(charge_status_label) {
-        lv_label_set_text(charge_status_label, power.isCharging() ? "Charging" : "Power Connected");
+        lv_label_set_text(charge_status_label, battery.charging ? "Charging" : "Power Connected");
     }
     if(charge_overlay) {
         lv_obj_clear_flag(charge_overlay, LV_OBJ_FLAG_HIDDEN);
@@ -280,7 +297,7 @@ void wake_sleep_screen_from_blackout() {
         lv_obj_move_foreground(sleep_screen);
     }
     lv_refr_now(NULL);
-    gfx_co5300->setBrightness(screen_brightness);
+    firefly_board.setDisplayBrightness(screen_brightness);
 }
 
 void refresh_alarm_card_ui(uint8_t slot) {
@@ -364,22 +381,16 @@ void start_firefly_background_task() {
 #endif
 }
 
-void sync_time_to_system_from_rtc(const RTC_DateTime& dt) {
-    struct tm timeinfo = {0};
-    timeinfo.tm_year = dt.getYear() - 1900;
-    timeinfo.tm_mon = dt.getMonth() - 1;
-    timeinfo.tm_mday = dt.getDay();
-    timeinfo.tm_hour = dt.getHour();
-    timeinfo.tm_min = dt.getMinute();
-    timeinfo.tm_sec = dt.getSecond();
-
-    const time_t t = mktime(&timeinfo);
-    struct timeval now;
-    now.tv_sec = t;
-    now.tv_usec = 0;
-    settimeofday(&now, NULL);
+void sync_time_to_system_from_epoch(int64_t epoch_seconds) {
+    if(epoch_seconds < 0) {
+        return;
+    }
     setenv("TZ", "CST-8", 1);
     tzset();
+    struct timeval now;
+    now.tv_sec = static_cast<time_t>(epoch_seconds);
+    now.tv_usec = 0;
+    settimeofday(&now, NULL);
 }
 
 void load_sound_alarm_preferences() {
@@ -506,11 +517,12 @@ void set_settings_subpage(lv_obj_t * page) {
 }
 
 void refresh_runtime_status_ui() {
-    refresh_control_center_ui_impl();
+    refresh_control_center_ui_impl(firefly_board.readBattery());
 }
 
 void refresh_battery_ui() {
-    const int battery_percent = power.getBatteryPercent();
+    const firefly::BatteryState battery = firefly_board.readBattery();
+    const int battery_percent = battery.percent;
     const char * battery_symbol = battery_symbol_for_percent(battery_percent);
     const lv_color_t battery_color = battery_color_for_percent(battery_percent);
 
@@ -523,8 +535,8 @@ void refresh_battery_ui() {
         lv_obj_set_style_text_color(settings_batt_icon, battery_color, 0);
     }
 
-    refresh_battery_details_label();
-    refresh_runtime_status_ui();
+    refresh_battery_details_label(battery);
+    refresh_control_center_ui_impl(battery);
 }
 
 void refresh_sound_alarm_ui() {
@@ -562,7 +574,7 @@ void set_screen_brightness_level(uint8_t brightness) {
     if(brightness > 255) brightness = 255;
     screen_brightness = brightness;
     if(!sleep_display_off) {
-        gfx_co5300->setBrightness(screen_brightness);
+        firefly_board.setDisplayBrightness(screen_brightness);
     }
     refresh_runtime_status_ui();
 }
@@ -588,9 +600,10 @@ void update_charging_overlay() {
     }
     last_charge_poll_at = now;
 
-    const bool charging_now = power.isCharging() || power.isVbusIn();
+    const firefly::BatteryState battery = firefly_board.readBattery();
+    const bool charging_now = battery.charging || battery.vbus_present;
     if(charging_now && !charging_last_state) {
-        show_charge_overlay();
+        show_charge_overlay(battery);
     } else if(!charging_now && charging_last_state) {
         hide_charge_overlay();
     }
@@ -601,7 +614,7 @@ void update_charging_overlay() {
     }
 
     if(charge_percent_label) {
-        lv_label_set_text(charge_percent_label, (String(power.getBatteryPercent()) + "%").c_str());
+        lv_label_set_text(charge_percent_label, (String(battery.percent) + "%").c_str());
     }
     if(charge_status_label) {
         lv_label_set_text(charge_status_label, charging_now ? "Charging" : "Power Connected");
@@ -611,6 +624,12 @@ void update_charging_overlay() {
 void tv_event_cb(lv_event_t * e) {
     const lv_event_code_t code = lv_event_get_code(e);
     lv_obj_t * tv = lv_event_get_target(e);
+    if(code == LV_EVENT_RELEASED) {
+        if(is_on_lockscreen) {
+            desktop_transition_released_at = millis();
+        }
+        return;
+    }
     if(code == LV_EVENT_SCROLL_BEGIN) {
         if(desktop_icon_layer) {
             lv_obj_add_flag(desktop_icon_layer, LV_OBJ_FLAG_HIDDEN);
@@ -753,7 +772,7 @@ void enter_sleep_screen_mode() {
         anim_notif_panel_cb(notif_panel, -502);
     }
     refresh_sleep_icon(true);
-    gfx_co5300->setBrightness(screen_brightness);
+    firefly_board.setDisplayBrightness(screen_brightness);
     lv_obj_clear_flag(sleep_screen, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -766,7 +785,7 @@ void exit_sleep_screen_mode() {
     sleep_display_off = false;
     sleep_entered_at = 0;
     last_activity_time = millis();
-    gfx_co5300->setBrightness(screen_brightness);
+    firefly_board.setDisplayBrightness(screen_brightness);
     lv_obj_add_flag(sleep_screen, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -801,4 +820,25 @@ void firefly_process_system_events() {
                 break;
         }
     }
+}
+
+void firefly_report_gate_a_diagnostics() {
+    static uint32_t last_report_at = 0;
+    const uint32_t now = millis();
+    if(now - last_report_at < 10000UL) {
+        return;
+    }
+    last_report_at = now;
+    Serial.printf(
+        "FIREFLY_GATE_A uptime_ms=%lu internal_free=%u internal_min=%u "
+        "psram_free=%u event_post_failures=%lu event_queue=%u "
+        "desktop_transition_max_ms=%lu\n",
+        static_cast<unsigned long>(now),
+        ESP.getFreeHeap(),
+        ESP.getMinFreeHeap(),
+        ESP.getFreePsram(),
+        static_cast<unsigned long>(event_post_failures),
+        static_cast<unsigned>(system_event_bus.size()),
+        static_cast<unsigned long>(desktop_transition_max_ms)
+    );
 }

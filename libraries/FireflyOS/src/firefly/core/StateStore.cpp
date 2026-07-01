@@ -7,6 +7,7 @@ bool equalBattery(const BatteryState & left, const BatteryState & right) {
     return left.percent == right.percent &&
            left.temperature_c == right.temperature_c &&
            left.battery_mv == right.battery_mv &&
+           left.system_mv == right.system_mv &&
            left.charging == right.charging &&
            left.vbus_present == right.vbus_present &&
            left.valid == right.valid;

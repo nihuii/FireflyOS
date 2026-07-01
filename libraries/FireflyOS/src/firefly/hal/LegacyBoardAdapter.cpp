@@ -68,6 +68,7 @@ BatteryState LegacyBoardAdapter::readBattery() {
     state.percent = static_cast<int16_t>(power_.getBatteryPercent());
     state.temperature_c = static_cast<int16_t>(power_.getTemperature());
     state.battery_mv = power_.getBattVoltage();
+    state.system_mv = power_.getSystemVoltage();
     state.charging = power_.isCharging();
     state.vbus_present = power_.isVbusIn();
     unlockBus();

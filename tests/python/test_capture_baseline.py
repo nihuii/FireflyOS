@@ -40,6 +40,26 @@ FIREFLY_BASELINE startup_ms=1250 internal_free=210000 internal_min=198000 psram_
         with self.assertRaisesRegex(ValueError, "FIREFLY_BASELINE"):
             module.parse_baseline_log("ordinary serial output")
 
+    def test_parses_latest_gate_a_diagnostic(self):
+        module = load_module()
+        self.assertTrue(hasattr(module, "parse_gate_a_log"))
+        text = """
+FIREFLY_GATE_A uptime_ms=10000 internal_free=205000 internal_min=190000 psram_free=7000000 event_post_failures=0 event_queue=0 desktop_transition_max_ms=286
+FIREFLY_GATE_A uptime_ms=20000 internal_free=203000 internal_min=188000 psram_free=6990000 event_post_failures=0 event_queue=1 desktop_transition_max_ms=301
+"""
+        self.assertEqual(
+            module.parse_gate_a_log(text),
+            {
+                "uptime_ms": 20000,
+                "internal_free": 203000,
+                "internal_min": 188000,
+                "psram_free": 6990000,
+                "event_post_failures": 0,
+                "event_queue": 1,
+                "desktop_transition_max_ms": 301,
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

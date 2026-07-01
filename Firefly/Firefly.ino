@@ -21,13 +21,17 @@ void load_time_rollers_from_current() {
         return;
     }
 
-    RTC_DateTime dt = rtc.getDateTime();
-    if(dt.getYear() > 2023) {
-        lv_roller_set_selected(roller_year, dt.getYear() - 2024, LV_ANIM_OFF);
-        lv_roller_set_selected(roller_month, dt.getMonth() - 1, LV_ANIM_OFF);
-        lv_roller_set_selected(roller_day, dt.getDay() - 1, LV_ANIM_OFF);
-        lv_roller_set_selected(roller_hour, dt.getHour(), LV_ANIM_OFF);
-        lv_roller_set_selected(roller_minute, dt.getMinute(), LV_ANIM_OFF);
+    int64_t epoch_seconds = 0;
+    if(firefly_board.readEpoch(epoch_seconds)) {
+        const time_t raw_time = static_cast<time_t>(epoch_seconds);
+        struct tm rtc_time{};
+        if(localtime_r(&raw_time, &rtc_time)) {
+            lv_roller_set_selected(roller_year, rtc_time.tm_year + 1900 - 2024, LV_ANIM_OFF);
+            lv_roller_set_selected(roller_month, rtc_time.tm_mon, LV_ANIM_OFF);
+            lv_roller_set_selected(roller_day, rtc_time.tm_mday - 1, LV_ANIM_OFF);
+            lv_roller_set_selected(roller_hour, rtc_time.tm_hour, LV_ANIM_OFF);
+            lv_roller_set_selected(roller_minute, rtc_time.tm_min, LV_ANIM_OFF);
+        }
     }
 }
 
@@ -223,8 +227,17 @@ void save_time_from_rollers(lv_event_t * e) {
     lv_roller_get_selected_str(roller_hour, buf, sizeof(buf)); const int hour = atoi(buf);
     lv_roller_get_selected_str(roller_minute, buf, sizeof(buf)); const int minute = atoi(buf);
 
-    rtc.setDateTime(year, month, day, hour, minute, 0);
-    sync_time_to_system_from_rtc(rtc.getDateTime());
+    struct tm selected_time{};
+    selected_time.tm_year = year - 1900;
+    selected_time.tm_mon = month - 1;
+    selected_time.tm_mday = day;
+    selected_time.tm_hour = hour;
+    selected_time.tm_min = minute;
+    selected_time.tm_isdst = -1;
+    const time_t epoch_seconds = mktime(&selected_time);
+    if(epoch_seconds >= 0 && firefly_board.writeEpoch(epoch_seconds)) {
+        sync_time_to_system_from_epoch(epoch_seconds);
+    }
     clear_alarm_trigger_history();
     update_time_cb(NULL);
     set_settings_subpage(NULL);
@@ -232,12 +245,12 @@ void save_time_from_rollers(lv_event_t * e) {
 
 void load_time_from_rtc(lv_event_t * e) {
     LV_UNUSED(e);
-    RTC_DateTime dt = rtc.getDateTime();
-    if(dt.getYear() <= 2023) {
+    int64_t epoch_seconds = 0;
+    if(!firefly_board.readEpoch(epoch_seconds)) {
         return;
     }
 
-    sync_time_to_system_from_rtc(dt);
+    sync_time_to_system_from_epoch(epoch_seconds);
     clear_alarm_trigger_history();
     load_time_rollers_from_current();
     update_time_cb(NULL);
@@ -445,6 +458,7 @@ void build_firefly_os() {
     lv_obj_add_event_cb(tv_main, tv_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_add_event_cb(tv_main, tv_event_cb, LV_EVENT_SCROLL_BEGIN, NULL);
     lv_obj_add_event_cb(tv_main, tv_event_cb, LV_EVENT_SCROLL_END, NULL);
+    lv_obj_add_event_cb(tv_main, tv_event_cb, LV_EVENT_RELEASED, NULL);
 
     tile_lock = lv_tileview_add_tile(tv_main, 0, 0, LV_DIR_BOTTOM);
     lv_obj_set_style_bg_opa(tile_lock, LV_OPA_TRANSP, 0);
@@ -1082,37 +1096,51 @@ void build_firefly_os() {
 
 void setup(void) {
     Serial.begin(115200);
+    setenv("TZ", "CST-8", 1);
+    tzset();
 
 #ifdef GFX_EXTRA_PRE_INIT
     GFX_EXTRA_PRE_INIT();
 #endif
 
     gfx->begin();
-    gfx_co5300->setBrightness(screen_brightness);
+    firefly_board.setDisplayBrightness(screen_brightness);
     gfx->fillScreen(BLACK);
     touch_init(gfx->width(), gfx->height(), gfx->getRotation());
 
     Wire.begin(IIC_SDA, IIC_SCL);
-    if(power.begin(Wire, AXP2101_SLAVE_ADDRESS, IIC_SDA, IIC_SCL)) {
-        power.disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
-        power.clearIrqStatus();
-        power.enableBattDetection();
-        power.enableVbusVoltageMeasure();
-        power.enableBattVoltageMeasure();
-        power.enableSystemVoltageMeasure();
-        power.enableTemperatureMeasure();
+    if(firefly_i2c_bus.lock(250)) {
+        if(power.begin(Wire, AXP2101_SLAVE_ADDRESS, IIC_SDA, IIC_SCL)) {
+            power.disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
+            power.clearIrqStatus();
+            power.enableBattDetection();
+            power.enableVbusVoltageMeasure();
+            power.enableBattVoltageMeasure();
+            power.enableSystemVoltageMeasure();
+            power.enableTemperatureMeasure();
+        }
+        firefly_i2c_bus.unlock();
+    } else {
+        Serial.println("PMU initialization skipped: I2C lock timeout");
     }
 
     prefs.begin(UI_PREF_NAMESPACE, false);
     load_sound_alarm_preferences();
     init_default_settings_theme();
 
-    if(!rtc.begin(Wire, IIC_SDA, IIC_SCL)) {
+    bool rtc_ready = false;
+    if(firefly_i2c_bus.lock(250)) {
+        rtc_ready = rtc.begin(Wire, IIC_SDA, IIC_SCL);
+        firefly_i2c_bus.unlock();
+    } else {
+        Serial.println("RTC initialization skipped: I2C lock timeout");
+    }
+    if(!rtc_ready) {
         Serial.println("Failed to find PCF85063 RTC");
     } else {
-        RTC_DateTime dt = rtc.getDateTime();
-        if(dt.getYear() > 2023) {
-            sync_time_to_system_from_rtc(dt);
+        int64_t epoch_seconds = 0;
+        if(firefly_board.readEpoch(epoch_seconds)) {
+            sync_time_to_system_from_epoch(epoch_seconds);
         } else {
             Serial.println("RTC time invalid. Set time manually from Settings.");
         }
@@ -1185,6 +1213,7 @@ void setup(void) {
 void loop() {
     firefly_process_system_events();
     update_charging_overlay();
+    firefly_report_gate_a_diagnostics();
 
     lv_tick_inc(5);
     lv_timer_handler();
