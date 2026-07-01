@@ -19,3 +19,4 @@
 #include "firefly/hal/LockedRegisterDevice.h"
 #include "firefly/ui/UiTokens.h"
 #include "firefly/ui/UiTheme.h"
+#include "firefly/ui/NavigationController.h"

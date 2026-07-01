@@ -235,6 +235,24 @@ static void test_default_theme_tokens() {
                 "sam alert has distinct ignition color");
 }
 
+static void test_navigation_stack() {
+    firefly::NavigationController nav;
+    expect_true(nav.current() == firefly::Route::Lock, "starts locked");
+    expect_true(nav.open(firefly::Route::Home), "open home");
+    expect_true(nav.open(firefly::Route::Settings), "open settings");
+    expect_true(nav.back() == firefly::Route::Home, "back to home");
+    expect_true(nav.back() == firefly::Route::Lock, "home back locks");
+
+    expect_true(nav.open(firefly::Route::Home), "reopen home");
+    for(uint8_t i = 0; i < firefly::NavigationController::kDepth - 2; ++i) {
+        expect_true(nav.open(firefly::Route::Tools), "fill navigation stack");
+    }
+    expect_true(!nav.open(firefly::Route::Diagnostics), "reject stack overflow");
+    nav.lock();
+    expect_true(nav.current() == firefly::Route::Lock && nav.depth() == 1,
+                "lock resets navigation");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -250,6 +268,7 @@ void setup() {
     test_app_manager_publishes_requests();
     test_hardware_abstraction();
     test_default_theme_tokens();
+    test_navigation_stack();
     Serial.printf("FIREFLY_TEST_RESULT failures=%u\n", failures);
 }
 
