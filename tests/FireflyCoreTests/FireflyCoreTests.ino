@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <FireflyOS.h>
+#include <firefly/services/AlarmService.h>
+#include <firefly/services/TimeService.h>
 
 static uint16_t failures = 0;
 
@@ -197,6 +199,33 @@ public:
     uint8_t brightness = 0;
 };
 
+class FakeClockDevice : public firefly::ClockDevice {
+public:
+    bool readEpoch(int64_t & epoch_seconds) override {
+        if(!read_ok) {
+            return false;
+        }
+        epoch_seconds = epoch;
+        return true;
+    }
+
+    bool writeEpoch(int64_t epoch_seconds) override {
+        if(!write_ok) {
+            return false;
+        }
+        epoch = epoch_seconds;
+        last_written = epoch_seconds;
+        wrote = true;
+        return true;
+    }
+
+    bool read_ok = true;
+    bool write_ok = true;
+    bool wrote = false;
+    int64_t epoch = 0;
+    int64_t last_written = 0;
+};
+
 static void test_hardware_abstraction() {
     FakePowerDevice power;
     const firefly::BatteryState battery = power.readBattery();
@@ -262,6 +291,55 @@ static void test_overlay_priority_policy() {
                 "priority zero is invalid");
 }
 
+static void test_alarm_next_trigger() {
+    firefly::AlarmService service;
+    firefly::Alarm alarm{};
+    alarm.configured = true;
+    alarm.enabled = true;
+    alarm.hour = 7;
+    alarm.minute = 30;
+    alarm.days_mask = 0x7F;
+    service.set(0, alarm);
+    const int64_t now = 1767221940;  // 2026-01-01 07:19:00 +08
+    const auto next = service.nextTrigger(now);
+    expect_true(next.valid, "next alarm exists");
+    expect_true(next.slot == 0, "next alarm slot");
+    expect_true(next.epoch_seconds > now, "next alarm is future");
+}
+
+static void test_time_service_invalid_rtc() {
+    FakeClockDevice clock;
+    clock.read_ok = false;
+    firefly::TimeService time(clock);
+    expect_true(!time.begin(), "invalid rtc begin fails");
+    const firefly::TimeSnapshot snapshot = time.now();
+    expect_true(!snapshot.valid, "invalid rtc snapshot marked invalid");
+    expect_true(snapshot.epoch_seconds == 0, "invalid rtc does not fake date");
+    time.tick();
+    expect_true(!time.now().valid, "invalid rtc tick stays invalid");
+}
+
+static void test_time_service_reload_set_and_tick() {
+    FakeClockDevice clock;
+    clock.epoch = 1000;
+    firefly::TimeService time(clock);
+    expect_true(time.begin(), "valid rtc begin succeeds");
+    expect_true(time.now().valid && time.now().epoch_seconds == 1000,
+                "time service reads rtc");
+    time.tick();
+    expect_true(time.now().epoch_seconds == 1001, "tick advances one second");
+    expect_true(time.setLocalTime(2000), "set local time succeeds");
+    expect_true(clock.wrote && clock.last_written == 2000,
+                "set local time writes rtc");
+    time.tick();
+    expect_true(time.now().epoch_seconds == 2001,
+                "tick advances manually set time");
+    clock.epoch = 3000;
+    const firefly::TimeSnapshot reloaded = time.reloadRtc();
+    expect_true(reloaded.valid && reloaded.epoch_seconds == 3000,
+                "reload rtc refreshes snapshot");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -279,6 +357,9 @@ void setup() {
     test_default_theme_tokens();
     test_navigation_stack();
     test_overlay_priority_policy();
+    test_alarm_next_trigger();
+    test_time_service_invalid_rtc();
+    test_time_service_reload_set_and_tick();
     Serial.printf("FIREFLY_TEST_RESULT failures=%u\n", failures);
 }
 

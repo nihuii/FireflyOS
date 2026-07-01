@@ -17,6 +17,8 @@
 #include "firefly/hal/DeviceInterfaces.h"
 #include "firefly/hal/I2cBusManager.h"
 #include "firefly/hal/LockedRegisterDevice.h"
+#include "firefly/services/AlarmService.h"
+#include "firefly/services/TimeService.h"
 #include "firefly/ui/UiTokens.h"
 #include "firefly/ui/UiTheme.h"
 #include "firefly/ui/NavigationController.h"

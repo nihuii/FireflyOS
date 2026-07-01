@@ -1,5 +1,6 @@
 #include "FireflyAlarm.h"
 
+#include <firefly/services/AlarmService.h>
 #include <string.h>
 
 namespace {
@@ -46,16 +47,24 @@ constexpr char DAY_OPTIONS_TEXT[] =
 constexpr char RINGTONE_OPTIONS_TEXT[] =
     "Trailblaze\nStarglow\nNight Sky\nClassic Bell";
 
-bool is_alarm_active(const FireflyAlarm & alarm) {
-    return alarm.configured && alarm.enabled && alarm.days_mask != 0;
+firefly::Alarm to_service_alarm(const FireflyAlarm & legacy_alarm) {
+    firefly::Alarm alarm{};
+    alarm.configured = legacy_alarm.configured;
+    alarm.enabled = legacy_alarm.enabled;
+    alarm.hour = legacy_alarm.hour;
+    alarm.minute = legacy_alarm.minute;
+    alarm.days_mask = legacy_alarm.days_mask;
+    alarm.ringtone = legacy_alarm.ringtone_index;
+    strlcpy(alarm.name, legacy_alarm.name, sizeof(alarm.name));
+    return alarm;
 }
 
-uint8_t weekday_mask_for_tm_wday(int tm_wday) {
-    if(tm_wday < 0 || tm_wday > 6) {
-        return 0;
+firefly::AlarmService alarm_service_from_legacy() {
+    firefly::AlarmService service;
+    for(uint8_t slot = 0; slot < FIREFLY_ALARM_SLOT_COUNT; ++slot) {
+        service.set(slot, to_service_alarm(firefly_alarms[slot]));
     }
-
-    return static_cast<uint8_t>(1U << tm_wday);
+    return service;
 }
 
 } // namespace
@@ -114,55 +123,20 @@ uint8_t firefly_alarm_option_from_days_mask(uint8_t days_mask) {
 }
 
 bool firefly_alarm_matches_weekday(uint8_t days_mask, int tm_wday) {
-    return (days_mask & weekday_mask_for_tm_wday(tm_wday)) != 0;
+    return firefly::AlarmService::matchesWeekday(days_mask, tm_wday);
 }
 
 bool firefly_alarm_find_next(time_t now_ts, int & out_slot, time_t & out_trigger_ts) {
-    bool found = false;
-    time_t earliest = 0;
-    int earliest_slot = -1;
-
-    for(uint8_t slot = 0; slot < FIREFLY_ALARM_SLOT_COUNT; ++slot) {
-        const FireflyAlarm & alarm = firefly_alarms[slot];
-        if(!is_alarm_active(alarm)) {
-            continue;
-        }
-
-        for(uint8_t offset = 0; offset < 8; ++offset) {
-            const time_t day_ts = now_ts + static_cast<time_t>(offset) * 86400;
-            struct tm candidate_tm;
-            localtime_r(&day_ts, &candidate_tm);
-
-            if(!firefly_alarm_matches_weekday(alarm.days_mask, candidate_tm.tm_wday)) {
-                continue;
-            }
-
-            candidate_tm.tm_hour = alarm.hour;
-            candidate_tm.tm_min = alarm.minute;
-            candidate_tm.tm_sec = 0;
-
-            const time_t candidate_ts = mktime(&candidate_tm);
-            if(candidate_ts <= now_ts) {
-                continue;
-            }
-
-            if(!found || candidate_ts < earliest) {
-                found = true;
-                earliest = candidate_ts;
-                earliest_slot = slot;
-            }
-            break;
-        }
-    }
-
-    if(!found) {
+    firefly::AlarmService service = alarm_service_from_legacy();
+    const firefly::AlarmTrigger next = service.nextTrigger(static_cast<int64_t>(now_ts));
+    if(!next.valid) {
         out_slot = -1;
         out_trigger_ts = 0;
         return false;
     }
 
-    out_slot = earliest_slot;
-    out_trigger_ts = earliest;
+    out_slot = next.slot;
+    out_trigger_ts = static_cast<time_t>(next.epoch_seconds);
     return true;
 }
 
