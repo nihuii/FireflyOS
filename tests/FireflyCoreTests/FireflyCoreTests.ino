@@ -126,6 +126,52 @@ static void test_app_registry() {
                 "available capability shows app");
 }
 
+static void test_lifecycle_and_resource_governor() {
+    firefly::SystemLifecycle lifecycle;
+    expect_true(lifecycle.phase() == firefly::SystemPhase::Booting,
+                "lifecycle starts booting");
+    expect_true(lifecycle.transition(firefly::SystemPhase::Locked),
+                "boot completes to lock");
+    expect_true(!lifecycle.transition(firefly::SystemPhase::Updating),
+                "locked cannot jump into update");
+    expect_true(lifecycle.transition(firefly::SystemPhase::Active),
+                "unlock enters active");
+    expect_true(lifecycle.transition(firefly::SystemPhase::Updating),
+                "active can enter update");
+
+    firefly::ResourceGovernor resources;
+    expect_true(resources.acquire(firefly::ResourceKind::AudioPlayback),
+                "audio playback lease");
+    expect_true(!resources.acquire(firefly::ResourceKind::AudioRecording),
+                "recording conflicts with playback");
+    expect_true(!resources.acquire(firefly::ResourceKind::Ota),
+                "ota conflicts with playback");
+    resources.release(firefly::ResourceKind::AudioPlayback);
+    expect_true(resources.acquire(firefly::ResourceKind::Ota), "ota lease");
+    resources.release(firefly::ResourceKind::Ota);
+    resources.setConstrained(true);
+    expect_true(!resources.acquire(firefly::ResourceKind::HighRateMotion),
+                "power constraint rejects high rate motion");
+}
+
+static void test_app_manager_publishes_requests() {
+    firefly::AppRegistry registry;
+    firefly::CapabilityRegistry capabilities;
+    firefly::EventBus bus;
+    capabilities.set(firefly::Capability::Display, true);
+    registry.add({"settings", "Settings",
+                  firefly::capabilityBit(firefly::Capability::Display)});
+    firefly::AppManager manager(registry, capabilities, bus);
+    expect_true(manager.requestOpen("settings", 42), "request known app");
+    firefly::SystemEvent event{};
+    expect_true(bus.take(event) &&
+                event.type == firefly::EventType::AppOpenRequested,
+                "app open event published");
+    expect_true(!manager.requestOpen("missing", 43), "reject missing app");
+    manager.confirmOpened("settings");
+    expect_true(manager.hasCreatedPage(), "opened page recorded");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -137,6 +183,8 @@ void setup() {
     test_state_store_revision();
     test_capability_registry();
     test_app_registry();
+    test_lifecycle_and_resource_governor();
+    test_app_manager_publishes_requests();
     Serial.printf("FIREFLY_TEST_RESULT failures=%u\n", failures);
 }
 

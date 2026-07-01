@@ -11,3 +11,6 @@
 #include "firefly/core/StateStore.h"
 #include "firefly/core/CapabilityRegistry.h"
 #include "firefly/core/AppRegistry.h"
+#include "firefly/core/AppManager.h"
+#include "firefly/core/SystemLifecycle.h"
+#include "firefly/core/ResourceGovernor.h"
