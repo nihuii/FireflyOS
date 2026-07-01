@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>FireflyOS UI Shell 410×502 预览</title>
+  <style>
+    :root { color-scheme: dark; --bg:#060a0d; --surface:#111a21; --line:#69e4d1; }
+    * { box-sizing:border-box; }
+    body { margin:0; padding:32px; background:var(--bg); color:#edf9f7; font-family:Inter,"Microsoft YaHei",sans-serif; }
+    h1 { margin:0 0 8px; color:#9ef7e6; }
+    p { margin:0 0 28px; color:#9bb7b3; }
+    main { display:grid; grid-template-columns:repeat(auto-fit,410px); gap:44px; align-items:start; }
+    article h2 { margin:0 0 10px; font-size:18px; color:#dffcf6; }
+    .watch-frame { position:relative; width:410px;height:502px; overflow:hidden; border-radius:44px; background:#000; border:1px solid #28433f; box-shadow:0 18px 44px rgba(0,0,0,.45); }
+    .watch-frame img { width:410px; height:502px; display:block; object-fit:cover; }
+    .safe-area { position:absolute; left:24px; top:24px; width:362px; height:446px; border:1px dashed rgba(255,255,255,.28); border-radius:22px; pointer-events:none; }
+    .caption { margin-top:8px; font-size:13px; color:#789b95; }
+  </style>
+</head>
+<body>
+  <h1>FireflyOS UI Shell</h1>
+  <p>410 × 502 圆角 AMOLED 基准；虚线为 24px 安全区。当前图标与插画允许使用占位资源。</p>
+  <main>
+    <article><h2>一瞥界面</h2><div id="glance-screen" class="watch-frame"><img src="../../../image/ui_mockups/watch/W02_glance.png" alt="一瞥界面"><div class="safe-area"></div></div><div class="caption">纯黑底、主题图、时间与日期</div></article>
+    <article><h2>锁屏</h2><div id="lock-screen" class="watch-frame"><img src="../../../image/ui_mockups/watch/W03_lock.png" alt="锁屏"><div class="safe-area"></div></div><div class="caption">时间、日期、状态摘要与上滑入口</div></article>
+    <article><h2>桌面</h2><div id="home-screen" class="watch-frame"><img src="../../../image/ui_mockups/watch/W04_home_1.png" alt="桌面"><div class="safe-area"></div></div><div class="caption">三列两行网格与分页状态</div></article>
+    <article><h2>控制中心</h2><div id="control-center" class="watch-frame"><img src="../../../image/ui_mockups/watch/W06_control_center.png" alt="控制中心"><div class="safe-area"></div></div><div class="caption">亮度、音量、连接、省电与锁定</div></article>
+    <article><h2>通知中心</h2><div id="notification-center" class="watch-frame"><img src="../../../image/ui_mockups/watch/W07_notifications.png" alt="通知中心"><div class="safe-area"></div></div><div class="caption">三张摘要卡、清除操作与空状态</div></article>
+    <article><h2>应用 Shell</h2><div id="app-shell" class="watch-frame"><img src="../../../image/ui_mockups/watch/W27_settings_main.png" alt="应用 Shell"><div class="safe-area"></div></div><div class="caption">统一标题、滚动内容与 BOOT 返回语义</div></article>
+  </main>
+</body>
+</html>
