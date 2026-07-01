@@ -136,8 +136,8 @@ static void test_lifecycle_and_resource_governor() {
                 "locked cannot jump into update");
     expect_true(lifecycle.transition(firefly::SystemPhase::Active),
                 "unlock enters active");
-    expect_true(lifecycle.transition(firefly::SystemPhase::Updating),
-                "active can enter update");
+    expect_true(!lifecycle.transition(firefly::SystemPhase::Updating),
+                "update requires resource governor");
 
     firefly::ResourceGovernor resources;
     expect_true(resources.acquire(firefly::ResourceKind::AudioPlayback),
@@ -146,12 +146,21 @@ static void test_lifecycle_and_resource_governor() {
                 "recording conflicts with playback");
     expect_true(!resources.acquire(firefly::ResourceKind::Ota),
                 "ota conflicts with playback");
+    expect_true(!lifecycle.transition(firefly::SystemPhase::Updating, resources),
+                "playback blocks update phase");
     resources.release(firefly::ResourceKind::AudioPlayback);
-    expect_true(resources.acquire(firefly::ResourceKind::Ota), "ota lease");
-    resources.release(firefly::ResourceKind::Ota);
     resources.setConstrained(true);
+    expect_true(!resources.canAcquire(firefly::ResourceKind::Ota),
+                "power constraint rejects ota");
+    expect_true(!lifecycle.transition(firefly::SystemPhase::Updating, resources),
+                "power constraint blocks update phase");
     expect_true(!resources.acquire(firefly::ResourceKind::HighRateMotion),
                 "power constraint rejects high rate motion");
+    resources.setConstrained(false);
+    expect_true(resources.canAcquire(firefly::ResourceKind::Ota),
+                "idle resources allow ota");
+    expect_true(lifecycle.transition(firefly::SystemPhase::Updating, resources),
+                "guarded active phase can enter update");
 }
 
 static void test_app_manager_publishes_requests() {

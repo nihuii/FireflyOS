@@ -17,6 +17,7 @@ enum class ResourceKind : uint8_t {
 
 class ResourceGovernor {
 public:
+    bool canAcquire(ResourceKind resource) const;
     bool acquire(ResourceKind resource);
     void release(ResourceKind resource);
     bool held(ResourceKind resource) const;
@@ -26,6 +27,7 @@ public:
 private:
     static uint16_t resourceBit(ResourceKind resource);
     static uint16_t conflictingMask(ResourceKind resource);
+    bool canAcquireLocked(ResourceKind resource) const;
 
     mutable portMUX_TYPE mux_ = portMUX_INITIALIZER_UNLOCKED;
     uint16_t held_mask_ = 0;

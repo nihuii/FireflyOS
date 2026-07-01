@@ -39,15 +39,30 @@ bool ResourceGovernor::acquire(ResourceKind resource) {
         return false;
     }
     portENTER_CRITICAL(&mux_);
-    const bool denied_by_power = constrained_ &&
-        resource == ResourceKind::HighRateMotion;
-    const bool denied_by_conflict = (held_mask_ & conflictingMask(resource)) != 0;
-    const bool allowed = !denied_by_power && !denied_by_conflict;
+    const bool allowed = canAcquireLocked(resource);
     if(allowed) {
         held_mask_ |= bit;
     }
     portEXIT_CRITICAL(&mux_);
     return allowed;
+}
+
+bool ResourceGovernor::canAcquire(ResourceKind resource) const {
+    portENTER_CRITICAL(&mux_);
+    const bool result = canAcquireLocked(resource);
+    portEXIT_CRITICAL(&mux_);
+    return result;
+}
+
+bool ResourceGovernor::canAcquireLocked(ResourceKind resource) const {
+    const uint16_t bit = resourceBit(resource);
+    if(bit == 0) {
+        return false;
+    }
+    const bool denied_by_power = constrained_ &&
+        (resource == ResourceKind::HighRateMotion || resource == ResourceKind::Ota);
+    const bool denied_by_conflict = (held_mask_ & conflictingMask(resource)) != 0;
+    return !denied_by_power && !denied_by_conflict;
 }
 
 void ResourceGovernor::release(ResourceKind resource) {

@@ -1,5 +1,7 @@
 #include "SystemLifecycle.h"
 
+#include "ResourceGovernor.h"
+
 namespace firefly {
 
 SystemPhase SystemLifecycle::phase() const {
@@ -10,8 +12,22 @@ SystemPhase SystemLifecycle::phase() const {
 }
 
 bool SystemLifecycle::transition(SystemPhase target) {
+    return transitionChecked(target, false);
+}
+
+bool SystemLifecycle::transition(SystemPhase target,
+                                 const ResourceGovernor & resources) {
+    const bool update_allowed = target != SystemPhase::Updating ||
+        resources.canAcquire(ResourceKind::Ota);
+    return transitionChecked(target, update_allowed);
+}
+
+bool SystemLifecycle::transitionChecked(SystemPhase target, bool update_allowed) {
     portENTER_CRITICAL(&mux_);
-    const bool allowed = phase_ == target || canTransition(phase_, target);
+    const bool same_phase = phase_ == target;
+    const bool allowed = same_phase ||
+        (canTransition(phase_, target) &&
+         (target != SystemPhase::Updating || update_allowed));
     if(allowed) {
         phase_ = target;
     }
