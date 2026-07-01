@@ -403,7 +403,9 @@ void build_firefly_os() {
     lv_obj_set_style_bg_color(scr_firefly, lv_color_hex(0x071018), 0);
     lv_obj_set_style_bg_opa(scr_firefly, LV_OPA_COVER, 0);
 
-    tv_main = lv_tileview_create(scr_firefly);
+    ui_shell.create(scr_firefly, firefly::UiTheme::fireflyDefault());
+
+    tv_main = lv_tileview_create(ui_shell.appHost());
     lv_obj_set_size(tv_main, LCD_WIDTH, LCD_HEIGHT);
     lv_obj_set_style_bg_opa(tv_main, LV_OPA_TRANSP, 0);
     lv_obj_set_scrollbar_mode(tv_main, LV_SCROLLBAR_MODE_OFF);
@@ -462,7 +464,7 @@ void build_firefly_os() {
 
     create_desktop_icon(-150, 88, LV_SYMBOL_SETTINGS, "Settings", open_settings_menu, lv_color_hex(0x3D6AF2));
 
-    notif_panel = lv_obj_create(scr_firefly);
+    notif_panel = lv_obj_create(ui_shell.panelHost());
     lv_obj_set_size(notif_panel, LCD_WIDTH, LCD_HEIGHT);
     lv_obj_set_style_pad_all(notif_panel, 0, 0);
     lv_obj_set_style_border_width(notif_panel, 0, 0);
@@ -538,7 +540,7 @@ void build_firefly_os() {
     firefly::UiComponents::styleSlider(notif_brightness_slider, lv_color_hex(0xC7E9F0), settings_action, lv_color_white());
     lv_obj_add_event_cb(notif_brightness_slider, slider_brightness_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-    top_status_bar = lv_obj_create(scr_firefly);
+    top_status_bar = lv_obj_create(ui_shell.statusBarHost());
     lv_obj_set_size(top_status_bar, LCD_WIDTH, 60);
     lv_obj_align(top_status_bar, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_bg_opa(top_status_bar, LV_OPA_TRANSP, 0);
@@ -567,7 +569,7 @@ void build_firefly_os() {
     lv_obj_align(notif_time_label, LV_ALIGN_TOP_LEFT, 50, 20);
     lv_obj_set_style_text_opa(notif_time_label, 0, 0);
 
-    settings_panel = lv_obj_create(scr_firefly);
+    settings_panel = lv_obj_create(ui_shell.appHost());
     lv_obj_set_size(settings_panel, LCD_WIDTH, LCD_HEIGHT);
     lv_obj_set_style_bg_opa(settings_panel, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(settings_panel, 0, 0);
@@ -964,7 +966,7 @@ void build_firefly_os() {
     lv_obj_align(settings_sleep_roller, LV_ALIGN_TOP_MID, 0, 172);
     lv_obj_add_event_cb(settings_sleep_roller, auto_sleep_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-    alarm_overlay = lv_obj_create(scr_firefly);
+    alarm_overlay = lv_obj_create(ui_shell.overlayHost());
     lv_obj_set_size(alarm_overlay, LCD_WIDTH, LCD_HEIGHT);
     lv_obj_set_style_bg_color(alarm_overlay, lv_color_hex(0x040608), 0);
     lv_obj_set_style_bg_opa(alarm_overlay, 235, 0);
@@ -996,7 +998,7 @@ void build_firefly_os() {
     lv_label_set_text(alarm_stop_label, "Dismiss Alarm");
     lv_obj_center(alarm_stop_label);
 
-    charge_overlay = lv_obj_create(scr_firefly);
+    charge_overlay = lv_obj_create(ui_shell.overlayHost());
     lv_obj_set_size(charge_overlay, LCD_WIDTH, LCD_HEIGHT);
     lv_obj_set_style_bg_color(charge_overlay, lv_color_hex(0x071018), 0);
     lv_obj_set_style_bg_opa(charge_overlay, 235, 0);
@@ -1016,7 +1018,7 @@ void build_firefly_os() {
     lv_label_set_text(charge_percent_label, "0%");
     lv_obj_align(charge_percent_label, LV_ALIGN_CENTER, 0, 34);
 
-    sleep_screen = lv_obj_create(scr_firefly);
+    sleep_screen = lv_obj_create(ui_shell.appHost());
     lv_obj_set_size(sleep_screen, LCD_WIDTH, LCD_HEIGHT);
     lv_obj_set_style_bg_color(sleep_screen, lv_color_hex(0x000000), 0);
     lv_obj_set_style_bg_opa(sleep_screen, LV_OPA_COVER, 0);

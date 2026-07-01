@@ -107,5 +107,6 @@ Arduino_CO5300 * gfx_co5300 = (Arduino_CO5300 *)gfx;
 
 firefly::I2cBusManager firefly_i2c_bus(Wire);
 firefly::LegacyBoardAdapter firefly_board(rtc, power, *gfx_co5300, &firefly_i2c_bus);
+firefly::UiShell ui_shell;
 
 lv_disp_draw_buf_t draw_buf;

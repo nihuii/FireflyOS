@@ -27,6 +27,7 @@ extern XPowersPMU power;
 extern Preferences prefs;
 extern firefly::I2cBusManager firefly_i2c_bus;
 extern firefly::LegacyBoardAdapter firefly_board;
+extern firefly::UiShell ui_shell;
 
 extern const char * UI_PREF_NAMESPACE;
 extern const char * UI_PREF_VOLUME_KEY;

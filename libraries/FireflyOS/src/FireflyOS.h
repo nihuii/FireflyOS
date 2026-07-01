@@ -20,3 +20,4 @@
 #include "firefly/ui/UiTokens.h"
 #include "firefly/ui/UiTheme.h"
 #include "firefly/ui/NavigationController.h"
+#include "firefly/ui/UiShell.h"
