@@ -14,3 +14,5 @@
 #include "firefly/core/AppManager.h"
 #include "firefly/core/SystemLifecycle.h"
 #include "firefly/core/ResourceGovernor.h"
+#include "firefly/hal/DeviceInterfaces.h"
+#include "firefly/hal/I2cBusManager.h"

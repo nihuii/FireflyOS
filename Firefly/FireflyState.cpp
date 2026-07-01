@@ -105,4 +105,7 @@ Arduino_DataBus * bus = new Arduino_ESP32QSPI(
 Arduino_GFX * gfx = new Arduino_CO5300(bus, LCD_RESET, 0, LCD_WIDTH, LCD_HEIGHT, 22, 0, 0, 0);
 Arduino_CO5300 * gfx_co5300 = (Arduino_CO5300 *)gfx;
 
+firefly::I2cBusManager firefly_i2c_bus(Wire);
+firefly::LegacyBoardAdapter firefly_board(rtc, power, *gfx_co5300, &firefly_i2c_bus);
+
 lv_disp_draw_buf_t draw_buf;

@@ -13,6 +13,8 @@
 #include <time.h>
 #include "SensorPCF85063.hpp"
 #include "XPowersLib.h"
+#include <FireflyOS.h>
+#include <firefly/hal/LegacyBoardAdapter.h>
 
 extern "C" {
     extern const lv_font_t lv_font_montserrat_24;
@@ -22,6 +24,8 @@ extern "C" {
 extern SensorPCF85063 rtc;
 extern XPowersPMU power;
 extern Preferences prefs;
+extern firefly::I2cBusManager firefly_i2c_bus;
+extern firefly::LegacyBoardAdapter firefly_board;
 
 extern const char * UI_PREF_NAMESPACE;
 extern const char * UI_PREF_VOLUME_KEY;

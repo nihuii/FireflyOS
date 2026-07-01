@@ -172,6 +172,36 @@ static void test_app_manager_publishes_requests() {
     expect_true(manager.hasCreatedPage(), "opened page recorded");
 }
 
+class FakePowerDevice : public firefly::PowerDevice {
+public:
+    firefly::BatteryState readBattery() override {
+        firefly::BatteryState state{};
+        state.percent = 73;
+        state.valid = true;
+        return state;
+    }
+
+    void setDisplayBrightness(uint8_t value) override {
+        brightness = value;
+    }
+
+    uint8_t brightness = 0;
+};
+
+static void test_hardware_abstraction() {
+    FakePowerDevice power;
+    const firefly::BatteryState battery = power.readBattery();
+    expect_true(battery.valid && battery.percent == 73,
+                "power interface returns value state");
+    power.setDisplayBrightness(128);
+    expect_true(power.brightness == 128, "power interface controls brightness");
+
+    firefly::I2cBusManager i2c(Wire);
+    expect_true(i2c.lock(10), "i2c manager acquires mutex");
+    i2c.unlock();
+    expect_true(&i2c.wire() == &Wire, "i2c manager retains bus");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -185,6 +215,7 @@ void setup() {
     test_app_registry();
     test_lifecycle_and_resource_governor();
     test_app_manager_publishes_requests();
+    test_hardware_abstraction();
     Serial.printf("FIREFLY_TEST_RESULT failures=%u\n", failures);
 }
 
