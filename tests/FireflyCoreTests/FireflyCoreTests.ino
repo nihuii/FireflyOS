@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <FireflyOS.h>
+#include <firefly/apps/clock/ClockApp.h>
+#include <firefly/apps/settings/SettingsApp.h>
 #include <firefly/services/AlarmService.h>
 #include <firefly/services/TimeService.h>
 
@@ -340,6 +342,47 @@ static void test_time_service_reload_set_and_tick() {
                 "reload rtc refreshes snapshot");
 }
 
+static void test_countdown_timer_uses_target_time() {
+    firefly::CountdownTimer timer;
+    timer.start(10 * 60 * 1000UL, 1000);
+    expect_true(timer.running(), "countdown timer starts running");
+    expect_true(timer.remainingMs(1000) == 600000UL,
+                "countdown stores full duration");
+    expect_true(timer.remainingMs(601000) == 0,
+                "countdown reaches zero at target");
+    expect_true(timer.expired(601001), "countdown reports expired after target");
+}
+
+static void test_stopwatch_uses_monotonic_time() {
+    firefly::StopwatchSession stopwatch;
+    stopwatch.start(1000000LL);
+    expect_true(stopwatch.running(), "stopwatch starts running");
+    expect_true(stopwatch.elapsedUs(2500000LL) == 1500000LL,
+                "stopwatch elapsed follows monotonic time");
+    stopwatch.pause(3000000LL);
+    expect_true(!stopwatch.running(), "stopwatch pauses");
+    expect_true(stopwatch.elapsedUs(5000000LL) == 2000000LL,
+                "paused stopwatch holds elapsed");
+    stopwatch.start(7000000LL);
+    expect_true(stopwatch.elapsedUs(8000000LL) == 3000000LL,
+                "stopwatch resumes from accumulated elapsed");
+    stopwatch.reset();
+    expect_true(stopwatch.elapsedUs(9000000LL) == 0,
+                "stopwatch reset clears elapsed");
+}
+
+static void test_settings_app_command_queue() {
+    firefly::SettingsCommandQueue queue;
+    expect_true(queue.post({firefly::SettingsCommandType::SetBrightness, 72}),
+                "settings command queues brightness");
+    firefly::SettingsCommand command{};
+    expect_true(queue.take(command) &&
+                command.type == firefly::SettingsCommandType::SetBrightness &&
+                command.value == 72,
+                "settings command preserves payload");
+    expect_true(!queue.take(command), "settings command queue drains");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -360,6 +403,9 @@ void setup() {
     test_alarm_next_trigger();
     test_time_service_invalid_rtc();
     test_time_service_reload_set_and_tick();
+    test_countdown_timer_uses_target_time();
+    test_stopwatch_uses_monotonic_time();
+    test_settings_app_command_queue();
     Serial.printf("FIREFLY_TEST_RESULT failures=%u\n", failures);
 }
 

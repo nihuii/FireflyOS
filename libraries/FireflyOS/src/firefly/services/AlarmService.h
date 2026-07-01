@@ -28,6 +28,7 @@ public:
     const Alarm & get(uint8_t slot) const;
     AlarmTrigger nextTrigger(int64_t now) const;
     bool shouldTrigger(int64_t now, uint8_t & slot);
+    void resetTriggerHistory();
 
     static bool matchesWeekday(uint8_t days_mask, int tm_wday);
 

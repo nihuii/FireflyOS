@@ -52,6 +52,15 @@ class RepositoryContracts(unittest.TestCase):
             (ROOT / "Firefly" / name).read_text(encoding="utf-8", errors="ignore")
             for name in ("Firefly.ino", "FireflyInteraction.cpp")
         )
+        time_service = (
+            ROOT
+            / "libraries"
+            / "FireflyOS"
+            / "src"
+            / "firefly"
+            / "services"
+            / "TimeService.cpp"
+        ).read_text(encoding="utf-8", errors="ignore")
         forbidden = (
             "rtc.getDateTime(",
             "rtc.setDateTime(",
@@ -66,8 +75,10 @@ class RepositoryContracts(unittest.TestCase):
         for expression in forbidden:
             self.assertNotIn(expression, sources)
         self.assertIn("firefly_board.readBattery()", sources)
-        self.assertIn("firefly_board.readEpoch(", sources)
-        self.assertIn("firefly_board.writeEpoch(", sources)
+        self.assertIn("time_service.reloadRtc()", sources)
+        self.assertIn("time_service.setLocalTime(", sources)
+        self.assertIn("clock_.readEpoch(", time_service)
+        self.assertIn("clock_.writeEpoch(", time_service)
 
     def test_gate_a_diagnostics_and_core_boundaries(self):
         interaction = (ROOT / "Firefly" / "FireflyInteraction.cpp").read_text(
@@ -183,7 +194,8 @@ class RepositoryContracts(unittest.TestCase):
         interaction = (ROOT / "Firefly" / "FireflyInteraction.cpp").read_text(
             encoding="utf-8", errors="ignore"
         )
-        self.assertIn("firefly_alarm_find_next", interaction)
+        self.assertIn("alarm_service.nextTrigger", interaction)
+        self.assertIn("alarm_service.shouldTrigger", interaction)
         self.assertIn("lock_screen.setNextAlarm", interaction)
 
     def test_home_pager_updates_its_position_indicator(self):

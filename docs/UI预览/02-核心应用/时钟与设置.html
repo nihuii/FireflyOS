@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>FireflyOS 计划 3 · 时钟与设置预览</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --page-bg:#05090c;
+      --screen-bg:#020607;
+      --surface:#0d171d;
+      --surface-2:#10242b;
+      --line:#25454b;
+      --safe:rgba(255,255,255,.30);
+      --primary:#62e8ca;
+      --secondary:#72cde0;
+      --violet:#a99bd0;
+      --energy:#b0ff63;
+      --orange:#ff9148;
+      --danger:#ff636b;
+      --text:#effffb;
+      --muted:#8ba6aa;
+      --dim:#536b70;
+    }
+
+    * { box-sizing:border-box; }
+
+    body {
+      margin:0;
+      padding:32px;
+      background:
+        radial-gradient(circle at 16% 10%, rgba(98,232,202,.10), transparent 28%),
+        radial-gradient(circle at 84% 2%, rgba(169,155,208,.12), transparent 24%),
+        var(--page-bg);
+      color:var(--text);
+      font-family:Inter,"Microsoft YaHei",system-ui,sans-serif;
+    }
+
+    header { max-width:1180px; margin:0 auto 30px; }
+    h1 { margin:0 0 10px; color:#bffdf0; font-size:30px; }
+    header p { margin:6px 0; color:var(--muted); line-height:1.7; }
+    .note {
+      display:inline-flex;
+      margin-top:14px;
+      padding:9px 14px;
+      border:1px solid rgba(98,232,202,.32);
+      border-radius:999px;
+      color:#c9fff4;
+      background:rgba(98,232,202,.08);
+      font-size:13px;
+    }
+
+    main {
+      max-width:1380px;
+      margin:0 auto;
+      display:grid;
+      grid-template-columns:repeat(auto-fit, minmax(410px, 410px));
+      gap:42px;
+      align-items:start;
+    }
+
+    article h2 {
+      margin:0 0 10px;
+      font-size:18px;
+      color:#dffcf6;
+    }
+
+    .caption {
+      margin-top:10px;
+      color:#86a2a5;
+      font-size:13px;
+      line-height:1.55;
+    }
+
+    .watch {
+      position:relative;
+      width:410px;
+      height:502px;
+      overflow:hidden;
+      border-radius:44px;
+      border:1px solid #29474a;
+      background:
+        radial-gradient(circle at 80% 18%, rgba(98,232,202,.18), transparent 25%),
+        radial-gradient(circle at 18% 80%, rgba(169,155,208,.16), transparent 24%),
+        var(--screen-bg);
+      box-shadow:0 18px 48px rgba(0,0,0,.50);
+    }
+
+    .safe {
+      position:absolute;
+      left:24px;
+      top:24px;
+      width:362px;
+      height:446px;
+      border:1px dashed var(--safe);
+      border-radius:22px;
+      pointer-events:none;
+      z-index:5;
+    }
+
+    .safe::after {
+      content:"24px 安全区";
+      position:absolute;
+      right:10px;
+      bottom:8px;
+      color:rgba(255,255,255,.42);
+      font-size:11px;
+    }
+
+    .status {
+      position:absolute;
+      left:30px;
+      right:30px;
+      top:20px;
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      color:#dffcf6;
+      font-size:14px;
+      font-weight:700;
+      z-index:2;
+    }
+
+    .status .icons { color:var(--muted); font-size:12px; letter-spacing:3px; }
+    .title { position:absolute; left:30px; top:62px; font-size:25px; font-weight:800; }
+    .subtitle { position:absolute; left:31px; top:94px; font-size:13px; color:var(--muted); }
+    .gesture { position:absolute; left:164px; bottom:20px; width:82px; height:4px; border-radius:3px; background:rgba(239,255,251,.42); }
+
+    .card,
+    .row,
+    .pill,
+    .key {
+      border:1px solid var(--line);
+      background:rgba(13,23,29,.92);
+      box-shadow:0 8px 24px rgba(0,0,0,.20);
+    }
+
+    .card {
+      position:absolute;
+      border-radius:24px;
+      padding:16px;
+    }
+
+    .row {
+      min-height:56px;
+      border-radius:18px;
+      display:flex;
+      align-items:center;
+      gap:12px;
+      padding:10px 14px;
+    }
+
+    .row strong { display:block; color:var(--text); font-size:15px; }
+    .row small { display:block; color:var(--muted); font-size:12px; margin-top:3px; }
+    .right { margin-left:auto; color:var(--primary); font-size:13px; white-space:nowrap; }
+
+    .icon {
+      width:34px;
+      height:34px;
+      min-width:34px;
+      border-radius:12px;
+      display:grid;
+      place-items:center;
+      color:var(--primary);
+      background:rgba(98,232,202,.10);
+      border:1px solid rgba(98,232,202,.25);
+      font-size:17px;
+    }
+
+    .pill {
+      min-height:48px;
+      border-radius:999px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:0 18px;
+      color:var(--primary);
+      font-weight:800;
+      font-size:14px;
+    }
+
+    .pill.fill {
+      color:#03110e;
+      background:linear-gradient(135deg, var(--primary), var(--secondary));
+      border-color:transparent;
+    }
+
+    .touch-note {
+      position:absolute;
+      min-width:48px;
+      height:18px;
+      border-radius:999px;
+      background:rgba(176,255,99,.14);
+      color:var(--energy);
+      border:1px solid rgba(176,255,99,.28);
+      display:grid;
+      place-items:center;
+      font-size:10px;
+      z-index:4;
+    }
+
+    .clock-time {
+      position:absolute;
+      left:30px;
+      top:116px;
+      font-size:70px;
+      line-height:.95;
+      font-weight:900;
+      letter-spacing:-4px;
+      color:#eafffa;
+      font-family:"Bahnschrift","Segoe UI",sans-serif;
+    }
+
+    .clock-date {
+      position:absolute;
+      left:34px;
+      top:188px;
+      color:var(--muted);
+      font-size:15px;
+    }
+
+    .alarm-list { position:absolute; left:28px; right:28px; top:124px; display:grid; gap:12px; }
+    .switch {
+      width:50px;
+      height:30px;
+      border-radius:16px;
+      padding:3px;
+      background:rgba(98,232,202,.28);
+      border:1px solid rgba(98,232,202,.38);
+    }
+    .switch::after {
+      content:"";
+      display:block;
+      margin-left:20px;
+      width:22px;
+      height:22px;
+      border-radius:50%;
+      background:var(--primary);
+      box-shadow:0 0 14px rgba(98,232,202,.65);
+    }
+    .switch.off { background:#17252a; border-color:var(--line); }
+    .switch.off::after { margin-left:0; background:#63787c; box-shadow:none; }
+
+    .wheel {
+      position:absolute;
+      top:148px;
+      width:108px;
+      height:178px;
+      border-radius:28px;
+      overflow:hidden;
+      border:1px solid var(--line);
+      background:linear-gradient(#081015, #13262d 48%, #081015);
+    }
+    .wheel .pick {
+      position:absolute;
+      left:8px;
+      right:8px;
+      top:65px;
+      height:48px;
+      border-radius:16px;
+      border:1px solid rgba(98,232,202,.42);
+      background:rgba(98,232,202,.08);
+    }
+    .wheel span {
+      display:block;
+      height:48px;
+      text-align:center;
+      color:var(--dim);
+      font-size:25px;
+      font-weight:800;
+      line-height:48px;
+      font-family:"Bahnschrift","Segoe UI",sans-serif;
+    }
+    .wheel span:nth-child(4) { color:var(--text); font-size:34px; }
+
+    .timer-ring,
+    .stop-ring {
+      position:absolute;
+      left:91px;
+      top:122px;
+      width:228px;
+      height:228px;
+      border-radius:50%;
+      background:
+        conic-gradient(var(--primary) 0 78%, var(--line) 78% 100%);
+      display:grid;
+      place-items:center;
+    }
+    .timer-ring::before,
+    .stop-ring::before {
+      content:"";
+      width:190px;
+      height:190px;
+      border-radius:50%;
+      background:var(--screen-bg);
+      border:1px solid rgba(255,255,255,.08);
+    }
+    .ring-text {
+      position:absolute;
+      left:0;
+      right:0;
+      top:192px;
+      text-align:center;
+      font-size:44px;
+      font-weight:900;
+      letter-spacing:-1px;
+      font-family:"Bahnschrift","Segoe UI",sans-serif;
+    }
+
+    .settings-list { position:absolute; left:28px; right:28px; top:122px; display:grid; gap:10px; }
+    .seg {
+      position:absolute;
+      left:28px;
+      right:28px;
+      top:115px;
+      display:grid;
+      grid-template-columns:1fr 1fr 1fr;
+      gap:8px;
+    }
+    .seg .pill { min-height:42px; font-size:12px; }
+    .mini-grid { position:absolute; left:28px; right:28px; top:176px; display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .mini {
+      min-height:88px;
+      border-radius:22px;
+      border:1px solid var(--line);
+      background:rgba(13,23,29,.92);
+      padding:14px;
+    }
+    .mini strong { display:block; font-size:20px; }
+    .mini small { color:var(--muted); }
+
+    .keypad {
+      position:absolute;
+      left:28px;
+      right:28px;
+      top:328px;
+      display:grid;
+      grid-template-columns:repeat(4, 1fr);
+      gap:9px;
+    }
+    .key {
+      min-height:48px;
+      border-radius:17px;
+      display:grid;
+      place-items:center;
+      color:var(--text);
+      font-weight:800;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>计划 3 · 时钟与设置应用预览</h1>
+    <p>目标：在迁移正式 UI 前先确认 ClockApp 与 SettingsApp 的信息结构、410 × 502 圆角屏安全区、以及不小于 48px 的有效触摸区域。</p>
+    <p>说明：本页是审批用静态预览，正式图标/角色仍为几何占位；不会引入 LVGL v9 概念，也不代表已通过真机交互验收。</p>
+    <span class="note">请审批：时钟首页、双闹钟列表、闹钟编辑、计时器、秒表、时间日期设置、电源设置</span>
+  </header>
+
+  <main>
+    <article>
+      <h2>1. 时钟首页</h2>
+      <div class="watch">
+        <div class="status"><span>09:41</span><span class="icons">BLE ▮▮▮ 82%</span></div>
+        <div class="clock-time">09:41</div>
+        <div class="clock-date">7月2日 · 星期四 · RTC 有效</div>
+        <div class="card" style="left:28px;right:28px;top:236px;height:86px;">
+          <div style="color:var(--muted);font-size:13px;">下一闹钟</div>
+          <div style="font-size:24px;font-weight:900;margin-top:7px;">明天 07:30</div>
+          <div style="position:absolute;right:18px;top:25px;color:var(--primary);">每天</div>
+        </div>
+        <div class="card" style="left:28px;right:211px;top:338px;height:88px;">
+          <div style="color:var(--muted);font-size:12px;">计时器</div>
+          <div style="font-size:24px;font-weight:900;margin-top:12px;">10:00</div>
+        </div>
+        <div class="card" style="left:211px;right:28px;top:338px;height:88px;">
+          <div style="color:var(--muted);font-size:12px;">秒表</div>
+          <div style="font-size:24px;font-weight:900;margin-top:12px;">00:00</div>
+        </div>
+        <div class="safe"></div>
+        <div class="gesture"></div>
+      </div>
+      <div class="caption">首页只读服务状态：时间来自 TimeService，闹钟摘要来自 AlarmService；卡片高度均覆盖 48px 触摸基线。</div>
+    </article>
+
+    <article>
+      <h2>2. 双闹钟列表</h2>
+      <div class="watch">
+        <div class="status"><span>09:41</span><span class="icons">BLE ▮▮▮ 82%</span></div>
+        <div class="title">闹钟</div>
+        <div class="subtitle">双槽位 · 离线可用 · 服务持久化</div>
+        <div class="alarm-list">
+          <div class="row" style="min-height:92px;">
+            <div class="icon">⏰</div>
+            <div><strong style="font-size:28px;">07:30</strong><small>每天 · Trailblaze · 起床</small></div>
+            <div class="switch" aria-hidden="true"></div>
+          </div>
+          <div class="row" style="min-height:92px;">
+            <div class="icon" style="color:var(--violet);background:rgba(169,155,208,.10);border-color:rgba(169,155,208,.25);">☾</div>
+            <div><strong style="font-size:28px;">22:15</strong><small>工作日 · Night Sky · 睡前</small></div>
+            <div class="switch off" aria-hidden="true"></div>
+          </div>
+          <div class="row">
+            <div class="icon" style="color:var(--energy);">＋</div>
+            <div><strong>添加/编辑闹钟</strong><small>名称最长 23 字符；铃声占位</small></div>
+            <span class="right">进入</span>
+          </div>
+        </div>
+        <div class="touch-note" style="right:34px;top:176px;">48+</div>
+        <div class="safe"></div>
+        <div class="gesture"></div>
+      </div>
+      <div class="caption">列表只展示两个固定槽位，避免动态分配；保存动作后续先走 AlarmService，再由存储层落 NVS。</div>
+    </article>
+
+    <article>
+      <h2>3. 闹钟编辑</h2>
+      <div class="watch">
+        <div class="status"><span>09:41</span><span class="icons">BLE ▮▮▮ 82%</span></div>
+        <div class="title">编辑闹钟</div>
+        <div class="subtitle">保留滚轮与重复日期语义</div>
+        <div class="wheel" style="left:56px;">
+          <div class="pick"></div><span>06</span><span>07</span><span>08</span><span>09</span>
+        </div>
+        <div class="wheel" style="left:246px;">
+          <div class="pick"></div><span>20</span><span>25</span><span>30</span><span>35</span>
+        </div>
+        <div style="position:absolute;left:194px;top:211px;font-size:38px;color:var(--primary);font-weight:900;">:</div>
+        <div class="seg" style="top:344px;">
+          <div class="pill fill">每天</div>
+          <div class="pill">工作日</div>
+          <div class="pill">自定义</div>
+        </div>
+        <div class="pill" style="position:absolute;left:28px;right:211px;top:408px;">铃声：Starglow</div>
+        <div class="pill fill" style="position:absolute;left:211px;right:28px;top:408px;">保存</div>
+        <div class="touch-note" style="left:235px;top:423px;">48+</div>
+        <div class="safe"></div>
+        <div class="gesture"></div>
+      </div>
+      <div class="caption">滚轮中心选区为 48px；本预览不调整底层滚轮逻辑，只审批布局、安全区与按钮位置。</div>
+    </article>
+
+    <article>
+      <h2>4. 计时器</h2>
+      <div class="watch">
+        <div class="status"><span>09:41</span><span class="icons">BLE ▮▮▮ 82%</span></div>
+        <div class="title">计时器</div>
+        <div class="subtitle">目标 epoch，不依赖页面定时器累计</div>
+        <div class="timer-ring"></div>
+        <div class="ring-text">03:42</div>
+        <div class="pill" style="position:absolute;left:52px;right:230px;top:382px;">重置</div>
+        <div class="pill fill" style="position:absolute;left:181px;right:52px;top:382px;">暂停</div>
+        <div class="touch-note" style="right:65px;top:397px;">48+</div>
+        <div class="safe"></div>
+        <div class="gesture"></div>
+      </div>
+      <div class="caption">页面隐藏后仍可从目标时间恢复剩余值；首版只保留一个计时器会话。</div>
+    </article>
+
+    <article>
+      <h2>5. 秒表</h2>
+      <div class="watch">
+        <div class="status"><span>09:41</span><span class="icons">BLE ▮▮▮ 82%</span></div>
+        <div class="title">秒表</div>
+        <div class="subtitle">使用 esp_timer_get_time 单调时钟</div>
+        <div class="stop-ring" style="background:conic-gradient(var(--orange) 0 34%, var(--line) 34% 100%);"></div>
+        <div class="ring-text">01:18.6</div>
+        <div class="row" style="position:absolute;left:52px;right:52px;top:354px;">
+          <div class="icon" style="color:var(--orange);">↺</div>
+          <div><strong>最近圈速</strong><small>00:24.2 · 固定容量 4 条</small></div>
+          <span class="right">Lap</span>
+        </div>
+        <div class="pill" style="position:absolute;left:52px;right:230px;top:421px;">计圈</div>
+        <div class="pill fill" style="position:absolute;left:181px;right:52px;top:421px;background:linear-gradient(135deg,var(--orange),var(--primary));">停止</div>
+        <div class="safe"></div>
+        <div class="gesture"></div>
+      </div>
+      <div class="caption">秒表会话不绑定页面生命周期；圈速列表固定容量，不引入动态日志。</div>
+    </article>
+
+    <article>
+      <h2>6. 时间日期设置</h2>
+      <div class="watch">
+        <div class="status"><span>09:41</span><span class="icons">BLE ▮▮▮ 82%</span></div>
+        <div class="title">时间与日期</div>
+        <div class="subtitle">RTC 无效时显示恢复入口，不生成假日期</div>
+        <div class="mini-grid">
+          <div class="mini"><small>当前时间</small><strong>09:41</strong><small>24 小时制</small></div>
+          <div class="mini"><small>日期</small><strong>7/02</strong><small>星期四</small></div>
+          <div class="mini"><small>RTC</small><strong style="color:var(--primary);">有效</strong><small>PCF85063</small></div>
+          <div class="mini"><small>时区</small><strong>UTC+8</strong><small>本地保存</small></div>
+        </div>
+        <div class="settings-list" style="top:378px;">
+          <div class="row">
+            <div class="icon">✎</div>
+            <div><strong>手动设置时间</strong><small>调用 TimeService::setLocalTime()</small></div>
+            <span class="right">进入</span>
+          </div>
+        </div>
+        <div class="safe"></div>
+        <div class="gesture"></div>
+      </div>
+      <div class="caption">时间设置只发服务命令；RTC 读取失败时会显示无效状态和手动恢复，不用占位日期冒充正常。</div>
+    </article>
+
+    <article>
+      <h2>7. 电源设置</h2>
+      <div class="watch">
+        <div class="status"><span>09:41</span><span class="icons">BLE ▮▮▮ 82%</span></div>
+        <div class="title">电源</div>
+        <div class="subtitle">首版只显示确定性状态，不宣称 LightSleep 已验收</div>
+        <div class="settings-list">
+          <div class="row">
+            <div class="icon" style="color:var(--energy);">▰</div>
+            <div><strong>电量</strong><small>82% · 3970mV · 温度 31°C</small></div>
+            <span class="right">正常</span>
+          </div>
+          <div class="row">
+            <div class="icon">☀</div>
+            <div><strong>亮度</strong><small>由 PowerService 发命令，UI 核执行</small></div>
+            <span class="right">72%</span>
+          </div>
+          <div class="row">
+            <div class="icon" style="color:var(--secondary);">◐</div>
+            <div><strong>自动息屏</strong><small>Active → IdleDim → Glance → Off</small></div>
+            <span class="right">15秒</span>
+          </div>
+          <div class="row">
+            <div class="icon" style="color:var(--orange);">⚡</div>
+            <div><strong>低功耗</strong><small>等待唤醒矩阵 100/100 后启用</small></div>
+            <span class="right" style="color:var(--orange);">待验证</span>
+          </div>
+          <div class="row">
+            <div class="icon" style="color:var(--danger);">!</div>
+            <div><strong>保护阈值</strong><small>省电 25% · 低电 15% · 极低 5%</small></div>
+            <span class="right">固定</span>
+          </div>
+        </div>
+        <div class="safe"></div>
+        <div class="gesture"></div>
+      </div>
+      <div class="caption">电源页只展示服务状态和命令入口；实际关屏、亮度和睡眠仍必须由 UI 主循环/系统服务按事件执行。</div>
+    </article>
+  </main>
+</body>
+</html>

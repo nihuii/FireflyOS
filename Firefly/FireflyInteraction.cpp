@@ -137,6 +137,24 @@ String alarm_name_text(const FireflyAlarm & alarm, uint8_t slot) {
     return "Alarm " + String(slot + 1U);
 }
 
+firefly::Alarm service_alarm_from_legacy(const FireflyAlarm & legacy_alarm) {
+    firefly::Alarm alarm{};
+    alarm.configured = legacy_alarm.configured;
+    alarm.enabled = legacy_alarm.enabled;
+    alarm.hour = legacy_alarm.hour;
+    alarm.minute = legacy_alarm.minute;
+    alarm.days_mask = legacy_alarm.days_mask;
+    alarm.ringtone = legacy_alarm.ringtone_index;
+    strlcpy(alarm.name, legacy_alarm.name, sizeof(alarm.name));
+    return alarm;
+}
+
+void sync_alarm_service_from_legacy() {
+    for(uint8_t slot = 0; slot < FIREFLY_ALARM_SLOT_COUNT; ++slot) {
+        alarm_service.set(slot, service_alarm_from_legacy(firefly_alarms[slot]));
+    }
+}
+
 const char * battery_symbol_for_percent(int percent) {
     if(percent >= 85) return LV_SYMBOL_BATTERY_FULL;
     if(percent >= 60) return LV_SYMBOL_BATTERY_3;
@@ -398,6 +416,7 @@ void load_sound_alarm_preferences() {
         }
     }
 
+    sync_alarm_service_from_legacy();
     clear_alarm_trigger_history();
 }
 
@@ -430,6 +449,7 @@ void clear_alarm_trigger_history() {
     for(uint8_t slot = 0; slot < FIREFLY_ALARM_SLOT_COUNT; ++slot) {
         firefly_alarm_last_trigger_keys[slot] = "";
     }
+    alarm_service.resetTriggerHistory();
 }
 
 void open_settings_panel() {
@@ -437,7 +457,7 @@ void open_settings_panel() {
         return;
     }
     set_settings_subpage(NULL);
-    lv_obj_clear_flag(settings_panel, LV_OBJ_FLAG_HIDDEN);
+    settings_app.show();
 }
 
 void close_settings_panel() {
@@ -445,7 +465,7 @@ void close_settings_panel() {
         return;
     }
     set_settings_subpage(NULL);
-    lv_obj_add_flag(settings_panel, LV_OBJ_FLAG_HIDDEN);
+    settings_app.hide();
 }
 
 void set_settings_subpage(lv_obj_t * page) {
@@ -477,6 +497,8 @@ void refresh_runtime_status_ui() {
                            ui_state_store.revision());
     lock_screen.refresh(state);
     home_screen.refresh(state);
+    clock_app.refresh(state);
+    settings_app.refresh(state);
     notification_center.refresh(state);
     ui_shell.refresh(state, ui_state_store.revision());
 }
@@ -503,6 +525,8 @@ void refresh_battery_ui() {
     control_center.refresh(state, volume_level, screen_brightness,
                            ui_state_store.revision());
     lock_screen.refresh(state);
+    clock_app.refresh(state);
+    settings_app.refresh(state);
     ui_shell.refresh(state, ui_state_store.revision());
 }
 
@@ -673,11 +697,23 @@ void status_drag_cb(lv_event_t * e) {
 void update_time_cb(lv_timer_t * timer) {
     LV_UNUSED(timer);
 
+    time_service.tick();
     struct tm timeinfo;
     if(!getLocalTime(&timeinfo, 10)) {
+        const firefly::TimeSnapshot snapshot = time_service.now();
+        firefly::TimeState time_state{};
+        time_state.epoch_seconds = snapshot.epoch_seconds;
+        time_state.valid = snapshot.valid;
+        ui_state_store.setTime(time_state);
         refresh_battery_ui();
         return;
     }
+
+    const int64_t current_epoch = static_cast<int64_t>(time(NULL));
+    firefly::TimeState time_state{};
+    time_state.epoch_seconds = current_epoch;
+    time_state.valid = true;
+    ui_state_store.setTime(time_state);
 
     char date_str[20];
     char time_str[10];
@@ -696,38 +732,26 @@ void update_time_cb(lv_timer_t * timer) {
     if(sleep_time_label) lv_label_set_text(sleep_time_label, time_str);
     if(sleep_date_label) lv_label_set_text(sleep_date_label, date_str);
 
-    int next_alarm_slot = -1;
-    time_t next_alarm_ts = 0;
     char next_alarm_text[48] = "NEXT  --:--";
-    if(firefly_alarm_find_next(time(NULL), next_alarm_slot, next_alarm_ts)) {
+    const firefly::AlarmTrigger next_alarm = alarm_service.nextTrigger(current_epoch);
+    if(next_alarm.valid) {
+        const time_t next_alarm_ts = static_cast<time_t>(next_alarm.epoch_seconds);
         struct tm next_alarm_tm{};
         if(localtime_r(&next_alarm_ts, &next_alarm_tm)) {
             snprintf(next_alarm_text, sizeof(next_alarm_text), "NEXT  %02d:%02d  %s",
                      next_alarm_tm.tm_hour, next_alarm_tm.tm_min,
-                     alarm_name_text(firefly_alarms[next_alarm_slot],
-                                     static_cast<uint8_t>(next_alarm_slot)).c_str());
+                     alarm_name_text(firefly_alarms[next_alarm.slot], next_alarm.slot).c_str());
         }
     }
     lock_screen.setNextAlarm(next_alarm_text);
 
     const String current_alarm_key = String(date_str) + " " + time_str;
     if(!alarm_ringing) {
-        for(uint8_t slot = 0; slot < FIREFLY_ALARM_SLOT_COUNT; ++slot) {
-            const FireflyAlarm & alarm = firefly_alarms[slot];
-            if(!alarm.configured || !alarm.enabled) {
-                continue;
-            }
-            if(!firefly_alarm_matches_weekday(alarm.days_mask, timeinfo.tm_wday)) {
-                continue;
-            }
-            if(timeinfo.tm_hour == alarm.hour && timeinfo.tm_min == alarm.minute) {
-                const String trigger_key = String(slot) + " " + current_alarm_key;
-                if(firefly_alarm_last_trigger_keys[slot] != trigger_key) {
-                    firefly_alarm_last_trigger_keys[slot] = trigger_key;
-                    trigger_alarm_alert(slot, time_str);
-                    break;
-                }
-            }
+        uint8_t triggered_slot = 0;
+        if(alarm_service.shouldTrigger(current_epoch, triggered_slot)) {
+            firefly_alarm_last_trigger_keys[triggered_slot] =
+                String(triggered_slot) + " " + current_alarm_key;
+            trigger_alarm_alert(triggered_slot, time_str);
         }
     }
 

@@ -19,6 +19,8 @@
 #include "firefly/hal/LockedRegisterDevice.h"
 #include "firefly/services/AlarmService.h"
 #include "firefly/services/TimeService.h"
+#include "firefly/apps/clock/ClockApp.h"
+#include "firefly/apps/settings/SettingsApp.h"
 #include "firefly/ui/UiTokens.h"
 #include "firefly/ui/UiTheme.h"
 #include "firefly/ui/NavigationController.h"

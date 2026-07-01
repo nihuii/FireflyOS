@@ -103,6 +103,12 @@ bool AlarmService::shouldTrigger(int64_t now, uint8_t & slot) {
     return false;
 }
 
+void AlarmService::resetTriggerHistory() {
+    for(uint8_t slot = 0; slot < kSlots; ++slot) {
+        last_trigger_minute_[slot] = -1;
+    }
+}
+
 bool AlarmService::matchesWeekday(uint8_t days_mask, int tm_wday) {
     return (days_mask & weekdayMaskForTmWday(tm_wday)) != 0;
 }

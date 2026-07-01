@@ -36,6 +36,7 @@ const char * title_for_route(firefly::Route route) {
 void handle_shell_route(firefly::Route previous, firefly::Route current) {
     LV_UNUSED(previous);
     close_settings_panel();
+    clock_app.hide();
     app_shell_screen.hide();
 
     if(current == firefly::Route::Lock) {
@@ -48,7 +49,13 @@ void handle_shell_route(firefly::Route previous, firefly::Route current) {
     }
     if(current == firefly::Route::Settings) {
         open_settings_panel();
-        ui_shell.bringAppToFront(settings_panel);
+        ui_shell.bringAppToFront(settings_app.root());
+        return;
+    }
+    if(current == firefly::Route::Clock) {
+        clock_app.refresh(ui_state_store.snapshot());
+        clock_app.show();
+        ui_shell.bringAppToFront(clock_app.root());
         return;
     }
 
@@ -128,6 +135,18 @@ void open_sound_page(lv_event_t * e) {
 
 uint8_t alarm_slot_from_event(lv_event_t * e) {
     return static_cast<uint8_t>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+}
+
+firefly::Alarm service_alarm_from_legacy(const FireflyAlarm & legacy_alarm) {
+    firefly::Alarm alarm{};
+    alarm.configured = legacy_alarm.configured;
+    alarm.enabled = legacy_alarm.enabled;
+    alarm.hour = legacy_alarm.hour;
+    alarm.minute = legacy_alarm.minute;
+    alarm.days_mask = legacy_alarm.days_mask;
+    alarm.ringtone = legacy_alarm.ringtone_index;
+    strlcpy(alarm.name, legacy_alarm.name, sizeof(alarm.name));
+    return alarm;
 }
 
 void hide_alarm_editor() {
@@ -217,7 +236,12 @@ void alarm_slot_switch_cb(lv_event_t * e) {
         return;
     }
 
-    firefly_alarms[slot].enabled = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    FireflyAlarm updated = firefly_alarms[slot];
+    updated.enabled = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    if(!alarm_service.set(slot, service_alarm_from_legacy(updated))) {
+        return;
+    }
+    firefly_alarms[slot] = updated;
     save_alarm_preferences();
     clear_alarm_trigger_history();
     refresh_sound_alarm_ui();
@@ -234,22 +258,28 @@ void alarm_editor_confirm_cb(lv_event_t * e) {
         return;
     }
 
-    FireflyAlarm & alarm = firefly_alarms[active_alarm_editor_slot];
-    const bool preserve_enabled = alarm.configured ? alarm.enabled : true;
-    alarm.configured = true;
-    alarm.enabled = preserve_enabled;
-    alarm.hour = static_cast<uint8_t>(lv_roller_get_selected(settings_alarm_editor_hour_roller));
-    alarm.minute = static_cast<uint8_t>(lv_roller_get_selected(settings_alarm_editor_minute_roller));
-    alarm.ringtone_index = static_cast<uint8_t>(lv_roller_get_selected(settings_alarm_editor_ringtone_roller));
-    alarm.days_mask = firefly_alarm_days_mask_from_option(static_cast<uint8_t>(lv_roller_get_selected(settings_alarm_editor_days_roller)));
+    FireflyAlarm updated = firefly_alarms[active_alarm_editor_slot];
+    const bool preserve_enabled = updated.configured ? updated.enabled : true;
+    updated.configured = true;
+    updated.enabled = preserve_enabled;
+    updated.hour = static_cast<uint8_t>(lv_roller_get_selected(settings_alarm_editor_hour_roller));
+    updated.minute = static_cast<uint8_t>(lv_roller_get_selected(settings_alarm_editor_minute_roller));
+    updated.ringtone_index = static_cast<uint8_t>(lv_roller_get_selected(settings_alarm_editor_ringtone_roller));
+    updated.days_mask = firefly_alarm_days_mask_from_option(static_cast<uint8_t>(lv_roller_get_selected(settings_alarm_editor_days_roller)));
 
     String name = settings_alarm_editor_name_ta ? String(lv_textarea_get_text(settings_alarm_editor_name_ta)) : "";
     name.trim();
     if(name.length() == 0) {
         name = "Alarm " + String(active_alarm_editor_slot + 1);
     }
-    strncpy(alarm.name, name.c_str(), sizeof(alarm.name) - 1U);
-    alarm.name[sizeof(alarm.name) - 1U] = '\0';
+    strncpy(updated.name, name.c_str(), sizeof(updated.name) - 1U);
+    updated.name[sizeof(updated.name) - 1U] = '\0';
+
+    if(!alarm_service.set(static_cast<uint8_t>(active_alarm_editor_slot),
+                          service_alarm_from_legacy(updated))) {
+        return;
+    }
+    firefly_alarms[active_alarm_editor_slot] = updated;
 
     save_alarm_preferences();
     clear_alarm_trigger_history();
@@ -319,7 +349,7 @@ void save_time_from_rollers(lv_event_t * e) {
     selected_time.tm_min = minute;
     selected_time.tm_isdst = -1;
     const time_t epoch_seconds = mktime(&selected_time);
-    if(epoch_seconds >= 0 && firefly_board.writeEpoch(epoch_seconds)) {
+    if(epoch_seconds >= 0 && time_service.setLocalTime(epoch_seconds)) {
         sync_time_to_system_from_epoch(epoch_seconds);
     }
     clear_alarm_trigger_history();
@@ -329,12 +359,12 @@ void save_time_from_rollers(lv_event_t * e) {
 
 void load_time_from_rtc(lv_event_t * e) {
     LV_UNUSED(e);
-    int64_t epoch_seconds = 0;
-    if(!firefly_board.readEpoch(epoch_seconds)) {
+    const firefly::TimeSnapshot snapshot = time_service.reloadRtc();
+    if(!snapshot.valid) {
         return;
     }
 
-    sync_time_to_system_from_epoch(epoch_seconds);
+    sync_time_to_system_from_epoch(snapshot.epoch_seconds);
     clear_alarm_trigger_history();
     load_time_rollers_from_current();
     update_time_cb(NULL);
@@ -528,6 +558,8 @@ void build_firefly_os() {
     home_screen.create(desktop_icon_layer, ui_tokens);
     home_screen.populate(ui_app_registry, open_home_app);
     app_shell_screen.create(ui_shell.appHost(), ui_tokens);
+    static firefly::UiComponents app_components;
+    clock_app.create(ui_shell.appHost(), app_components, time_service, alarm_service);
     ui_shell.setRouteHandler(handle_shell_route);
 
     notif_panel = lv_obj_create(ui_shell.panelHost());
@@ -692,6 +724,7 @@ void build_firefly_os() {
     lv_obj_set_style_radius(settings_panel, 0, 0);
     lv_obj_add_flag(settings_panel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(settings_panel, LV_OBJ_FLAG_SCROLLABLE);
+    settings_app.bindLegacyPanel(settings_panel);
 
     lv_obj_t * settings_wallpaper = lv_img_create(settings_panel);
     lv_img_set_src(settings_wallpaper, &settings_wallpaper_firefly_2);
@@ -1211,9 +1244,9 @@ void setup(void) {
     if(!rtc_ready) {
         Serial.println("Failed to find PCF85063 RTC");
     } else {
-        int64_t epoch_seconds = 0;
-        if(firefly_board.readEpoch(epoch_seconds)) {
-            sync_time_to_system_from_epoch(epoch_seconds);
+        const firefly::TimeSnapshot snapshot = time_service.reloadRtc();
+        if(snapshot.valid) {
+            sync_time_to_system_from_epoch(snapshot.epoch_seconds);
         } else {
             Serial.println("RTC time invalid. Set time manually from Settings.");
         }
