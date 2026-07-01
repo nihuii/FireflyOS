@@ -17,3 +17,5 @@
 #include "firefly/hal/DeviceInterfaces.h"
 #include "firefly/hal/I2cBusManager.h"
 #include "firefly/hal/LockedRegisterDevice.h"
+#include "firefly/ui/UiTokens.h"
+#include "firefly/ui/UiTheme.h"

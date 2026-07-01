@@ -1,5 +1,7 @@
 #include "FireflyApp.h"
 
+#if 0  // Legacy LVGL-coupled sampler retained for migration reference.
+
 namespace {
 
 struct ThemeRgbSample {
@@ -155,5 +157,66 @@ void init_settings_theme_from_wallpaper(const lv_img_dsc_t * wallpaper) {
 }
 
 void init_default_settings_theme() {
+    init_settings_theme_from_wallpaper(&settings_wallpaper_firefly_2);
+}
+#endif
+
+namespace {
+
+const char * THEME_CACHE_KEY = "theme_v1";
+
+lv_color_t color_from_565(uint16_t value) {
+    const uint8_t red5 = static_cast<uint8_t>((value >> 11) & 0x1F);
+    const uint8_t green6 = static_cast<uint8_t>((value >> 5) & 0x3F);
+    const uint8_t blue5 = static_cast<uint8_t>(value & 0x1F);
+    return lv_color_make(
+        static_cast<uint8_t>((red5 << 3) | (red5 >> 2)),
+        static_cast<uint8_t>((green6 << 2) | (green6 >> 4)),
+        static_cast<uint8_t>((blue5 << 3) | (blue5 >> 2))
+    );
+}
+
+void apply_theme_tokens(const firefly::UiTokens & tokens) {
+    settings_theme_accent = color_from_565(tokens.firefly_primary);
+    settings_theme_surface = color_from_565(tokens.bg_surface);
+    settings_theme_surface_alt = color_from_565(tokens.firefly_secondary);
+    settings_theme_text_primary = color_from_565(tokens.text_primary);
+    settings_theme_text_secondary = color_from_565(tokens.text_secondary);
+    settings_theme_action = color_from_565(tokens.sam_energy);
+}
+
+bool sample_wallpaper(const lv_img_dsc_t * wallpaper, firefly::UiTokens & tokens) {
+    if(!wallpaper || !wallpaper->data || wallpaper->header.w == 0 ||
+       wallpaper->header.h == 0) {
+        return false;
+    }
+    const size_t pixel_count = static_cast<size_t>(wallpaper->header.w) * wallpaper->header.h;
+    if(wallpaper->data_size < pixel_count * sizeof(uint16_t)) {
+        return false;
+    }
+    tokens = firefly::UiTheme::sampleWallpaper(
+        reinterpret_cast<const uint16_t *>(wallpaper->data),
+        wallpaper->header.w,
+        wallpaper->header.h
+    );
+    return true;
+}
+
+}  // namespace
+
+void init_settings_theme_from_wallpaper(const lv_img_dsc_t * wallpaper) {
+    firefly::UiTokens tokens = firefly::UiTheme::fireflyDefault();
+    sample_wallpaper(wallpaper, tokens);
+    apply_theme_tokens(tokens);
+    prefs.putBytes(THEME_CACHE_KEY, &tokens, sizeof(tokens));
+}
+
+void init_default_settings_theme() {
+    firefly::UiTokens tokens{};
+    if(prefs.getBytesLength(THEME_CACHE_KEY) == sizeof(tokens)) {
+        prefs.getBytes(THEME_CACHE_KEY, &tokens, sizeof(tokens));
+        apply_theme_tokens(tokens);
+        return;
+    }
     init_settings_theme_from_wallpaper(&settings_wallpaper_firefly_2);
 }

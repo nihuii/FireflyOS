@@ -220,6 +220,21 @@ static void test_hardware_abstraction() {
                 "register write rejects null input");
 }
 
+static void test_default_theme_tokens() {
+    const firefly::UiTokens tokens = firefly::UiTheme::fireflyDefault();
+    expect_true(tokens.bg_base == 0x0041, "AMOLED base is near black");
+    expect_true(tokens.radius_card == 24, "card radius token");
+    expect_true(tokens.touch_min == 48, "minimum touch target");
+
+    const uint16_t pixels[] = {0x0000, 0x07E0, 0x07E0, 0xFFFF};
+    const firefly::UiTokens sampled = firefly::UiTheme::sampleWallpaper(pixels, 2, 2);
+    expect_true(sampled.touch_min == 48, "sampled theme keeps geometry");
+    expect_true(sampled.firefly_primary != tokens.firefly_primary,
+                "wallpaper sampling changes accent");
+    expect_true(firefly::UiTheme::samAlert().sam_ignition != tokens.sam_ignition,
+                "sam alert has distinct ignition color");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -234,6 +249,7 @@ void setup() {
     test_lifecycle_and_resource_governor();
     test_app_manager_publishes_requests();
     test_hardware_abstraction();
+    test_default_theme_tokens();
     Serial.printf("FIREFLY_TEST_RESULT failures=%u\n", failures);
 }
 
