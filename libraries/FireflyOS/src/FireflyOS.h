@@ -16,3 +16,4 @@
 #include "firefly/core/ResourceGovernor.h"
 #include "firefly/hal/DeviceInterfaces.h"
 #include "firefly/hal/I2cBusManager.h"
+#include "firefly/hal/LockedRegisterDevice.h"

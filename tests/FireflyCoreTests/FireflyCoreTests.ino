@@ -209,6 +209,15 @@ static void test_hardware_abstraction() {
     expect_true(i2c.lock(10), "i2c manager acquires mutex");
     i2c.unlock();
     expect_true(&i2c.wire() == &Wire, "i2c manager retains bus");
+
+    firefly::Qmi8658ControlAdapter motion(i2c);
+    firefly::Es8311ControlAdapter codec(i2c);
+    expect_true(motion.address() == 0x6B, "qmi8658 default address");
+    expect_true(codec.address() == 0x18, "es8311 default address");
+    expect_true(!motion.readRegisters(0x00, nullptr, 1),
+                "register read rejects null output");
+    expect_true(!codec.writeRegisters(0x00, nullptr, 1),
+                "register write rejects null input");
 }
 
 void setup() {
