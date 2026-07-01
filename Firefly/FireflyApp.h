@@ -15,6 +15,7 @@
 #include "XPowersLib.h"
 #include <FireflyOS.h>
 #include <firefly/hal/LegacyBoardAdapter.h>
+#include <firefly/ui/UiComponents.h>
 
 extern "C" {
     extern const lv_font_t lv_font_montserrat_24;

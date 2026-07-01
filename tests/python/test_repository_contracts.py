@@ -94,6 +94,31 @@ class RepositoryContracts(unittest.TestCase):
         self.assertNotIn("<lvgl", core_text.lower())
         self.assertNotIn("lv_obj_", core_text)
 
+    def test_ui_component_styles_are_centralized(self):
+        component_header = (
+            ROOT
+            / "libraries"
+            / "FireflyOS"
+            / "src"
+            / "firefly"
+            / "ui"
+            / "UiComponents.h"
+        )
+        self.assertTrue(component_header.is_file())
+        sketch = (ROOT / "Firefly" / "Firefly.ino").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        for local_style in (
+            "auto style_card",
+            "auto style_settings_card",
+            "auto style_slider",
+            "auto style_switch",
+        ):
+            self.assertNotIn(local_style, sketch)
+        self.assertIn("UiComponents::styleCard", sketch)
+        self.assertIn("UiComponents::styleSlider", sketch)
+        self.assertIn("UiComponents::styleSwitch", sketch)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -310,54 +310,6 @@ void build_firefly_os() {
     const lv_coord_t alarm_editor_bottom_card_height = 236;
     const lv_coord_t alarm_editor_bottom_card_bottom_inset = 22;
 
-    auto style_card = [&](lv_obj_t * obj, lv_color_t color, lv_coord_t radius) {
-        lv_obj_set_style_radius(obj, radius, 0);
-        lv_obj_set_style_border_width(obj, 0, 0);
-        lv_obj_set_style_bg_color(obj, color, 0);
-        lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
-    };
-
-    auto style_settings_card = [&](lv_obj_t * obj, lv_color_t color, lv_coord_t radius, lv_opa_t opacity = LV_OPA_80) {
-        style_card(obj, color, radius);
-        lv_obj_set_style_bg_opa(obj, opacity, 0);
-        lv_obj_set_style_border_width(obj, 1, 0);
-        lv_obj_set_style_border_color(obj, settings_theme_accent, 0);
-        lv_obj_set_style_border_opa(obj, LV_OPA_30, 0);
-    };
-
-    auto style_slider = [&](lv_obj_t * slider, lv_color_t track, lv_color_t indicator, lv_color_t knob) {
-        lv_obj_set_style_radius(slider, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-        lv_obj_set_style_radius(slider, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
-        lv_obj_set_style_radius(slider, LV_RADIUS_CIRCLE, LV_PART_KNOB);
-        lv_obj_set_style_border_width(slider, 0, LV_PART_MAIN);
-        lv_obj_set_style_border_width(slider, 0, LV_PART_INDICATOR);
-        lv_obj_set_style_border_width(slider, 0, LV_PART_KNOB);
-        lv_obj_set_style_bg_color(slider, track, LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_set_style_bg_color(slider, indicator, LV_PART_INDICATOR);
-        lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_INDICATOR);
-        lv_obj_set_style_bg_color(slider, knob, LV_PART_KNOB);
-        lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_KNOB);
-        lv_obj_set_style_shadow_width(slider, 0, LV_PART_KNOB);
-    };
-
-    auto style_switch = [&](lv_obj_t * sw) {
-        lv_obj_set_style_radius(sw, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-        lv_obj_set_style_radius(sw, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
-        lv_obj_set_style_radius(sw, LV_RADIUS_CIRCLE, LV_PART_KNOB);
-        lv_obj_set_style_border_width(sw, 0, LV_PART_MAIN);
-        lv_obj_set_style_border_width(sw, 0, LV_PART_INDICATOR);
-        lv_obj_set_style_border_width(sw, 0, LV_PART_KNOB);
-        lv_obj_set_style_bg_opa(sw, LV_OPA_TRANSP, LV_PART_MAIN);
-        lv_obj_set_style_bg_color(sw, settings_surface, LV_PART_INDICATOR);
-        lv_obj_set_style_bg_opa(sw, LV_OPA_70, LV_PART_INDICATOR);
-        lv_obj_set_style_bg_color(sw, settings_action, LV_PART_INDICATOR | LV_STATE_CHECKED);
-        lv_obj_set_style_bg_opa(sw, LV_OPA_90, LV_PART_INDICATOR | LV_STATE_CHECKED);
-        lv_obj_set_style_bg_color(sw, lv_color_white(), LV_PART_KNOB);
-        lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, LV_PART_KNOB);
-        lv_obj_set_style_shadow_width(sw, 0, LV_PART_KNOB);
-    };
-
     auto style_roller = [&](lv_obj_t * roller, lv_coord_t width, lv_coord_t height) {
         lv_obj_set_size(roller, width, height);
         lv_obj_set_style_radius(roller, 18, LV_PART_MAIN);
@@ -396,7 +348,7 @@ void build_firefly_os() {
         lv_obj_t * button = lv_btn_create(settings_menu_container);
         lv_obj_set_size(button, settings_content_width, 58);
         lv_obj_align(button, LV_ALIGN_TOP_MID, 0, y);
-        style_settings_card(button, settings_surface_alt, 22, LV_OPA_80);
+        firefly::UiComponents::styleSettingsCard(button, settings_surface_alt, 22, settings_theme_accent, LV_OPA_80);
         lv_obj_t * label = lv_label_create(button);
         lv_obj_set_style_text_font(label, &lv_font_montserrat_24, 0);
         lv_obj_set_style_text_color(label, settings_text_primary, 0);
@@ -525,7 +477,7 @@ void build_firefly_os() {
     lv_obj_t * notif_handle = lv_obj_create(notif_panel);
     lv_obj_set_size(notif_handle, 84, 6);
     lv_obj_align(notif_handle, LV_ALIGN_TOP_MID, 0, 12);
-    style_card(notif_handle, lv_color_hex(0x97DDE9), 8);
+    firefly::UiComponents::styleCard(notif_handle, lv_color_hex(0x97DDE9), 8);
 
     notif_detail_label = lv_label_create(notif_panel);
     lv_obj_set_width(notif_detail_label, 340);
@@ -537,7 +489,7 @@ void build_firefly_os() {
     lv_obj_t * volume_card = lv_obj_create(notif_panel);
     lv_obj_set_size(volume_card, 354, 88);
     lv_obj_align(volume_card, LV_ALIGN_TOP_MID, 0, 182);
-    style_card(volume_card, control_card, 28);
+    firefly::UiComponents::styleCard(volume_card, control_card, 28);
     lv_obj_set_style_pad_all(volume_card, 16, 0);
     lv_obj_clear_flag(volume_card, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -557,13 +509,13 @@ void build_firefly_os() {
     lv_obj_align(notif_volume_slider, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_slider_set_range(notif_volume_slider, 0, 100);
     lv_slider_set_value(notif_volume_slider, volume_level, LV_ANIM_OFF);
-    style_slider(notif_volume_slider, lv_color_hex(0xC7E9F0), settings_action, lv_color_white());
+    firefly::UiComponents::styleSlider(notif_volume_slider, lv_color_hex(0xC7E9F0), settings_action, lv_color_white());
     lv_obj_add_event_cb(notif_volume_slider, slider_volume_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     lv_obj_t * brightness_card = lv_obj_create(notif_panel);
     lv_obj_set_size(brightness_card, 354, 88);
     lv_obj_align(brightness_card, LV_ALIGN_TOP_MID, 0, 290);
-    style_card(brightness_card, control_card, 28);
+    firefly::UiComponents::styleCard(brightness_card, control_card, 28);
     lv_obj_set_style_pad_all(brightness_card, 16, 0);
     lv_obj_clear_flag(brightness_card, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -583,7 +535,7 @@ void build_firefly_os() {
     lv_obj_align(notif_brightness_slider, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_slider_set_range(notif_brightness_slider, 20, 255);
     lv_slider_set_value(notif_brightness_slider, screen_brightness, LV_ANIM_OFF);
-    style_slider(notif_brightness_slider, lv_color_hex(0xC7E9F0), settings_action, lv_color_white());
+    firefly::UiComponents::styleSlider(notif_brightness_slider, lv_color_hex(0xC7E9F0), settings_action, lv_color_white());
     lv_obj_add_event_cb(notif_brightness_slider, slider_brightness_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     top_status_bar = lv_obj_create(scr_firefly);
@@ -630,7 +582,7 @@ void build_firefly_os() {
     lv_obj_t * settings_shell = lv_obj_create(settings_panel);
     lv_obj_set_size(settings_shell, LCD_WIDTH, LCD_HEIGHT);
     lv_obj_align(settings_shell, LV_ALIGN_CENTER, 0, 0);
-    style_settings_card(settings_shell, settings_surface, 0, 108);
+    firefly::UiComponents::styleSettingsCard(settings_shell, settings_surface, 0, settings_theme_accent, 108);
     lv_obj_set_style_border_width(settings_shell, 0, 0);
     lv_obj_set_style_pad_all(settings_shell, 0, 0);
     lv_obj_clear_flag(settings_shell, LV_OBJ_FLAG_SCROLLABLE);
@@ -708,7 +660,7 @@ void build_firefly_os() {
     lv_obj_t * date_card = lv_obj_create(settings_time_container);
     lv_obj_set_size(date_card, settings_content_width, 132);
     lv_obj_align(date_card, LV_ALIGN_TOP_MID, 0, 18);
-    style_settings_card(date_card, settings_surface_alt, 22, LV_OPA_80);
+    firefly::UiComponents::styleSettingsCard(date_card, settings_surface_alt, 22, settings_theme_accent, LV_OPA_80);
     lv_obj_set_style_pad_all(date_card, 12, 0);
     lv_obj_clear_flag(date_card, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -732,7 +684,7 @@ void build_firefly_os() {
     lv_obj_t * clock_card = lv_obj_create(settings_time_container);
     lv_obj_set_size(clock_card, settings_content_width, 122);
     lv_obj_align(clock_card, LV_ALIGN_TOP_MID, 0, 168);
-    style_settings_card(clock_card, settings_surface_alt, 22, LV_OPA_80);
+    firefly::UiComponents::styleSettingsCard(clock_card, settings_surface_alt, 22, settings_theme_accent, LV_OPA_80);
     lv_obj_set_style_pad_all(clock_card, 12, 0);
     lv_obj_clear_flag(clock_card, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -757,7 +709,7 @@ void build_firefly_os() {
     lv_obj_t * btn_save_time = lv_btn_create(settings_time_container);
     lv_obj_set_size(btn_save_time, settings_half_button_width, 46);
     lv_obj_align(btn_save_time, LV_ALIGN_BOTTOM_LEFT, 16, -12);
-    style_settings_card(btn_save_time, settings_action, 20, LV_OPA_90);
+    firefly::UiComponents::styleSettingsCard(btn_save_time, settings_action, 20, settings_theme_accent, LV_OPA_90);
     lv_obj_add_event_cb(btn_save_time, save_time_from_rollers, LV_EVENT_CLICKED, NULL);
     lv_obj_t * btn_save_time_label = lv_label_create(btn_save_time);
     lv_obj_set_style_text_color(btn_save_time_label, settings_text_primary, 0);
@@ -767,7 +719,7 @@ void build_firefly_os() {
     lv_obj_t * btn_load_rtc = lv_btn_create(settings_time_container);
     lv_obj_set_size(btn_load_rtc, settings_half_button_width, 46);
     lv_obj_align(btn_load_rtc, LV_ALIGN_BOTTOM_RIGHT, -16, -12);
-    style_settings_card(btn_load_rtc, settings_surface_alt, 20, LV_OPA_80);
+    firefly::UiComponents::styleSettingsCard(btn_load_rtc, settings_surface_alt, 20, settings_theme_accent, LV_OPA_80);
     lv_obj_add_event_cb(btn_load_rtc, load_time_from_rtc, LV_EVENT_CLICKED, NULL);
     lv_obj_t * btn_load_rtc_label = lv_label_create(btn_load_rtc);
     lv_obj_set_style_text_color(btn_load_rtc_label, settings_text_primary, 0);
@@ -790,7 +742,7 @@ void build_firefly_os() {
     lv_obj_align(settings_volume_slider, LV_ALIGN_TOP_MID, 0, 58);
     lv_slider_set_range(settings_volume_slider, 0, 100);
     lv_slider_set_value(settings_volume_slider, volume_level, LV_ANIM_OFF);
-    style_slider(settings_volume_slider, settings_surface_alt, settings_action, lv_color_white());
+    firefly::UiComponents::styleSlider(settings_volume_slider, settings_surface_alt, settings_action, lv_color_white());
     lv_obj_set_style_bg_opa(settings_volume_slider, LV_OPA_80, LV_PART_MAIN);
     lv_obj_add_event_cb(settings_volume_slider, slider_volume_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
@@ -807,7 +759,7 @@ void build_firefly_os() {
         settings_alarm_cards[slot] = lv_btn_create(settings_alarm_container);
         lv_obj_set_size(settings_alarm_cards[slot], settings_content_width, 96);
         lv_obj_align(settings_alarm_cards[slot], LV_ALIGN_TOP_MID, 0, alarm_card_y[slot]);
-        style_settings_card(settings_alarm_cards[slot], settings_surface_alt, 24, LV_OPA_80);
+        firefly::UiComponents::styleSettingsCard(settings_alarm_cards[slot], settings_surface_alt, 24, settings_theme_accent, LV_OPA_80);
         lv_obj_set_style_pad_all(settings_alarm_cards[slot], 0, 0);
         lv_obj_add_event_cb(settings_alarm_cards[slot], open_alarm_card_page, LV_EVENT_CLICKED, reinterpret_cast<void *>(slot));
 
@@ -839,7 +791,7 @@ void build_firefly_os() {
 
         settings_alarm_switches[slot] = lv_switch_create(settings_alarm_cards[slot]);
         lv_obj_align(settings_alarm_switches[slot], LV_ALIGN_RIGHT_MID, -16, 0);
-        style_switch(settings_alarm_switches[slot]);
+        firefly::UiComponents::styleSwitch(settings_alarm_switches[slot], settings_surface, settings_action);
         lv_obj_clear_flag(settings_alarm_switches[slot], LV_OBJ_FLAG_EVENT_BUBBLE);
         lv_obj_add_event_cb(settings_alarm_switches[slot], alarm_slot_switch_cb, LV_EVENT_VALUE_CHANGED, reinterpret_cast<void *>(slot));
     }
@@ -847,7 +799,7 @@ void build_firefly_os() {
     settings_alarm_add_button = lv_btn_create(settings_alarm_container);
     lv_obj_set_size(settings_alarm_add_button, 58, 58);
     lv_obj_align(settings_alarm_add_button, LV_ALIGN_BOTTOM_RIGHT, -rounded_screen_side_inset, -rounded_screen_bottom_inset);
-    style_settings_card(settings_alarm_add_button, settings_action, 29, LV_OPA_90);
+    firefly::UiComponents::styleSettingsCard(settings_alarm_add_button, settings_action, 29, settings_theme_accent, LV_OPA_90);
     lv_obj_add_event_cb(settings_alarm_add_button, open_alarm_add_page, LV_EVENT_CLICKED, NULL);
     lv_obj_t * settings_alarm_add_icon = lv_label_create(settings_alarm_add_button);
     lv_obj_set_style_text_font(settings_alarm_add_icon, &lv_font_montserrat_24, 0);
@@ -870,7 +822,7 @@ void build_firefly_os() {
     lv_obj_t * settings_alarm_editor_shell = lv_obj_create(settings_alarm_editor);
     lv_obj_set_size(settings_alarm_editor_shell, LCD_WIDTH, LCD_HEIGHT);
     lv_obj_align(settings_alarm_editor_shell, LV_ALIGN_CENTER, 0, 0);
-    style_settings_card(settings_alarm_editor_shell, settings_surface, 0, 118);
+    firefly::UiComponents::styleSettingsCard(settings_alarm_editor_shell, settings_surface, 0, settings_theme_accent, 118);
     lv_obj_set_style_border_width(settings_alarm_editor_shell, 0, 0);
     lv_obj_set_style_pad_all(settings_alarm_editor_shell, 0, 0);
     lv_obj_clear_flag(settings_alarm_editor_shell, LV_OBJ_FLAG_SCROLLABLE);
@@ -902,7 +854,7 @@ void build_firefly_os() {
     lv_obj_t * alarm_editor_time_card = lv_obj_create(settings_alarm_editor_shell);
     lv_obj_set_size(alarm_editor_time_card, alarm_editor_card_width, 136);
     lv_obj_align(alarm_editor_time_card, LV_ALIGN_TOP_MID, alarm_editor_offset_x, alarm_editor_time_card_y);
-    style_settings_card(alarm_editor_time_card, settings_surface_alt, 26, LV_OPA_80);
+    firefly::UiComponents::styleSettingsCard(alarm_editor_time_card, settings_surface_alt, 26, settings_theme_accent, LV_OPA_80);
     lv_obj_set_style_pad_all(alarm_editor_time_card, 12, 0);
     lv_obj_clear_flag(alarm_editor_time_card, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -927,7 +879,7 @@ void build_firefly_os() {
     lv_obj_t * alarm_editor_list = lv_obj_create(settings_alarm_editor_shell);
     lv_obj_set_size(alarm_editor_list, alarm_editor_card_width, alarm_editor_bottom_card_height);
     lv_obj_align(alarm_editor_list, LV_ALIGN_BOTTOM_MID, alarm_editor_offset_x, -alarm_editor_bottom_card_bottom_inset);
-    style_settings_card(alarm_editor_list, settings_surface_alt, 24, LV_OPA_70);
+    firefly::UiComponents::styleSettingsCard(alarm_editor_list, settings_surface_alt, 24, settings_theme_accent, LV_OPA_70);
     lv_obj_set_style_pad_left(alarm_editor_list, 16, 0);
     lv_obj_set_style_pad_right(alarm_editor_list, 16, 0);
     lv_obj_set_style_pad_top(alarm_editor_list, 16, 0);
@@ -994,7 +946,7 @@ void build_firefly_os() {
     lv_obj_align(settings_brightness_slider, LV_ALIGN_TOP_MID, 0, 58);
     lv_slider_set_range(settings_brightness_slider, 20, 255);
     lv_slider_set_value(settings_brightness_slider, screen_brightness, LV_ANIM_OFF);
-    style_slider(settings_brightness_slider, settings_surface_alt, settings_action, lv_color_white());
+    firefly::UiComponents::styleSlider(settings_brightness_slider, settings_surface_alt, settings_action, lv_color_white());
     lv_obj_set_style_bg_opa(settings_brightness_slider, LV_OPA_80, LV_PART_MAIN);
     lv_obj_add_event_cb(settings_brightness_slider, slider_brightness_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
@@ -1037,7 +989,7 @@ void build_firefly_os() {
     lv_obj_t * alarm_stop_button = lv_btn_create(alarm_overlay);
     lv_obj_set_size(alarm_stop_button, 220, 54);
     lv_obj_align(alarm_stop_button, LV_ALIGN_CENTER, 0, 108);
-    style_card(alarm_stop_button, settings_action, 22);
+    firefly::UiComponents::styleCard(alarm_stop_button, settings_action, 22);
     lv_obj_add_event_cb(alarm_stop_button, dismiss_alarm_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t * alarm_stop_label = lv_label_create(alarm_stop_button);
     lv_obj_set_style_text_color(alarm_stop_label, settings_text_primary, 0);
