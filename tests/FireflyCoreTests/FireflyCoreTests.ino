@@ -107,6 +107,25 @@ static void test_capability_registry() {
     );
 }
 
+static void test_app_registry() {
+    firefly::AppRegistry registry;
+    const uint16_t display = firefly::capabilityBit(firefly::Capability::Display);
+    const firefly::AppDescriptor settings{"settings", "Settings", display};
+    expect_true(registry.add(settings), "register settings");
+    expect_true(registry.count() == 1, "registry count");
+    expect_true(registry.find("settings") != nullptr, "find settings");
+    expect_true(!registry.add({"settings", "Duplicate", display}),
+                "reject duplicate app id");
+    expect_true(!registry.add({"", "Empty", display}), "reject empty app id");
+
+    firefly::CapabilityRegistry capabilities;
+    expect_true(!registry.available(settings, capabilities),
+                "missing capability hides app");
+    capabilities.set(firefly::Capability::Display, true);
+    expect_true(registry.available(settings, capabilities),
+                "available capability shows app");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -117,6 +136,7 @@ void setup() {
     test_event_bus_preserves_full_critical_queue();
     test_state_store_revision();
     test_capability_registry();
+    test_app_registry();
     Serial.printf("FIREFLY_TEST_RESULT failures=%u\n", failures);
 }
 

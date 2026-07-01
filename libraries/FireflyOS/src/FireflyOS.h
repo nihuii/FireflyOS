@@ -10,3 +10,4 @@
 #include "firefly/core/NotificationModel.h"
 #include "firefly/core/StateStore.h"
 #include "firefly/core/CapabilityRegistry.h"
+#include "firefly/core/AppRegistry.h"
