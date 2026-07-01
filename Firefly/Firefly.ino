@@ -10,6 +10,31 @@ void open_settings_menu(lv_event_t * e) {
     set_settings_subpage(NULL);
 }
 
+firefly::Route route_for_app(const char * id) {
+    if(!id) return firefly::Route::Home;
+    if(strcmp(id, "settings") == 0) return firefly::Route::Settings;
+    if(strcmp(id, "clock") == 0) return firefly::Route::Clock;
+    if(strcmp(id, "activity") == 0) return firefly::Route::Activity;
+    if(strcmp(id, "weather") == 0) return firefly::Route::Weather;
+    if(strcmp(id, "music") == 0) return firefly::Route::Music;
+    if(strcmp(id, "recorder") == 0) return firefly::Route::Recorder;
+    if(strcmp(id, "files") == 0) return firefly::Route::Files;
+    if(strcmp(id, "themes") == 0) return firefly::Route::Themes;
+    return firefly::Route::Diagnostics;
+}
+
+void open_home_app(lv_event_t * e) {
+    const firefly::AppDescriptor * app =
+        static_cast<const firefly::AppDescriptor *>(lv_event_get_user_data(e));
+    if(!app) return;
+    ui_shell.showRoute(route_for_app(app->id));
+    if(strcmp(app->id, "settings") == 0) open_settings_menu(e);
+}
+
+const void * sleep_image_provider(uint8_t index) {
+    return get_sleep_icon_by_index(index);
+}
+
 void load_time_rollers_from_current() {
     struct tm timeinfo;
     if(getLocalTime(&timeinfo, 20)) {
@@ -361,42 +386,6 @@ void build_firefly_os() {
         lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, NULL);
     };
 
-    auto create_desktop_icon = [&](lv_coord_t x, lv_coord_t y, const char * symbol, const char * text, lv_event_cb_t cb, lv_color_t color) {
-        lv_obj_t * app = lv_obj_create(desktop_icon_layer);
-        lv_obj_set_size(app, 82, 110);
-        lv_obj_align(app, LV_ALIGN_TOP_MID, x, y);
-        lv_obj_set_style_bg_opa(app, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(app, 0, 0);
-        lv_obj_set_style_pad_all(app, 0, 0);
-        lv_obj_clear_flag(app, LV_OBJ_FLAG_SCROLLABLE);
-
-        lv_obj_t * button = lv_btn_create(app);
-        lv_obj_set_size(button, 72, 72);
-        lv_obj_align(button, LV_ALIGN_TOP_MID, 0, 0);
-        lv_obj_set_style_radius(button, 24, 0);
-        lv_obj_set_style_border_width(button, 1, 0);
-        lv_obj_set_style_border_color(button, lv_color_white(), 0);
-        lv_obj_set_style_border_opa(button, 70, 0);
-        lv_obj_set_style_bg_color(button, color, 0);
-        lv_obj_set_style_bg_opa(button, 170, 0);
-        lv_obj_set_style_shadow_width(button, 0, 0);
-        lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, NULL);
-
-        lv_obj_t * icon = lv_label_create(button);
-        lv_obj_set_style_text_font(icon, &lv_font_montserrat_24, 0);
-        lv_obj_set_style_text_color(icon, lv_color_white(), 0);
-        lv_label_set_text(icon, symbol);
-        lv_obj_center(icon);
-
-        lv_obj_t * label = lv_label_create(app);
-        lv_obj_set_width(label, 82);
-        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_color(label, lv_color_hex(0xF6FBFF), 0);
-        lv_obj_set_style_text_opa(label, 235, 0);
-        lv_label_set_text(label, text);
-        lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, 0);
-    };
-
     scr_firefly = lv_obj_create(NULL);
     lv_obj_set_style_pad_all(scr_firefly, 0, 0);
     lv_obj_set_style_border_width(scr_firefly, 0, 0);
@@ -445,6 +434,10 @@ void build_firefly_os() {
     lv_label_set_text(lock_hint, "Swipe up");
     lv_obj_align(lock_hint, LV_ALIGN_BOTTOM_MID, 0, -24);
 
+    const firefly::UiTokens ui_tokens = firefly::UiTheme::fireflyDefault();
+    lock_screen.create(tile_lock, ui_tokens);
+    lock_screen.bind(tile_lock, lock_date_label, lock_time_label, lock_week_label);
+
     tile_sys = lv_tileview_add_tile(tv_main, 0, 1, LV_DIR_NONE);
     lv_obj_set_style_bg_opa(tile_sys, LV_OPA_TRANSP, 0);
     lv_obj_set_scrollbar_mode(tile_sys, LV_SCROLLBAR_MODE_OFF);
@@ -462,7 +455,19 @@ void build_firefly_os() {
     lv_obj_clear_flag(desktop_icon_layer, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(desktop_icon_layer, LV_OBJ_FLAG_HIDDEN);
 
-    create_desktop_icon(-150, 88, LV_SYMBOL_SETTINGS, "Settings", open_settings_menu, lv_color_hex(0x3D6AF2));
+    if(ui_app_registry.count() == 0) {
+        ui_app_registry.add({"clock", "Clock", 0});
+        ui_app_registry.add({"activity", "Activity", 0});
+        ui_app_registry.add({"weather", "Weather", 0});
+        ui_app_registry.add({"music", "Music", 0});
+        ui_app_registry.add({"recorder", "Recorder", 0});
+        ui_app_registry.add({"files", "Files", 0});
+        ui_app_registry.add({"themes", "Themes", 0});
+        ui_app_registry.add({"settings", "Settings", 0});
+        ui_app_registry.add({"diagnostics", "Diagnostics", 0});
+    }
+    home_screen.create(desktop_icon_layer, ui_tokens);
+    home_screen.populate(ui_app_registry, open_home_app);
 
     notif_panel = lv_obj_create(ui_shell.panelHost());
     lv_obj_set_size(notif_panel, LCD_WIDTH, LCD_HEIGHT);
@@ -1043,6 +1048,9 @@ void build_firefly_os() {
     lv_obj_set_style_text_color(sleep_date_label, lv_color_hex(0x9FD8E3), 0);
     lv_label_set_text(sleep_date_label, "----/--/--");
     lv_obj_align(sleep_date_label, LV_ALIGN_TOP_MID, 0, 346);
+
+    glance_screen.bind(sleep_screen, sleep_icon_img, sleep_time_label,
+                       sleep_date_label, sleep_image_provider, SLEEP_ICON_COUNT);
 
     lv_timer_create(update_time_cb, 1000, NULL);
     lv_scr_load(scr_firefly);

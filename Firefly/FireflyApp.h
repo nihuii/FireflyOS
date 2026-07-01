@@ -28,6 +28,10 @@ extern Preferences prefs;
 extern firefly::I2cBusManager firefly_i2c_bus;
 extern firefly::LegacyBoardAdapter firefly_board;
 extern firefly::UiShell ui_shell;
+extern firefly::GlanceScreen glance_screen;
+extern firefly::LockScreen lock_screen;
+extern firefly::HomeScreen home_screen;
+extern firefly::AppRegistry ui_app_registry;
 
 extern const char * UI_PREF_NAMESPACE;
 extern const char * UI_PREF_VOLUME_KEY;

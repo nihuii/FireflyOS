@@ -8,9 +8,6 @@ firefly::EventBus system_event_bus;
 
 namespace {
 
-uint8_t sleep_icon_index = 0;
-bool sleep_icon_has_been_shown = false;
-
 TaskHandle_t firefly_background_task_handle = NULL;
 bool firefly_background_task_running = false;
 volatile uint32_t event_post_failures = 0;
@@ -338,16 +335,8 @@ void refresh_alarm_card_ui(uint8_t slot) {
 }
 
 void refresh_sleep_icon(bool advance) {
-    if(!sleep_icon_img) {
-        return;
-    }
-
-    if(advance && sleep_icon_has_been_shown) {
-        sleep_icon_index = (sleep_icon_index + 1U) % SLEEP_ICON_COUNT;
-    }
-
-    lv_img_set_src(sleep_icon_img, get_sleep_icon_by_index(sleep_icon_index));
-    sleep_icon_has_been_shown = true;
+    if(advance) glance_screen.advanceImage();
+    else glance_screen.presentCurrentImage();
 }
 
 } // namespace

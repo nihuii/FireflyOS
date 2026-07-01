@@ -21,3 +21,7 @@
 #include "firefly/ui/UiTheme.h"
 #include "firefly/ui/NavigationController.h"
 #include "firefly/ui/UiShell.h"
+#include "firefly/ui/Screen.h"
+#include "firefly/ui/screens/GlanceScreen.h"
+#include "firefly/ui/screens/LockScreen.h"
+#include "firefly/ui/screens/HomeScreen.h"
