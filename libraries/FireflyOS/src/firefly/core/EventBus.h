@@ -1,5 +1,7 @@
 #pragma once
 
+#include <freertos/FreeRTOS.h>
+
 #include "SystemEvent.h"
 
 namespace firefly {
@@ -13,6 +15,7 @@ public:
     uint8_t size() const;
 
 private:
+    mutable portMUX_TYPE mux_ = portMUX_INITIALIZER_UNLOCKED;
     SystemEvent events_[kCapacity]{};
     uint8_t head_ = 0;
     uint8_t tail_ = 0;

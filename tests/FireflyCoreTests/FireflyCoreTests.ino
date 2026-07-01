@@ -71,6 +71,42 @@ static void test_event_bus_preserves_full_critical_queue() {
     );
 }
 
+static void test_state_store_revision() {
+    firefly::StateStore store;
+    const uint32_t before = store.revision();
+    firefly::BatteryState battery{};
+    battery.percent = 73;
+    battery.temperature_c = 31;
+    battery.battery_mv = 3970;
+    battery.valid = true;
+    store.setBattery(battery);
+    const firefly::SystemState snapshot = store.snapshot();
+    expect_true(snapshot.battery.percent == 73, "battery snapshot");
+    expect_true(store.revision() == before + 1, "state revision increments");
+    store.setBattery(battery);
+    expect_true(store.revision() == before + 1, "unchanged state keeps revision");
+    store.setSleepState(true, true);
+    expect_true(store.snapshot().sleeping && store.snapshot().screen_off,
+                "sleep state snapshot");
+}
+
+static void test_capability_registry() {
+    firefly::CapabilityRegistry capabilities;
+    expect_true(!capabilities.has(firefly::Capability::Motion),
+                "capability starts unavailable");
+    capabilities.set(firefly::Capability::Motion, true);
+    expect_true(capabilities.has(firefly::Capability::Motion),
+                "capability can be enabled");
+    capabilities.set(firefly::Capability::Motion, false);
+    expect_true(!capabilities.has(firefly::Capability::Motion),
+                "capability can be disabled");
+    expect_true(
+        firefly::capabilityBit(firefly::Capability::Audio) !=
+            firefly::capabilityBit(firefly::Capability::Sd),
+        "capability bits are distinct"
+    );
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -79,6 +115,8 @@ void setup() {
     test_event_bus_fifo();
     test_event_bus_full_policy();
     test_event_bus_preserves_full_critical_queue();
+    test_state_store_revision();
+    test_capability_registry();
     Serial.printf("FIREFLY_TEST_RESULT failures=%u\n", failures);
 }
 

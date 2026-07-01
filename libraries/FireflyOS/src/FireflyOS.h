@@ -6,3 +6,7 @@
 
 #include "firefly/core/SystemEvent.h"
 #include "firefly/core/EventBus.h"
+#include "firefly/core/SystemState.h"
+#include "firefly/core/NotificationModel.h"
+#include "firefly/core/StateStore.h"
+#include "firefly/core/CapabilityRegistry.h"
