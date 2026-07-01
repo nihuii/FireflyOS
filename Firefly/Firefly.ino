@@ -1183,9 +1183,8 @@ void setup(void) {
 }
 
 void loop() {
-    firefly_handle_short_press();
+    firefly_process_system_events();
     update_charging_overlay();
-    firefly_handle_auto_sleep();
 
     lv_tick_inc(5);
     lv_timer_handler();

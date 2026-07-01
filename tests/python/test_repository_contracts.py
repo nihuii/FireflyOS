@@ -35,6 +35,18 @@ class RepositoryContracts(unittest.TestCase):
         self.assertTrue(manifest.is_file(), "FireflyOS library manifest must exist")
         self.assertIn("name=FireflyOS", manifest.read_text(encoding="utf-8"))
 
+    def test_background_work_uses_event_bus(self):
+        interaction = (ROOT / "Firefly" / "FireflyInteraction.cpp").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        sketch = (ROOT / "Firefly" / "Firefly.ino").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        self.assertNotIn("firefly_background_events", interaction)
+        self.assertIn("firefly::EventBus system_event_bus", interaction)
+        self.assertIn("void firefly_process_system_events()", interaction)
+        self.assertIn("firefly_process_system_events();", sketch)
+
 
 if __name__ == "__main__":
     unittest.main()

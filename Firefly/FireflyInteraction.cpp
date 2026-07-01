@@ -4,36 +4,15 @@
 #include <freertos/task.h>
 #include <sys/time.h>
 
+firefly::EventBus system_event_bus;
+
 namespace {
 
 uint8_t sleep_icon_index = 0;
 bool sleep_icon_has_been_shown = false;
 
-constexpr uint32_t FIREFLY_BG_EVENT_SHORT_PRESS = 1UL << 0;
-constexpr uint32_t FIREFLY_BG_EVENT_ENTER_SLEEP = 1UL << 1;
-constexpr uint32_t FIREFLY_BG_EVENT_SLEEP_BLACKOUT = 1UL << 2;
-
 TaskHandle_t firefly_background_task_handle = NULL;
 bool firefly_background_task_running = false;
-volatile uint32_t firefly_background_events = 0;
-portMUX_TYPE firefly_background_event_mux = portMUX_INITIALIZER_UNLOCKED;
-
-void post_background_event(uint32_t event_mask) {
-    portENTER_CRITICAL(&firefly_background_event_mux);
-    firefly_background_events |= event_mask;
-    portEXIT_CRITICAL(&firefly_background_event_mux);
-}
-
-bool take_background_event(uint32_t event_mask) {
-    bool has_event = false;
-
-    portENTER_CRITICAL(&firefly_background_event_mux);
-    has_event = (firefly_background_events & event_mask) != 0;
-    firefly_background_events &= ~event_mask;
-    portEXIT_CRITICAL(&firefly_background_event_mux);
-
-    return has_event;
-}
 
 bool poll_short_press_source() {
     static bool last_btn_state = HIGH;
@@ -113,13 +92,22 @@ void firefly_background_task(void * parameter) {
         const unsigned long now = millis();
 
         if(poll_short_press_source()) {
-            post_background_event(FIREFLY_BG_EVENT_SHORT_PRESS);
+            system_event_bus.post({firefly::EventType::ShortPress,
+                                   0,
+                                   now,
+                                   firefly::EventPriority::Critical});
         }
 
         if(should_blackout_sleep_now(now)) {
-            post_background_event(FIREFLY_BG_EVENT_SLEEP_BLACKOUT);
+            system_event_bus.post({firefly::EventType::SleepBlackout,
+                                   0,
+                                   now,
+                                   firefly::EventPriority::Refresh});
         } else if(should_auto_enter_sleep_now(now)) {
-            post_background_event(FIREFLY_BG_EVENT_ENTER_SLEEP);
+            system_event_bus.post({firefly::EventType::EnterSleep,
+                                   0,
+                                   now,
+                                   firefly::EventPriority::Refresh});
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -782,33 +770,35 @@ void exit_sleep_screen_mode() {
     lv_obj_add_flag(sleep_screen, LV_OBJ_FLAG_HIDDEN);
 }
 
-void firefly_handle_short_press() {
-    const bool short_press_detected = firefly_background_task_running
-        ? take_background_event(FIREFLY_BG_EVENT_SHORT_PRESS)
-        : poll_short_press_source();
-
-    if(short_press_detected) {
-        run_short_press_action();
-    }
-}
-
-void firefly_handle_auto_sleep() {
-    const unsigned long now = millis();
-
-    const bool should_blackout = firefly_background_task_running
-        ? take_background_event(FIREFLY_BG_EVENT_SLEEP_BLACKOUT)
-        : should_blackout_sleep_now(now);
-
-    if(should_blackout) {
-        apply_sleep_blackout();
-        return;
+void firefly_process_system_events() {
+    if(!firefly_background_task_running) {
+        const unsigned long now = millis();
+        if(poll_short_press_source()) {
+            run_short_press_action();
+        }
+        if(should_blackout_sleep_now(now)) {
+            apply_sleep_blackout();
+        } else if(should_auto_enter_sleep_now(now)) {
+            enter_sleep_screen_mode();
+        }
     }
 
-    const bool should_enter_sleep = firefly_background_task_running
-        ? take_background_event(FIREFLY_BG_EVENT_ENTER_SLEEP)
-        : should_auto_enter_sleep_now(now);
-
-    if(should_enter_sleep) {
-        enter_sleep_screen_mode();
+    firefly::SystemEvent event{};
+    while(system_event_bus.take(event)) {
+        switch(event.type) {
+            case firefly::EventType::ShortPress:
+                run_short_press_action();
+                break;
+            case firefly::EventType::EnterSleep:
+                if(!is_sleeping) {
+                    enter_sleep_screen_mode();
+                }
+                break;
+            case firefly::EventType::SleepBlackout:
+                apply_sleep_blackout();
+                break;
+            default:
+                break;
+        }
     }
 }
