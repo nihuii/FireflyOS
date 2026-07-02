@@ -107,9 +107,11 @@ Arduino_CO5300 * gfx_co5300 = (Arduino_CO5300 *)gfx;
 
 firefly::I2cBusManager firefly_i2c_bus(Wire);
 firefly::LegacyBoardAdapter firefly_board(rtc, power, *gfx_co5300, &firefly_i2c_bus);
+firefly::Qmi8658Device qmi8658_device(firefly_i2c_bus);
 firefly::AlarmService alarm_service;
 firefly::PowerService power_service;
 firefly::TimeService time_service(firefly_board);
+firefly::MotionService motion_service(qmi8658_device);
 firefly::CapabilityRegistry system_capabilities;
 firefly::UiShell ui_shell;
 firefly::GlanceScreen glance_screen;

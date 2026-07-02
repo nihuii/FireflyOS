@@ -1259,6 +1259,14 @@ void setup(void) {
         Serial.println("PMU initialization skipped: I2C lock timeout");
     }
 
+    const bool motion_ready = motion_service.begin();
+    system_capabilities.set(firefly::Capability::Motion, motion_ready);
+    if(!motion_ready) {
+        Serial.println("QMI8658 unavailable; motion features disabled.");
+    } else {
+        Serial.println("QMI8658 initialized at address 0x6B.");
+    }
+
     prefs.begin(UI_PREF_NAMESPACE, false);
     load_sound_alarm_preferences();
     init_default_settings_theme();

@@ -7,6 +7,7 @@
 #include <firefly/apps/tools/ToolsApp.h>
 #include <firefly/services/AlarmService.h>
 #include <firefly/services/InputService.h>
+#include <firefly/services/MotionService.h>
 #include <firefly/services/PowerService.h>
 #include <firefly/services/TimeService.h>
 
@@ -714,6 +715,64 @@ static void test_light_sleep_requires_verified_wake_matrix() {
                 "sleep hooks run once around verified lifecycle");
 }
 
+class FakeMotionDevice : public firefly::MotionDevice {
+public:
+    bool begin() override {
+        began = true;
+        return begin_result;
+    }
+
+    bool setLowPower(bool enabled) override {
+        low_power = enabled;
+        return low_power_result;
+    }
+
+    firefly::MotionSample read() override {
+        return next_sample;
+    }
+
+    firefly::MotionSample next_sample{};
+    bool begin_result = true;
+    bool low_power_result = true;
+    bool began = false;
+    bool low_power = false;
+};
+
+static void test_motion_service_fixed_sample_buffer() {
+    FakeMotionDevice device;
+    firefly::MotionService motion(device);
+    expect_true(motion.begin() && device.began,
+                "motion service begins device");
+
+    device.next_sample.valid = false;
+    expect_true(!motion.poll(), "motion service rejects invalid sample");
+    expect_true(motion.sampleCount() == 0,
+                "invalid motion sample does not enter buffer");
+
+    for(uint32_t i = 0; i < 40; ++i) {
+        device.next_sample = {};
+        device.next_sample.valid = true;
+        device.next_sample.ax = static_cast<float>(i);
+        device.next_sample.timestamp_ms = i;
+        expect_true(motion.poll(), "motion service accepts valid sample");
+    }
+    expect_true(motion.sampleCount() == firefly::MotionService::kSampleCapacity,
+                "motion sample buffer has fixed capacity");
+    expect_true(motion.sampleAt(0).timestamp_ms == 8,
+                "motion ring buffer evicts oldest sample");
+    expect_true(motion.latest().timestamp_ms == 39,
+                "motion ring buffer retains latest sample");
+}
+
+static void test_motion_service_low_power_forwarding() {
+    FakeMotionDevice device;
+    firefly::MotionService motion(device);
+    expect_true(motion.setLowPower(true),
+                "motion service enters low power mode");
+    expect_true(device.low_power,
+                "motion service forwards low power request");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -750,6 +809,8 @@ void setup() {
     test_debounced_button_short_and_long_press();
     test_debounced_button_rejects_jitter();
     test_light_sleep_requires_verified_wake_matrix();
+    test_motion_service_fixed_sample_buffer();
+    test_motion_service_low_power_forwarding();
     Serial.printf("FIREFLY_TEST_RESULT failures=%u\n", failures);
 }
 

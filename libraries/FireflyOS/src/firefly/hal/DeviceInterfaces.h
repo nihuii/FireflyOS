@@ -12,6 +12,17 @@ enum class PowerButtonEvent : uint8_t {
     LongPress
 };
 
+struct MotionSample {
+    float ax = 0.0f;
+    float ay = 0.0f;
+    float az = 0.0f;
+    float gx = 0.0f;
+    float gy = 0.0f;
+    float gz = 0.0f;
+    uint32_t timestamp_ms = 0;
+    bool valid = false;
+};
+
 class ClockDevice {
 public:
     virtual ~ClockDevice() = default;
@@ -33,6 +44,14 @@ public:
     virtual ~ButtonDevice() = default;
     virtual bool bootPressed() const = 0;
     virtual bool powerPressed() const = 0;
+};
+
+class MotionDevice {
+public:
+    virtual ~MotionDevice() = default;
+    virtual bool begin() = 0;
+    virtual bool setLowPower(bool enabled) = 0;
+    virtual MotionSample read() = 0;
 };
 
 }  // namespace firefly
