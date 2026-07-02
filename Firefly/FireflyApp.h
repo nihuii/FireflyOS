@@ -28,6 +28,7 @@ extern Preferences prefs;
 extern firefly::I2cBusManager firefly_i2c_bus;
 extern firefly::LegacyBoardAdapter firefly_board;
 extern firefly::AlarmService alarm_service;
+extern firefly::PowerService power_service;
 extern firefly::TimeService time_service;
 extern firefly::UiShell ui_shell;
 extern firefly::GlanceScreen glance_screen;

@@ -38,20 +38,25 @@ bool poll_short_press_source() {
     return short_press_detected;
 }
 
-bool should_blackout_sleep_now(unsigned long now) {
-    const unsigned long entered_at = sleep_entered_at;
-    return is_sleeping && !sleep_display_off && entered_at > 0 && now - entered_at >= 2000UL;
-}
-
-bool should_auto_enter_sleep_now(unsigned long now) {
+firefly::PowerMode evaluate_runtime_power_mode(unsigned long now) {
     const unsigned long last_activity = last_activity_time;
     const uint32_t auto_sleep = auto_sleep_ms;
 
-    if(is_sleeping || !is_on_lockscreen || auto_sleep == 0 || last_activity == 0) {
-        return false;
+    if(is_sleeping) {
+        const unsigned long entered_at = sleep_entered_at;
+        if(entered_at == 0) return firefly::PowerMode::Glance;
+        power_service.configure({0, 0, 2000});
+        power_service.onActivity(entered_at);
+        return power_service.evaluateIdle(now);
     }
 
-    return now - last_activity > auto_sleep;
+    if(!is_on_lockscreen || auto_sleep == 0 || last_activity == 0) {
+        return firefly::PowerMode::Active;
+    }
+
+    power_service.configure({auto_sleep, 0, 2000});
+    power_service.onActivity(last_activity);
+    return power_service.evaluateIdle(now);
 }
 
 void apply_sleep_blackout() {
@@ -105,12 +110,14 @@ void firefly_background_task(void * parameter) {
                                           firefly::EventPriority::Critical});
         }
 
-        if(should_blackout_sleep_now(now)) {
+        const firefly::PowerMode power_mode = evaluate_runtime_power_mode(now);
+        if(power_mode == firefly::PowerMode::ScreenOff &&
+           is_sleeping && !sleep_display_off) {
             post_background_system_event({firefly::EventType::SleepBlackout,
                                           0,
                                           now,
                                           firefly::EventPriority::Refresh});
-        } else if(should_auto_enter_sleep_now(now)) {
+        } else if(power_mode == firefly::PowerMode::Glance && !is_sleeping) {
             post_background_system_event({firefly::EventType::EnterSleep,
                                           0,
                                           now,
@@ -493,6 +500,7 @@ void set_settings_subpage(lv_obj_t * page) {
 
 void refresh_runtime_status_ui() {
     const firefly::BatteryState battery = firefly_board.readBattery();
+    power_service.setBatteryState(battery);
     ui_state_store.setBattery(battery);
     const firefly::SystemState state = ui_state_store.snapshot();
     control_center.refresh(state, volume_level, screen_brightness,
@@ -509,6 +517,7 @@ void refresh_runtime_status_ui() {
 
 void refresh_battery_ui() {
     const firefly::BatteryState battery = firefly_board.readBattery();
+    power_service.setBatteryState(battery);
     const int battery_percent = battery.percent;
     const char * battery_symbol = battery_symbol_for_percent(battery_percent);
     const lv_color_t battery_color = battery_color_for_percent(battery_percent);
@@ -804,9 +813,11 @@ void firefly_process_system_events() {
         if(poll_short_press_source()) {
             run_short_press_action();
         }
-        if(should_blackout_sleep_now(now)) {
+        const firefly::PowerMode power_mode = evaluate_runtime_power_mode(now);
+        if(power_mode == firefly::PowerMode::ScreenOff &&
+           is_sleeping && !sleep_display_off) {
             apply_sleep_blackout();
-        } else if(should_auto_enter_sleep_now(now)) {
+        } else if(power_mode == firefly::PowerMode::Glance && !is_sleeping) {
             enter_sleep_screen_mode();
         }
     }

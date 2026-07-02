@@ -6,6 +6,7 @@
 #include <firefly/apps/settings/SettingsApp.h>
 #include <firefly/apps/tools/ToolsApp.h>
 #include <firefly/services/AlarmService.h>
+#include <firefly/services/PowerService.h>
 #include <firefly/services/TimeService.h>
 
 static uint16_t failures = 0;
@@ -559,6 +560,60 @@ static void test_flashlight_controller_posts_brightness_commands() {
                 "flashlight controller does not restore twice");
 }
 
+static void test_power_state_machine_timing() {
+    firefly::PowerService power;
+    power.configure({30000, 5000, 3000});
+    power.onActivity(1000);
+    expect_true(power.evaluateIdle(30999) == firefly::PowerMode::Active,
+                "power remains active before idle timeout");
+    expect_true(power.evaluateIdle(31001) == firefly::PowerMode::IdleDim,
+                "power dims after idle timeout");
+    expect_true(power.evaluateIdle(36001) == firefly::PowerMode::Glance,
+                "power enters glance after dim interval");
+    expect_true(power.evaluateIdle(39001) == firefly::PowerMode::ScreenOff,
+                "power turns screen off after glance interval");
+
+    power.onActivity(40000);
+    expect_true(power.evaluateIdle(40001) == firefly::PowerMode::Active,
+                "activity resets power timing");
+}
+
+static void test_power_battery_priority_and_thresholds() {
+    firefly::PowerService power;
+    power.configure({30000, 5000, 3000});
+    power.onActivity(1000);
+
+    firefly::BatteryState battery{};
+    battery.valid = true;
+    battery.percent = 80;
+    battery.temperature_c = 50;
+    battery.charging = true;
+    power.setBatteryState(battery);
+    expect_true(power.evaluate(1001) == firefly::PowerMode::ThermalProtection,
+                "thermal protection overrides charging");
+
+    battery.temperature_c = 30;
+    battery.percent = 4;
+    power.setBatteryState(battery);
+    expect_true(power.evaluate(1001) == firefly::PowerMode::Charging,
+                "safe charging overrides low battery modes");
+
+    battery.charging = false;
+    battery.vbus_present = false;
+    battery.percent = 25;
+    power.setBatteryState(battery);
+    expect_true(power.evaluate(1001) == firefly::PowerMode::Saver,
+                "power saver begins at twenty five percent");
+    battery.percent = 15;
+    power.setBatteryState(battery);
+    expect_true(power.evaluate(1001) == firefly::PowerMode::LowBattery,
+                "low battery begins at fifteen percent");
+    battery.percent = 5;
+    power.setBatteryState(battery);
+    expect_true(power.evaluate(1001) == firefly::PowerMode::CriticalBattery,
+                "critical battery begins at five percent");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -590,6 +645,8 @@ void setup() {
     test_tools_command_queue_is_fixed_fifo();
     test_flashlight_session_policy();
     test_flashlight_controller_posts_brightness_commands();
+    test_power_state_machine_timing();
+    test_power_battery_priority_and_thresholds();
     Serial.printf("FIREFLY_TEST_RESULT failures=%u\n", failures);
 }
 

@@ -18,6 +18,7 @@
 #include "firefly/hal/I2cBusManager.h"
 #include "firefly/hal/LockedRegisterDevice.h"
 #include "firefly/services/AlarmService.h"
+#include "firefly/services/PowerService.h"
 #include "firefly/services/TimeService.h"
 #include "firefly/apps/calendar/CalendarApp.h"
 #include "firefly/apps/clock/ClockApp.h"
