@@ -14,6 +14,11 @@ volatile uint32_t event_post_failures = 0;
 uint32_t desktop_transition_released_at = 0;
 uint32_t desktop_transition_max_ms = 0;
 volatile bool power_menu_visible = false;
+bool motion_summary_preference_loaded = false;
+uint32_t motion_last_saved_at = 0;
+uint32_t motion_last_saved_day = 0;
+uint32_t motion_last_saved_steps = UINT32_MAX;
+uint16_t motion_last_saved_active_minutes = UINT16_MAX;
 
 uint32_t current_local_day_key() {
     const time_t current_time = time(nullptr);
@@ -499,40 +504,50 @@ void refresh_sleep_icon(bool advance) {
 } // namespace
 
 void load_motion_summary_preference() {
+    if(motion_summary_preference_loaded) return;
     const uint32_t today = current_local_day_key();
+    if(today == 0) return;
+    motion_summary_preference_loaded = true;
     const uint32_t saved_day = prefs.getUInt(UI_PREF_MOTION_DAY_KEY, 0);
-    if(today == 0 || saved_day != today) {
+    if(saved_day != today) {
         motion_service.setDayKey(today);
+        motion_last_saved_day = today;
+        motion_last_saved_steps = 0;
+        motion_last_saved_active_minutes = 0;
+        motion_last_saved_at = millis();
         return;
     }
     const uint32_t steps = prefs.getUInt(UI_PREF_MOTION_STEPS_KEY, 0);
     const uint16_t active_minutes = static_cast<uint16_t>(
         prefs.getUShort(UI_PREF_MOTION_ACTIVE_KEY, 0));
     motion_service.restoreDailySummary(today, steps, active_minutes);
+    motion_last_saved_day = today;
+    motion_last_saved_steps = steps;
+    motion_last_saved_active_minutes = active_minutes;
+    motion_last_saved_at = millis();
 }
 
 void persist_motion_summary(bool force) {
-    static uint32_t last_saved_at = 0;
-    static uint32_t last_steps = UINT32_MAX;
-    static uint16_t last_active_minutes = UINT16_MAX;
     const uint32_t now = millis();
-    if(!force && last_saved_at != 0 &&
-       now - last_saved_at < 15UL * 60UL * 1000UL) {
+    if(!force && motion_last_saved_at != 0 &&
+       now - motion_last_saved_at < 15UL * 60UL * 1000UL) {
         return;
     }
 
     const uint32_t today = current_local_day_key();
     if(today == 0) return;
     const firefly::MotionSummary summary = motion_service.summary();
-    if(force || summary.steps != last_steps ||
-       summary.active_minutes != last_active_minutes) {
+    if(today != motion_last_saved_day ||
+       summary.steps != motion_last_saved_steps ||
+       summary.active_minutes != motion_last_saved_active_minutes) {
         prefs.putUInt(UI_PREF_MOTION_DAY_KEY, today);
         prefs.putUInt(UI_PREF_MOTION_STEPS_KEY, summary.steps);
         prefs.putUShort(UI_PREF_MOTION_ACTIVE_KEY, summary.active_minutes);
-        last_steps = summary.steps;
-        last_active_minutes = summary.active_minutes;
+        motion_last_saved_day = today;
+        motion_last_saved_steps = summary.steps;
+        motion_last_saved_active_minutes = summary.active_minutes;
     }
-    last_saved_at = now;
+    motion_last_saved_at = now;
 }
 
 void start_firefly_background_task() {
@@ -918,6 +933,7 @@ void update_time_cb(lv_timer_t * timer) {
     LV_UNUSED(timer);
 
     time_service.tick();
+    load_motion_summary_preference();
     persist_motion_summary(false);
     if(activity_app_active) {
         activity_app.refresh(motion_service.summary());

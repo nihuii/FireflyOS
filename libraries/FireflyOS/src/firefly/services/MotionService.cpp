@@ -92,10 +92,10 @@ bool MotionService::poll(const MotionContext & context) {
 bool MotionService::processSample(const MotionSample & sample,
                                   const MotionContext & context) {
     if(!pushSample(sample)) return false;
+    portENTER_CRITICAL(&mux_);
     const bool stepped = step_detector_.update(sample);
     const bool wrist_raised = wrist_detector_.update(sample, context);
 
-    portENTER_CRITICAL(&mux_);
     summary_.steps = step_detector_.totalSteps();
     if(stepped) {
         const uint32_t minute_bucket = sample.timestamp_ms / 60000UL;
@@ -168,9 +168,13 @@ bool MotionService::consumeWristRaise() {
 }
 
 void MotionService::setDayKey(uint32_t day_key) {
-    if(day_key == 0 || day_key == day_key_) return;
-    step_detector_.reset();
+    if(day_key == 0) return;
     portENTER_CRITICAL(&mux_);
+    if(day_key == day_key_) {
+        portEXIT_CRITICAL(&mux_);
+        return;
+    }
+    step_detector_.reset();
     day_key_ = day_key;
     summary_.steps = 0;
     summary_.active_minutes = 0;
@@ -181,8 +185,8 @@ void MotionService::setDayKey(uint32_t day_key) {
 void MotionService::restoreDailySummary(uint32_t day_key, uint32_t steps,
                                         uint16_t active_minutes) {
     if(day_key == 0) return;
-    step_detector_.restoreTotalSteps(steps);
     portENTER_CRITICAL(&mux_);
+    step_detector_.restoreTotalSteps(steps);
     day_key_ = day_key;
     summary_.steps = steps;
     summary_.active_minutes = active_minutes;
