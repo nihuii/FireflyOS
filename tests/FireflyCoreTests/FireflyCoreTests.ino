@@ -773,6 +773,155 @@ static void test_motion_service_low_power_forwarding() {
                 "motion service forwards low power request");
 }
 
+static void feed_step_cycle(firefly::StepDetector & detector,
+                            uint32_t & timestamp_ms,
+                            uint8_t peak_samples,
+                            uint8_t baseline_samples) {
+    firefly::MotionSample sample{};
+    sample.valid = true;
+    for(uint8_t i = 0; i < peak_samples; ++i) {
+        sample.az = 1.6f;
+        sample.timestamp_ms = timestamp_ms;
+        detector.update(sample);
+        timestamp_ms += 10;
+    }
+    for(uint8_t i = 0; i < baseline_samples; ++i) {
+        sample.az = 1.0f;
+        sample.timestamp_ms = timestamp_ms;
+        detector.update(sample);
+        timestamp_ms += 10;
+    }
+}
+
+static void test_step_detector_static_and_regular_cadence() {
+    firefly::StepDetector detector;
+    firefly::MotionSample sample{};
+    sample.valid = true;
+    sample.az = 1.0f;
+    for(uint32_t i = 0; i < 1000; ++i) {
+        sample.timestamp_ms = i * 10U;
+        detector.update(sample);
+    }
+    expect_true(detector.totalSteps() == 0,
+                "static acceleration produces zero steps");
+
+    uint32_t timestamp_ms = 10000;
+    for(uint8_t step = 0; step < 20; ++step) {
+        feed_step_cycle(detector, timestamp_ms, 5, 45);
+    }
+    expect_true(detector.totalSteps() >= 18 && detector.totalSteps() <= 22,
+                "regular cadence counts twenty steps within tolerance");
+}
+
+static void test_step_detector_limits_high_frequency_jitter() {
+    firefly::StepDetector detector;
+    uint32_t timestamp_ms = 0;
+    for(uint8_t pulse = 0; pulse < 30; ++pulse) {
+        feed_step_cycle(detector, timestamp_ms, 2, 8);
+    }
+    expect_true(detector.totalSteps() <= 12,
+                "minimum step interval limits high frequency jitter");
+}
+
+static void test_wrist_raise_requires_posture_rotation_and_cooldown() {
+    firefly::WristRaiseDetector detector;
+    firefly::MotionContext context{};
+    firefly::MotionSample lowered{};
+    lowered.valid = true;
+    lowered.az = -0.2f;
+    lowered.timestamp_ms = 1000;
+    expect_true(!detector.update(lowered, context),
+                "lowered wrist establishes baseline");
+
+    firefly::MotionSample raised{};
+    raised.valid = true;
+    raised.ay = -0.5f;
+    raised.az = 0.8f;
+    raised.gx = 60.0f;
+    raised.timestamp_ms = 1200;
+    expect_true(detector.update(raised, context),
+                "posture change plus angular velocity triggers wrist raise");
+    raised.timestamp_ms = 2000;
+    expect_true(!detector.update(raised, context),
+                "wrist raise respects three second cooldown");
+
+    context.screen_on = true;
+    lowered.timestamp_ms = 5000;
+    detector.update(lowered, context);
+    raised.timestamp_ms = 5200;
+    expect_true(!detector.update(raised, context),
+                "wrist raise is suppressed while screen is on");
+}
+
+static void test_motion_service_aggregates_steps_and_wrist_event() {
+    FakeMotionDevice device;
+    firefly::MotionService motion(device);
+    motion.setDayKey(2026183);
+    firefly::MotionContext context{};
+    firefly::MotionSample sample{};
+    sample.valid = true;
+
+    uint32_t timestamp_ms = 0;
+    for(uint8_t step = 0; step < 20; ++step) {
+        for(uint8_t i = 0; i < 5; ++i) {
+            sample.az = 1.6f;
+            sample.timestamp_ms = timestamp_ms;
+            motion.processSample(sample, context);
+            timestamp_ms += 10;
+        }
+        for(uint8_t i = 0; i < 45; ++i) {
+            sample.az = 1.0f;
+            sample.timestamp_ms = timestamp_ms;
+            motion.processSample(sample, context);
+            timestamp_ms += 10;
+        }
+    }
+    const firefly::MotionSummary summary = motion.summary();
+    expect_true(summary.steps >= 18 && summary.steps <= 22,
+                "motion service aggregates detected steps");
+    expect_true(summary.active_minutes == 1,
+                "motion service counts unique active minute");
+
+    sample = {};
+    sample.valid = true;
+    sample.az = -0.2f;
+    sample.timestamp_ms = 20000;
+    motion.processSample(sample, context);
+    sample.ay = -0.5f;
+    sample.az = 0.8f;
+    sample.gx = 60.0f;
+    sample.timestamp_ms = 20200;
+    motion.processSample(sample, context);
+    expect_true(motion.consumeWristRaise(),
+                "motion service publishes wrist raise once");
+    expect_true(!motion.consumeWristRaise(),
+                "motion service wrist event is consumed");
+
+    motion.setDayKey(2026184);
+    expect_true(motion.summary().steps == 0,
+                "motion service resets daily aggregate on day change");
+}
+
+static void test_motion_service_restores_same_day_aggregate() {
+    FakeMotionDevice device;
+    firefly::MotionService motion(device);
+    motion.restoreDailySummary(2026183, 4321, 27);
+
+    const firefly::MotionSummary restored = motion.summary();
+    expect_true(restored.steps == 4321,
+                "motion service restores persisted step total");
+    expect_true(restored.active_minutes == 27,
+                "motion service restores persisted active minutes");
+
+    motion.setDayKey(2026183);
+    expect_true(motion.summary().steps == 4321,
+                "same day key preserves restored aggregate");
+    motion.setDayKey(2026184);
+    expect_true(motion.summary().steps == 0 &&
+                    motion.summary().active_minutes == 0,
+                "new day clears restored aggregate");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -811,6 +960,11 @@ void setup() {
     test_light_sleep_requires_verified_wake_matrix();
     test_motion_service_fixed_sample_buffer();
     test_motion_service_low_power_forwarding();
+    test_step_detector_static_and_regular_cadence();
+    test_step_detector_limits_high_frequency_jitter();
+    test_wrist_raise_requires_posture_rotation_and_cooldown();
+    test_motion_service_aggregates_steps_and_wrist_event();
+    test_motion_service_restores_same_day_aggregate();
     Serial.printf("FIREFLY_TEST_RESULT failures=%u\n", failures);
 }
 

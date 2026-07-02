@@ -15,6 +15,17 @@ uint32_t desktop_transition_released_at = 0;
 uint32_t desktop_transition_max_ms = 0;
 volatile bool power_menu_visible = false;
 
+uint32_t current_local_day_key() {
+    const time_t current_time = time(nullptr);
+    struct tm local{};
+    if(current_time <= 0 || !localtime_r(&current_time, &local) ||
+       local.tm_year + 1900 < 2024) {
+        return 0;
+    }
+    return static_cast<uint32_t>(local.tm_year + 1900) * 1000UL +
+           static_cast<uint32_t>(local.tm_yday + 1);
+}
+
 void post_background_system_event(const firefly::SystemEvent & event) {
     if(!system_event_bus.post(event)) {
         ++event_post_failures;
@@ -34,6 +45,24 @@ firefly::PowerButtonEvent poll_power_button(uint32_t now_ms) {
     }
     last_poll_at = now_ms;
     return firefly_board.readPowerButtonEvent();
+}
+
+bool poll_motion_source(uint32_t now_ms) {
+    if(!system_capabilities.has(firefly::Capability::Motion)) return false;
+
+    static uint32_t last_day_check_at = 0;
+    if(last_day_check_at == 0 || now_ms - last_day_check_at >= 60000UL) {
+        last_day_check_at = now_ms;
+        motion_service.setDayKey(current_local_day_key());
+    }
+
+    const firefly::SystemState state = ui_state_store.snapshot();
+    firefly::MotionContext context{};
+    context.screen_on = !state.screen_off;
+    context.charging = state.battery.charging || state.battery.vbus_present;
+    context.high_rate_app = activity_app_active;
+    motion_service.poll(context);
+    return motion_service.consumeWristRaise();
 }
 
 firefly::PowerMode evaluate_runtime_power_mode(unsigned long now) {
@@ -236,6 +265,13 @@ void firefly_background_task(void * parameter) {
                 : static_cast<uint32_t>(firefly::ButtonAction::ShortPress);
             post_background_system_event({firefly::EventType::PowerPress,
                                           value,
+                                          now,
+                                          firefly::EventPriority::Critical});
+        }
+
+        if(poll_motion_source(now)) {
+            post_background_system_event({firefly::EventType::Wake,
+                                          0,
                                           now,
                                           firefly::EventPriority::Critical});
         }
@@ -462,6 +498,43 @@ void refresh_sleep_icon(bool advance) {
 
 } // namespace
 
+void load_motion_summary_preference() {
+    const uint32_t today = current_local_day_key();
+    const uint32_t saved_day = prefs.getUInt(UI_PREF_MOTION_DAY_KEY, 0);
+    if(today == 0 || saved_day != today) {
+        motion_service.setDayKey(today);
+        return;
+    }
+    const uint32_t steps = prefs.getUInt(UI_PREF_MOTION_STEPS_KEY, 0);
+    const uint16_t active_minutes = static_cast<uint16_t>(
+        prefs.getUShort(UI_PREF_MOTION_ACTIVE_KEY, 0));
+    motion_service.restoreDailySummary(today, steps, active_minutes);
+}
+
+void persist_motion_summary(bool force) {
+    static uint32_t last_saved_at = 0;
+    static uint32_t last_steps = UINT32_MAX;
+    static uint16_t last_active_minutes = UINT16_MAX;
+    const uint32_t now = millis();
+    if(!force && last_saved_at != 0 &&
+       now - last_saved_at < 15UL * 60UL * 1000UL) {
+        return;
+    }
+
+    const uint32_t today = current_local_day_key();
+    if(today == 0) return;
+    const firefly::MotionSummary summary = motion_service.summary();
+    if(force || summary.steps != last_steps ||
+       summary.active_minutes != last_active_minutes) {
+        prefs.putUInt(UI_PREF_MOTION_DAY_KEY, today);
+        prefs.putUInt(UI_PREF_MOTION_STEPS_KEY, summary.steps);
+        prefs.putUShort(UI_PREF_MOTION_ACTIVE_KEY, summary.active_minutes);
+        last_steps = summary.steps;
+        last_active_minutes = summary.active_minutes;
+    }
+    last_saved_at = now;
+}
+
 void start_firefly_background_task() {
 #if defined(CONFIG_FREERTOS_UNICORE) && CONFIG_FREERTOS_UNICORE
     firefly_background_task_running = false;
@@ -641,6 +714,7 @@ void refresh_runtime_status_ui() {
     clock_app.refresh(state);
     settings_app.refresh(state);
     tools_app.refresh(state, screen_brightness, millis());
+    activity_app.refresh(motion_service.summary());
     notification_center.refresh(state);
     ui_shell.refresh(state, ui_state_store.revision());
 }
@@ -672,6 +746,7 @@ void refresh_battery_ui() {
     clock_app.refresh(state);
     settings_app.refresh(state);
     tools_app.refresh(state, screen_brightness, millis());
+    activity_app.refresh(motion_service.summary());
     ui_shell.refresh(state, ui_state_store.revision());
 }
 
@@ -843,6 +918,10 @@ void update_time_cb(lv_timer_t * timer) {
     LV_UNUSED(timer);
 
     time_service.tick();
+    persist_motion_summary(false);
+    if(activity_app_active) {
+        activity_app.refresh(motion_service.summary());
+    }
     struct tm timeinfo;
     if(!getLocalTime(&timeinfo, 10)) {
         const firefly::TimeSnapshot snapshot = time_service.now();
@@ -909,6 +988,7 @@ void enter_sleep_screen_mode() {
         return;
     }
 
+    persist_motion_summary(true);
     is_sleeping = true;
     sleep_display_off = false;
     sleep_entered_at = millis();
@@ -950,6 +1030,9 @@ void firefly_process_system_events() {
         } else if(power_action == firefly::PowerButtonEvent::LongPress) {
             run_power_press_action(firefly::ButtonAction::LongPress);
         }
+        if(poll_motion_source(now) && is_sleeping && sleep_display_off) {
+            wake_sleep_screen_from_blackout();
+        }
         const firefly::PowerMode power_mode = evaluate_runtime_power_mode(now);
         if(power_mode == firefly::PowerMode::ScreenOff &&
            is_sleeping && !sleep_display_off) {
@@ -968,6 +1051,11 @@ void firefly_process_system_events() {
             case firefly::EventType::PowerPress:
                 run_power_press_action(
                     static_cast<firefly::ButtonAction>(event.value));
+                break;
+            case firefly::EventType::Wake:
+                if(is_sleeping && sleep_display_off) {
+                    wake_sleep_screen_from_blackout();
+                }
                 break;
             case firefly::EventType::EnterSleep:
                 if(!is_sleeping) {

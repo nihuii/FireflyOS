@@ -24,6 +24,7 @@
 #include "firefly/services/PowerService.h"
 #include "firefly/services/TimeService.h"
 #include "firefly/apps/calendar/CalendarApp.h"
+#include "firefly/apps/activity/ActivityApp.h"
 #include "firefly/apps/clock/ClockApp.h"
 #include "firefly/apps/settings/SettingsApp.h"
 #include "firefly/apps/tools/ToolsApp.h"

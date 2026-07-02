@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>FireflyOS 计划 3 · 活动应用预览</title>
+  <style>
+    :root {
+      color-scheme:dark;
+      --bg:#05090c; --screen:#020607; --surface:#0d171d;
+      --line:#25454b; --primary:#62e8ca; --secondary:#72cde0;
+      --energy:#b0ff63; --text:#effffb; --muted:#8ba6aa;
+    }
+    * { box-sizing:border-box; }
+    body {
+      margin:0; padding:32px; color:var(--text);
+      font-family:Inter,"Microsoft YaHei",system-ui,sans-serif;
+      background:radial-gradient(circle at 20% 0,rgba(98,232,202,.11),transparent 30%),var(--bg);
+    }
+    header { max-width:920px; margin:0 auto 28px; }
+    h1 { margin:0 0 10px; color:#c8fff4; font-size:28px; }
+    header p,.caption { color:var(--muted); line-height:1.65; }
+    main { display:flex; flex-wrap:wrap; justify-content:center; gap:42px; }
+    article { width:410px; }
+    article h2 { margin:0 0 10px; font-size:18px; }
+    .watch {
+      position:relative; width:410px; height:502px; overflow:hidden;
+      border-radius:44px; border:1px solid #29474a;
+      background:radial-gradient(circle at 76% 17%,rgba(98,232,202,.17),transparent 27%),
+                 radial-gradient(circle at 14% 80%,rgba(114,205,224,.10),transparent 28%),var(--screen);
+      box-shadow:0 18px 48px rgba(0,0,0,.5);
+    }
+    .safe {
+      position:absolute; left:24px; top:24px; width:362px; height:446px;
+      border:1px dashed rgba(255,255,255,.28); border-radius:22px; pointer-events:none; z-index:5;
+    }
+    .safe::after { content:"24px safe area"; position:absolute; right:10px; bottom:8px; color:#ffffff66; font-size:10px; }
+    .status { position:absolute; left:30px; right:30px; top:20px; display:flex; justify-content:space-between; font-size:13px; font-weight:700; }
+    .status span:last-child { color:var(--muted); letter-spacing:2px; }
+    .title { position:absolute; left:28px; top:54px; font-size:24px; font-weight:800; }
+    .subtitle { position:absolute; left:30px; top:91px; color:var(--muted); font-size:12px; }
+    .ring {
+      position:absolute; left:95px; top:118px; width:220px; height:220px; border-radius:50%;
+      background:conic-gradient(from 135deg,var(--primary) 0 58%,#193139 58% 75%,transparent 75% 100%);
+      filter:drop-shadow(0 0 14px rgba(98,232,202,.12));
+    }
+    .ring::before { content:""; position:absolute; inset:18px; border-radius:50%; background:#071015; }
+    .ring::after { content:""; position:absolute; left:79px; top:79px; width:62px; height:62px; border-radius:50%; background:radial-gradient(circle,#163d3a,#0a171a); opacity:.45; }
+    .value { position:absolute; top:188px; width:100%; text-align:center; font-size:49px; font-weight:900; letter-spacing:-2px; }
+    .unit { position:absolute; top:251px; width:100%; text-align:center; color:var(--muted); font-size:12px; letter-spacing:2px; }
+    .card { position:absolute; top:356px; width:168px; height:86px; padding:13px 12px; border:1px solid var(--line); border-radius:22px; background:rgba(13,23,29,.94); }
+    .card.left { left:28px; } .card.right { left:214px; }
+    .card small { display:block; color:var(--muted); font-size:10px; letter-spacing:.5px; }
+    .card strong { display:block; margin-top:9px; color:var(--primary); font-size:24px; }
+    .card.right strong { color:var(--energy); }
+    .unavailable .ring { background:conic-gradient(from 135deg,#193139 0 75%,transparent 75% 100%); filter:none; }
+    .unavailable .value,.unavailable .card strong { color:#60757a; }
+    .gesture { position:absolute; left:164px; bottom:18px; width:82px; height:4px; border-radius:3px; background:#effffb66; }
+    .caption { margin:11px 2px 0; font-size:13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>活动应用 · 实现后预览</h1>
+    <p>410 × 502 圆屏安全区方案。仅展示本地计步、活动分钟和 8000 步目标，不展示心率、血氧、卡路里或医疗结论。</p>
+  </header>
+  <main>
+    <article>
+      <h2>传感器可用</h2>
+      <div class="watch">
+        <div class="status"><span>09:41</span><span>● 78%</span></div>
+        <div class="title">Today's Activity</div>
+        <div class="subtitle">QMI8658 | Local estimate, non-medical</div>
+        <div class="ring"></div>
+        <div class="value">6,240</div>
+        <div class="unit">STEPS</div>
+        <div class="card left"><small>ACTIVE MINUTES</small><strong>38 min</strong></div>
+        <div class="card right"><small>DAILY GOAL</small><strong>78%</strong></div>
+        <div class="safe"></div><div class="gesture"></div>
+      </div>
+      <p class="caption">目标环上限为 100%；数据由固定容量 MotionService 当天聚合。</p>
+    </article>
+    <article>
+      <h2>传感器不可用</h2>
+      <div class="watch unavailable">
+        <div class="status"><span>09:41</span><span>● 78%</span></div>
+        <div class="title">Today's Activity</div>
+        <div class="subtitle">Motion unavailable | Other apps work</div>
+        <div class="ring"></div>
+        <div class="value">--</div>
+        <div class="unit">STEPS</div>
+        <div class="card left"><small>ACTIVE MINUTES</small><strong>-- min</strong></div>
+        <div class="card right"><small>DAILY GOAL</small><strong>--</strong></div>
+        <div class="safe"></div><div class="gesture"></div>
+      </div>
+      <p class="caption">QMI8658 初始化失败时只降级活动功能，不阻塞时钟、设置等核心应用。</p>
+    </article>
+  </main>
+</body>
+</html>

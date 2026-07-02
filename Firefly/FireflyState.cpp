@@ -10,6 +10,9 @@ const char * UI_PREF_VOLUME_KEY = "ui_volume";
 const char * UI_PREF_ALARM_ENABLED_KEY = "alarm_on";
 const char * UI_PREF_ALARM_HOUR_KEY = "alarm_hour";
 const char * UI_PREF_ALARM_MINUTE_KEY = "alarm_min";
+const char * UI_PREF_MOTION_DAY_KEY = "motion_day";
+const char * UI_PREF_MOTION_STEPS_KEY = "motion_steps";
+const char * UI_PREF_MOTION_ACTIVE_KEY = "motion_active";
 
 lv_obj_t * lock_date_label = NULL;
 lv_obj_t * lock_time_label = NULL;
@@ -80,6 +83,7 @@ bool is_dragging_notif = false;
 volatile bool is_sleeping = false;
 volatile bool sleep_display_off = false;
 volatile bool is_on_lockscreen = true;
+volatile bool activity_app_active = false;
 
 uint8_t screen_brightness = 128;
 uint8_t volume_level = 50;
@@ -117,6 +121,7 @@ firefly::UiShell ui_shell;
 firefly::GlanceScreen glance_screen;
 firefly::LockScreen lock_screen;
 firefly::HomeScreen home_screen;
+firefly::ActivityApp activity_app;
 firefly::CalendarApp calendar_app;
 firefly::ClockApp clock_app;
 firefly::SettingsApp settings_app;

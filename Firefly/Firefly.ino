@@ -41,6 +41,8 @@ void handle_shell_route(firefly::Route previous, firefly::Route current) {
     calendar_app.hide();
     clock_app.hide();
     tools_app.hide();
+    activity_app_active = false;
+    activity_app.hide();
     app_shell_screen.hide();
 
     if(current == firefly::Route::Lock) {
@@ -72,6 +74,13 @@ void handle_shell_route(firefly::Route previous, firefly::Route current) {
         tools_app.refresh(ui_state_store.snapshot(), screen_brightness, millis());
         tools_app.show();
         ui_shell.bringAppToFront(tools_app.root());
+        return;
+    }
+    if(current == firefly::Route::Activity) {
+        activity_app.refresh(motion_service.summary());
+        activity_app.show();
+        activity_app_active = true;
+        ui_shell.bringAppToFront(activity_app.root());
         return;
     }
 
@@ -580,6 +589,7 @@ void build_firefly_os() {
     clock_app.create(ui_shell.appHost(), app_components, time_service, alarm_service);
     calendar_app.create(ui_shell.appHost(), app_components);
     tools_app.create(ui_shell.appHost(), app_components);
+    activity_app.create(ui_shell.appHost(), app_components);
     ui_shell.setRouteHandler(handle_shell_route);
 
     notif_panel = lv_obj_create(ui_shell.panelHost());
@@ -1288,6 +1298,7 @@ void setup(void) {
             Serial.println("RTC time invalid. Set time manually from Settings.");
         }
     }
+    load_motion_summary_preference();
 
     lv_init();
 
