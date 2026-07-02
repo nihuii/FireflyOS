@@ -678,6 +678,42 @@ static void test_debounced_button_rejects_jitter() {
                 "jitter never becomes stable press");
 }
 
+static uint8_t sleep_prepare_calls = 0;
+static uint8_t sleep_restore_calls = 0;
+
+static bool fake_sleep_prepare() {
+    ++sleep_prepare_calls;
+    return true;
+}
+
+static void fake_sleep_restore() {
+    ++sleep_restore_calls;
+}
+
+static void test_light_sleep_requires_verified_wake_matrix() {
+    firefly::PowerService power;
+    power.setSleepHooks({fake_sleep_prepare, fake_sleep_restore});
+    expect_true(!power.canEnterLightSleep(),
+                "light sleep is disabled without wake verification");
+    expect_true(!power.prepareForLightSleep(),
+                "sleep prepare hook is gated before verification");
+
+    power.recordWakeVerification(firefly::WakeSource::Boot, 100, 100);
+    power.recordWakeVerification(firefly::WakeSource::PowerButton, 100, 100);
+    power.recordWakeVerification(firefly::WakeSource::RtcAlarm, 100, 99);
+    expect_true(!power.canEnterLightSleep(),
+                "one failed wake attempt keeps light sleep disabled");
+
+    power.recordWakeVerification(firefly::WakeSource::RtcAlarm, 100, 100);
+    expect_true(power.canEnterLightSleep(),
+                "required wake sources enable gate only at one hundred percent");
+    expect_true(power.prepareForLightSleep(),
+                "verified sleep runs prepare hook");
+    power.restoreFromLightSleep();
+    expect_true(sleep_prepare_calls == 1 && sleep_restore_calls == 1,
+                "sleep hooks run once around verified lifecycle");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -713,6 +749,7 @@ void setup() {
     test_power_battery_priority_and_thresholds();
     test_debounced_button_short_and_long_press();
     test_debounced_button_rejects_jitter();
+    test_light_sleep_requires_verified_wake_matrix();
     Serial.printf("FIREFLY_TEST_RESULT failures=%u\n", failures);
 }
 

@@ -48,4 +48,51 @@ bool PowerService::isTemperatureSafe(const BatteryState & state) {
            state.temperature_c <= kMaxSafeTemperatureC;
 }
 
+void PowerService::recordWakeVerification(WakeSource source,
+                                          uint16_t attempts,
+                                          uint16_t successes) {
+    const uint8_t index = static_cast<uint8_t>(source);
+    if(index >= kWakeSourceCount) return;
+    wake_verification_[index].attempts = attempts;
+    wake_verification_[index].successes =
+        successes > attempts ? attempts : successes;
+}
+
+WakeVerification PowerService::wakeVerification(WakeSource source) const {
+    const uint8_t index = static_cast<uint8_t>(source);
+    return index < kWakeSourceCount
+        ? wake_verification_[index]
+        : WakeVerification{};
+}
+
+bool PowerService::canEnterLightSleep() const {
+    static const WakeSource required[] = {
+        WakeSource::Boot,
+        WakeSource::PowerButton,
+        WakeSource::RtcAlarm
+    };
+    for(uint8_t i = 0; i < sizeof(required) / sizeof(required[0]); ++i) {
+        const WakeVerification verification = wakeVerification(required[i]);
+        if(verification.attempts < 100 ||
+           verification.successes != verification.attempts) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool PowerService::prepareForLightSleep() {
+    if(!canEnterLightSleep() || !sleep_hooks_.prepare || sleep_prepared_) {
+        return false;
+    }
+    sleep_prepared_ = sleep_hooks_.prepare();
+    return sleep_prepared_;
+}
+
+void PowerService::restoreFromLightSleep() {
+    if(!sleep_prepared_) return;
+    sleep_prepared_ = false;
+    if(sleep_hooks_.restore) sleep_hooks_.restore();
+}
+
 }  // namespace firefly
