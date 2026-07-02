@@ -10,6 +10,7 @@ enum class Capability : uint8_t {
     Touch,
     Rtc,
     Power,
+    PowerButton,
     Motion,
     Audio,
     Sd,

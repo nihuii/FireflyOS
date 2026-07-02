@@ -30,6 +30,7 @@ extern firefly::LegacyBoardAdapter firefly_board;
 extern firefly::AlarmService alarm_service;
 extern firefly::PowerService power_service;
 extern firefly::TimeService time_service;
+extern firefly::CapabilityRegistry system_capabilities;
 extern firefly::UiShell ui_shell;
 extern firefly::GlanceScreen glance_screen;
 extern firefly::LockScreen lock_screen;

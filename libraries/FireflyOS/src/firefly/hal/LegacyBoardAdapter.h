@@ -25,6 +25,8 @@ public:
     bool writeEpoch(int64_t epoch_seconds) override;
     BatteryState readBattery() override;
     void setDisplayBrightness(uint8_t value) override;
+    PowerButtonEvent readPowerButtonEvent() override;
+    void shutdown() override;
 
 private:
     bool lockBus();

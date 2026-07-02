@@ -13,6 +13,7 @@ bool firefly_background_task_running = false;
 volatile uint32_t event_post_failures = 0;
 uint32_t desktop_transition_released_at = 0;
 uint32_t desktop_transition_max_ms = 0;
+volatile bool power_menu_visible = false;
 
 void post_background_system_event(const firefly::SystemEvent & event) {
     if(!system_event_bus.post(event)) {
@@ -20,28 +21,28 @@ void post_background_system_event(const firefly::SystemEvent & event) {
     }
 }
 
-bool poll_short_press_source() {
-    static bool last_btn_state = HIGH;
-    static unsigned long btn_press_time = 0;
-    const bool current_btn_state = digitalRead(0);
-    bool short_press_detected = false;
+firefly::ButtonAction poll_boot_button(uint32_t now_ms) {
+    static firefly::DebouncedButton boot_button;
+    return boot_button.update(digitalRead(0) == LOW, now_ms);
+}
 
-    if(last_btn_state == HIGH && current_btn_state == LOW) {
-        btn_press_time = millis();
+firefly::PowerButtonEvent poll_power_button(uint32_t now_ms) {
+    static uint32_t last_poll_at = 0;
+    if(!system_capabilities.has(firefly::Capability::PowerButton) ||
+       now_ms - last_poll_at < 50) {
+        return firefly::PowerButtonEvent::None;
     }
-
-    if(last_btn_state == LOW && current_btn_state == HIGH) {
-        short_press_detected = (millis() - btn_press_time) < 800UL;
-    }
-
-    last_btn_state = current_btn_state;
-    return short_press_detected;
+    last_poll_at = now_ms;
+    return firefly_board.readPowerButtonEvent();
 }
 
 firefly::PowerMode evaluate_runtime_power_mode(unsigned long now) {
     const unsigned long last_activity = last_activity_time;
     const uint32_t auto_sleep = auto_sleep_ms;
 
+    if(power_menu_visible) {
+        return firefly::PowerMode::Active;
+    }
     if(is_sleeping) {
         const unsigned long entered_at = sleep_entered_at;
         if(entered_at == 0) return firefly::PowerMode::Glance;
@@ -72,9 +73,128 @@ void apply_sleep_blackout() {
 
 void wake_sleep_screen_from_blackout();
 
+lv_obj_t * power_menu_overlay = nullptr;
+
+void close_power_menu() {
+    power_menu_visible = false;
+    if(power_menu_overlay) ui_shell.closeOverlay(power_menu_overlay);
+}
+
+void power_menu_cancel_cb(lv_event_t * event) {
+    LV_UNUSED(event);
+    close_power_menu();
+}
+
+void power_menu_sleep_cb(lv_event_t * event) {
+    LV_UNUSED(event);
+    close_power_menu();
+    if(is_sleeping) {
+        apply_sleep_blackout();
+    } else {
+        enter_sleep_screen_mode();
+    }
+}
+
+void power_menu_restart_cb(lv_event_t * event) {
+    LV_UNUSED(event);
+    ESP.restart();
+}
+
+void power_menu_shutdown_cb(lv_event_t * event) {
+    LV_UNUSED(event);
+    firefly_board.setDisplayBrightness(0);
+    firefly_board.shutdown();
+}
+
+lv_obj_t * create_power_menu_button(lv_obj_t * parent,
+                                    const char * text,
+                                    int16_t y,
+                                    lv_event_cb_t callback,
+                                    uint32_t color) {
+    lv_obj_t * button = lv_btn_create(parent);
+    lv_obj_set_size(button, 330, 56);
+    lv_obj_align(button, LV_ALIGN_TOP_MID, 0, y);
+    lv_obj_set_style_radius(button, 20, 0);
+    lv_obj_set_style_bg_color(button, lv_color_hex(color), 0);
+    lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
+    lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t * label = lv_label_create(button);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_color(label, lv_color_hex(0xEFFFFB), 0);
+    lv_obj_center(label);
+    return button;
+}
+
+void ensure_power_menu() {
+    if(power_menu_overlay || !ui_shell.overlayHost()) return;
+    power_menu_overlay = lv_obj_create(ui_shell.overlayHost());
+    lv_obj_set_size(power_menu_overlay, 410, 502);
+    lv_obj_set_style_bg_color(power_menu_overlay, lv_color_hex(0x020607), 0);
+    lv_obj_set_style_bg_opa(power_menu_overlay, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(power_menu_overlay, 0, 0);
+    lv_obj_set_style_radius(power_menu_overlay, 0, 0);
+    lv_obj_clear_flag(power_menu_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(power_menu_overlay, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t * title = lv_label_create(power_menu_overlay);
+    lv_label_set_text(title, "电源菜单");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xEFFFFB), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 64);
+
+    lv_obj_t * detail = lv_label_create(power_menu_overlay);
+    lv_label_set_text(detail, "PWR 长按唤出 · 请选择操作");
+    lv_obj_set_style_text_color(detail, lv_color_hex(0x8BA6AA), 0);
+    lv_obj_align(detail, LV_ALIGN_TOP_MID, 0, 102);
+
+    create_power_menu_button(power_menu_overlay, "息屏", 152,
+                             power_menu_sleep_cb, 0x153238);
+    create_power_menu_button(power_menu_overlay, "重新启动", 220,
+                             power_menu_restart_cb, 0x244149);
+    create_power_menu_button(power_menu_overlay, "关机", 288,
+                             power_menu_shutdown_cb, 0x5A252B);
+    create_power_menu_button(power_menu_overlay, "取消", 384,
+                             power_menu_cancel_cb, 0x162126);
+}
+
+void show_power_menu() {
+    ensure_power_menu();
+    if(power_menu_overlay) {
+        power_menu_visible = true;
+        ui_shell.showOverlay(5, power_menu_overlay);
+    }
+}
+
+void run_power_press_action(firefly::ButtonAction action) {
+    if(action == firefly::ButtonAction::None) return;
+    if(tools_app.closeFlashlightFromInput()) return;
+    if(action == firefly::ButtonAction::LongPress) {
+        if(is_sleeping) exit_sleep_screen_mode();
+        show_power_menu();
+        return;
+    }
+    if(power_menu_overlay &&
+       !lv_obj_has_flag(power_menu_overlay, LV_OBJ_FLAG_HIDDEN)) {
+        close_power_menu();
+    } else if(alarm_ringing) {
+        dismiss_alarm_alert();
+    } else if(is_sleeping && sleep_display_off) {
+        wake_sleep_screen_from_blackout();
+    } else if(is_sleeping) {
+        apply_sleep_blackout();
+    } else {
+        enter_sleep_screen_mode();
+    }
+}
+
 void run_short_press_action() {
     if(tools_app.closeFlashlightFromInput()) {
         return;
+    } else if(power_menu_visible) {
+        close_power_menu();
+        return;
+    } else if(alarm_ringing) {
+        dismiss_alarm_alert();
     } else if(settings_panel && !lv_obj_has_flag(settings_panel, LV_OBJ_FLAG_HIDDEN)) {
         if(settings_menu_container && lv_obj_has_flag(settings_menu_container, LV_OBJ_FLAG_HIDDEN)) {
             set_settings_subpage(NULL);
@@ -85,8 +205,6 @@ void run_short_press_action() {
         wake_sleep_screen_from_blackout();
     } else if(is_sleeping) {
         exit_sleep_screen_mode();
-    } else if(alarm_ringing) {
-        dismiss_alarm_alert();
     } else if(is_on_lockscreen) {
         enter_sleep_screen_mode();
     } else {
@@ -103,9 +221,21 @@ void firefly_background_task(void * parameter) {
     for(;;) {
         const unsigned long now = millis();
 
-        if(poll_short_press_source()) {
+        const firefly::ButtonAction boot_action = poll_boot_button(now);
+        if(boot_action == firefly::ButtonAction::ShortPress) {
             post_background_system_event({firefly::EventType::ShortPress,
                                           0,
+                                          now,
+                                          firefly::EventPriority::Critical});
+        }
+
+        const firefly::PowerButtonEvent power_action = poll_power_button(now);
+        if(power_action != firefly::PowerButtonEvent::None) {
+            const uint32_t value = power_action == firefly::PowerButtonEvent::LongPress
+                ? static_cast<uint32_t>(firefly::ButtonAction::LongPress)
+                : static_cast<uint32_t>(firefly::ButtonAction::ShortPress);
+            post_background_system_event({firefly::EventType::PowerPress,
+                                          value,
                                           now,
                                           firefly::EventPriority::Critical});
         }
@@ -810,8 +940,15 @@ void exit_sleep_screen_mode() {
 void firefly_process_system_events() {
     if(!firefly_background_task_running) {
         const unsigned long now = millis();
-        if(poll_short_press_source()) {
+        const firefly::ButtonAction boot_action = poll_boot_button(now);
+        if(boot_action == firefly::ButtonAction::ShortPress) {
             run_short_press_action();
+        }
+        const firefly::PowerButtonEvent power_action = poll_power_button(now);
+        if(power_action == firefly::PowerButtonEvent::ShortPress) {
+            run_power_press_action(firefly::ButtonAction::ShortPress);
+        } else if(power_action == firefly::PowerButtonEvent::LongPress) {
+            run_power_press_action(firefly::ButtonAction::LongPress);
         }
         const firefly::PowerMode power_mode = evaluate_runtime_power_mode(now);
         if(power_mode == firefly::PowerMode::ScreenOff &&
@@ -827,6 +964,10 @@ void firefly_process_system_events() {
         switch(event.type) {
             case firefly::EventType::ShortPress:
                 run_short_press_action();
+                break;
+            case firefly::EventType::PowerPress:
+                run_power_press_action(
+                    static_cast<firefly::ButtonAction>(event.value));
                 break;
             case firefly::EventType::EnterSleep:
                 if(!is_sleeping) {

@@ -1239,11 +1239,20 @@ void setup(void) {
         if(power.begin(Wire, AXP2101_SLAVE_ADDRESS, IIC_SDA, IIC_SCL)) {
             power.disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
             power.clearIrqStatus();
+            const bool power_button_ready = power.enableIRQ(
+                XPOWERS_AXP2101_PKEY_SHORT_IRQ |
+                XPOWERS_AXP2101_PKEY_LONG_IRQ);
+            system_capabilities.set(firefly::Capability::Power, true);
+            system_capabilities.set(firefly::Capability::PowerButton,
+                                    power_button_ready);
             power.enableBattDetection();
             power.enableVbusVoltageMeasure();
             power.enableBattVoltageMeasure();
             power.enableSystemVoltageMeasure();
             power.enableTemperatureMeasure();
+        } else {
+            system_capabilities.set(firefly::Capability::Power, false);
+            system_capabilities.set(firefly::Capability::PowerButton, false);
         }
         firefly_i2c_bus.unlock();
     } else {

@@ -80,4 +80,26 @@ void LegacyBoardAdapter::setDisplayBrightness(uint8_t value) {
     display_.setBrightness(value);
 }
 
+PowerButtonEvent LegacyBoardAdapter::readPowerButtonEvent() {
+    if(!lockBus()) {
+        return PowerButtonEvent::None;
+    }
+    power_.getIrqStatus();
+    PowerButtonEvent result = PowerButtonEvent::None;
+    if(power_.isPekeyLongPressIrq()) {
+        result = PowerButtonEvent::LongPress;
+    } else if(power_.isPekeyShortPressIrq()) {
+        result = PowerButtonEvent::ShortPress;
+    }
+    power_.clearIrqStatus();
+    unlockBus();
+    return result;
+}
+
+void LegacyBoardAdapter::shutdown() {
+    if(!lockBus()) return;
+    power_.shutdown();
+    unlockBus();
+}
+
 }  // namespace firefly

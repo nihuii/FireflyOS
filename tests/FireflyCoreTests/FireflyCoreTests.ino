@@ -6,6 +6,7 @@
 #include <firefly/apps/settings/SettingsApp.h>
 #include <firefly/apps/tools/ToolsApp.h>
 #include <firefly/services/AlarmService.h>
+#include <firefly/services/InputService.h>
 #include <firefly/services/PowerService.h>
 #include <firefly/services/TimeService.h>
 
@@ -202,7 +203,20 @@ public:
         brightness = value;
     }
 
+    firefly::PowerButtonEvent readPowerButtonEvent() override {
+        const firefly::PowerButtonEvent result = next_button_event;
+        next_button_event = firefly::PowerButtonEvent::None;
+        return result;
+    }
+
+    void shutdown() override {
+        shutdown_requested = true;
+    }
+
     uint8_t brightness = 0;
+    firefly::PowerButtonEvent next_button_event =
+        firefly::PowerButtonEvent::None;
+    bool shutdown_requested = false;
 };
 
 class FakeClockDevice : public firefly::ClockDevice {
@@ -239,6 +253,15 @@ static void test_hardware_abstraction() {
                 "power interface returns value state");
     power.setDisplayBrightness(128);
     expect_true(power.brightness == 128, "power interface controls brightness");
+    power.next_button_event = firefly::PowerButtonEvent::LongPress;
+    expect_true(power.readPowerButtonEvent() ==
+                    firefly::PowerButtonEvent::LongPress,
+                "power interface exposes semantic button event");
+    expect_true(power.readPowerButtonEvent() == firefly::PowerButtonEvent::None,
+                "power button event is consumed once");
+    power.shutdown();
+    expect_true(power.shutdown_requested,
+                "power interface exposes controlled shutdown");
 
     firefly::I2cBusManager i2c(Wire);
     expect_true(i2c.lock(10), "i2c manager acquires mutex");
@@ -614,6 +637,47 @@ static void test_power_battery_priority_and_thresholds() {
                 "critical battery begins at five percent");
 }
 
+static void test_debounced_button_short_and_long_press() {
+    firefly::DebouncedButton button;
+    expect_true(button.update(false, 0) == firefly::ButtonAction::None,
+                "button starts released");
+    expect_true(button.update(true, 10) == firefly::ButtonAction::None,
+                "button press waits for debounce");
+    expect_true(button.update(true, 40) == firefly::ButtonAction::None,
+                "button accepts stable press without early action");
+    expect_true(button.update(false, 50) == firefly::ButtonAction::None,
+                "button release waits for debounce");
+    expect_true(button.update(false, 80) == firefly::ButtonAction::ShortPress,
+                "button emits short press on stable release");
+
+    expect_true(button.update(true, 100) == firefly::ButtonAction::None,
+                "second press begins");
+    expect_true(button.update(true, 130) == firefly::ButtonAction::None,
+                "second press debounces");
+    expect_true(button.update(true, 1129) == firefly::ButtonAction::None,
+                "long press waits for threshold");
+    expect_true(button.update(true, 1130) == firefly::ButtonAction::LongPress,
+                "long press fires at one second");
+    expect_true(button.update(true, 1200) == firefly::ButtonAction::None,
+                "long press fires only once");
+    expect_true(button.update(false, 1210) == firefly::ButtonAction::None,
+                "long press release waits for debounce");
+    expect_true(button.update(false, 1240) == firefly::ButtonAction::None,
+                "long press release does not emit short press");
+}
+
+static void test_debounced_button_rejects_jitter() {
+    firefly::DebouncedButton button;
+    expect_true(button.update(false, 0) == firefly::ButtonAction::None,
+                "jitter test starts released");
+    expect_true(button.update(true, 10) == firefly::ButtonAction::None,
+                "jitter press begins");
+    expect_true(button.update(false, 29) == firefly::ButtonAction::None,
+                "sub debounce jitter release is ignored");
+    expect_true(button.update(false, 60) == firefly::ButtonAction::None,
+                "jitter never becomes stable press");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -647,6 +711,8 @@ void setup() {
     test_flashlight_controller_posts_brightness_commands();
     test_power_state_machine_timing();
     test_power_battery_priority_and_thresholds();
+    test_debounced_button_short_and_long_press();
+    test_debounced_button_rejects_jitter();
     Serial.printf("FIREFLY_TEST_RESULT failures=%u\n", failures);
 }
 

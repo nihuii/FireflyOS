@@ -708,7 +708,25 @@
         <div class="flash-close-hint">触摸 / BOOT / PWR 关闭<br>最长 60 秒 · 关闭后恢复原亮度</div>
         <div class="safe"></div>
       </div>
-      <div class="caption">手电筒覆盖整个 410 × 502 屏幕；低于 15% 电量或温度超出 0–45°C 时拒绝启动，亮度命令只由 UI 主循环执行。PWR 关闭将在计划 3 的统一输入任务接线后真机验收。</div>
+      <div class="caption">手电筒覆盖整个 410 × 502 屏幕；低于 15% 电量或温度超出 0–45°C 时拒绝启动，亮度命令只由 UI 主循环执行。触摸、BOOT 与 PWR 关闭均已接线，仍需真机验收。</div>
+    </article>
+
+    <article>
+      <h2>11. PWR 长按电源菜单</h2>
+      <div class="watch">
+        <div class="title" style="left:0;right:0;top:64px;text-align:center;">电源菜单</div>
+        <div class="subtitle" style="left:0;right:0;top:102px;text-align:center;">PWR 长按唤出 · 请选择操作</div>
+        <div style="position:absolute;left:40px;right:40px;top:152px;display:grid;gap:12px;">
+          <div class="pill" style="border-radius:20px;background:#153238;color:var(--text);">息屏</div>
+          <div class="pill" style="border-radius:20px;background:#244149;color:var(--text);">重新启动</div>
+          <div class="pill" style="border-radius:20px;background:#5a252b;color:var(--text);">关机</div>
+          <div class="pill" style="margin-top:16px;border-radius:20px;background:#162126;color:var(--text);">取消</div>
+        </div>
+        <div class="touch-note" style="right:44px;top:168px;">56px</div>
+        <div class="safe"></div>
+        <div class="gesture"></div>
+      </div>
+      <div class="caption">所有操作项高 56px。PWR 由 AXP2101 短按/长按锁存状态区分并经 HAL 轮询；重启与关机只在用户点击菜单后执行，真机触发稳定性仍需按计划计次验收。</div>
     </article>
   </main>
 </body>

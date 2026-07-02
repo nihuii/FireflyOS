@@ -6,6 +6,12 @@
 
 namespace firefly {
 
+enum class PowerButtonEvent : uint8_t {
+    None,
+    ShortPress,
+    LongPress
+};
+
 class ClockDevice {
 public:
     virtual ~ClockDevice() = default;
@@ -18,6 +24,8 @@ public:
     virtual ~PowerDevice() = default;
     virtual BatteryState readBattery() = 0;
     virtual void setDisplayBrightness(uint8_t value) = 0;
+    virtual PowerButtonEvent readPowerButtonEvent() = 0;
+    virtual void shutdown() = 0;
 };
 
 class ButtonDevice {
