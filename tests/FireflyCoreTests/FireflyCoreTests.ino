@@ -437,6 +437,28 @@ static void test_settings_app_command_queue() {
     expect_true(!queue.take(command), "settings command queue drains");
 }
 
+static void test_settings_commands_preserve_time_and_alarm_payloads() {
+    firefly::SettingsCommandQueue queue;
+    firefly::SettingsCommand time{};
+    time.type = firefly::SettingsCommandType::SetLocalTime;
+    time.value = 1783008000LL;
+    expect_true(queue.post(time), "settings accepts epoch command");
+    firefly::SettingsCommand actual{};
+    expect_true(queue.take(actual) && actual.value == 1783008000LL,
+                "settings preserves 64 bit epoch");
+
+    firefly::SettingsCommand alarm{};
+    alarm.type = firefly::SettingsCommandType::SaveAlarm;
+    alarm.slot = 1;
+    alarm.alarm.configured = true;
+    alarm.alarm.hour = 7;
+    alarm.alarm.minute = 30;
+    expect_true(queue.post(alarm), "settings accepts alarm command");
+    expect_true(queue.take(actual) && actual.slot == 1 &&
+                    actual.alarm.minute == 30,
+                "settings preserves fixed alarm payload");
+}
+
 static void test_calendar_month_boundaries() {
     const firefly::CalendarMonth feb_2028 =
         firefly::CalendarModel::buildMonth(2028, 2, 15);
@@ -973,6 +995,7 @@ void setup() {
     test_stopwatch_uses_monotonic_time();
     test_stopwatch_survives_page_visibility_changes();
     test_settings_app_command_queue();
+    test_settings_commands_preserve_time_and_alarm_payloads();
     test_calendar_month_boundaries();
     test_calendar_agenda_truncates_to_eight();
     test_calculator_engine_basic_operations();

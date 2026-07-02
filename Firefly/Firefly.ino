@@ -263,13 +263,14 @@ void alarm_slot_switch_cb(lv_event_t * e) {
 
     FireflyAlarm updated = firefly_alarms[slot];
     updated.enabled = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-    if(!alarm_service.set(slot, service_alarm_from_legacy(updated))) {
-        return;
+    firefly::SettingsCommand command{};
+    command.type = firefly::SettingsCommandType::SaveAlarm;
+    command.slot = slot;
+    command.alarm = service_alarm_from_legacy(updated);
+    if(!settings_app.postCommand(command)) {
+        ++settings_command_failures;
+        refresh_sound_alarm_ui();
     }
-    firefly_alarms[slot] = updated;
-    save_alarm_preferences();
-    clear_alarm_trigger_history();
-    refresh_sound_alarm_ui();
 }
 
 void alarm_editor_cancel_cb(lv_event_t * e) {
@@ -300,15 +301,14 @@ void alarm_editor_confirm_cb(lv_event_t * e) {
     strncpy(updated.name, name.c_str(), sizeof(updated.name) - 1U);
     updated.name[sizeof(updated.name) - 1U] = '\0';
 
-    if(!alarm_service.set(static_cast<uint8_t>(active_alarm_editor_slot),
-                          service_alarm_from_legacy(updated))) {
+    firefly::SettingsCommand command{};
+    command.type = firefly::SettingsCommandType::SaveAlarm;
+    command.slot = static_cast<uint8_t>(active_alarm_editor_slot);
+    command.alarm = service_alarm_from_legacy(updated);
+    if(!settings_app.postCommand(command)) {
+        ++settings_command_failures;
         return;
     }
-    firefly_alarms[active_alarm_editor_slot] = updated;
-
-    save_alarm_preferences();
-    clear_alarm_trigger_history();
-    refresh_sound_alarm_ui();
     hide_alarm_editor();
 }
 
@@ -374,25 +374,21 @@ void save_time_from_rollers(lv_event_t * e) {
     selected_time.tm_min = minute;
     selected_time.tm_isdst = -1;
     const time_t epoch_seconds = mktime(&selected_time);
-    if(epoch_seconds >= 0 && time_service.setLocalTime(epoch_seconds)) {
-        sync_time_to_system_from_epoch(epoch_seconds);
+    firefly::SettingsCommand command{};
+    command.type = firefly::SettingsCommandType::SetLocalTime;
+    command.value = static_cast<int64_t>(epoch_seconds);
+    if(epoch_seconds < 0 || !settings_app.postCommand(command)) {
+        ++settings_command_failures;
+        return;
     }
-    clear_alarm_trigger_history();
-    update_time_cb(NULL);
     set_settings_subpage(NULL);
 }
 
 void load_time_from_rtc(lv_event_t * e) {
     LV_UNUSED(e);
-    const firefly::TimeSnapshot snapshot = time_service.reloadRtc();
-    if(!snapshot.valid) {
-        return;
-    }
-
-    sync_time_to_system_from_epoch(snapshot.epoch_seconds);
-    clear_alarm_trigger_history();
-    load_time_rollers_from_current();
-    update_time_cb(NULL);
+    firefly::SettingsCommand command{};
+    command.type = firefly::SettingsCommandType::ReloadRtc;
+    if(!settings_app.postCommand(command)) ++settings_command_failures;
 }
 
 void dismiss_alarm_cb(lv_event_t * e) {
@@ -408,19 +404,29 @@ void close_sleep_screen_cb(lv_event_t * e) {
 }
 
 void slider_volume_cb(lv_event_t * e) {
-    volume_level = (uint8_t)lv_slider_get_value(lv_event_get_target(e));
-    save_volume_preference();
-    refresh_sound_alarm_ui();
+    firefly::SettingsCommand command{
+        firefly::SettingsCommandType::SetVolume,
+        lv_slider_get_value(lv_event_get_target(e))
+    };
+    if(!settings_app.postCommand(command)) ++settings_command_failures;
 }
 
 void slider_brightness_cb(lv_event_t * e) {
-    set_screen_brightness_level((uint8_t)lv_slider_get_value(lv_event_get_target(e)));
+    firefly::SettingsCommand command{
+        firefly::SettingsCommandType::SetBrightness,
+        lv_slider_get_value(lv_event_get_target(e))
+    };
+    if(!settings_app.postCommand(command)) ++settings_command_failures;
 }
 
 void auto_sleep_cb(lv_event_t * e) {
     static const uint32_t timeouts[] = {0, 15000, 30000, 60000, 120000, 300000};
     const uint16_t selected = lv_roller_get_selected(lv_event_get_target(e));
-    auto_sleep_ms = timeouts[selected];
+    firefly::SettingsCommand command{
+        firefly::SettingsCommandType::SetAutoSleep,
+        timeouts[selected]
+    };
+    if(!settings_app.postCommand(command)) ++settings_command_failures;
 }
 
 } // namespace
@@ -1367,6 +1373,7 @@ void setup(void) {
 void loop() {
     firefly_process_system_events();
     firefly_process_clock_sessions();
+    firefly_process_settings_commands();
     firefly_process_tools_commands();
     update_charging_overlay();
     firefly_report_gate_a_diagnostics();

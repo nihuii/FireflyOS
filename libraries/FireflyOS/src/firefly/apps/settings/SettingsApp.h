@@ -4,6 +4,7 @@
 #include <lvgl.h>
 
 #include "../../core/SystemState.h"
+#include "../../services/AlarmService.h"
 #include "../../services/TimeService.h"
 #include "../../ui/UiComponents.h"
 
@@ -13,16 +14,21 @@ enum class SettingsCommandType : uint8_t {
     None,
     SetBrightness,
     SetVolume,
-    SetLocalTime
+    SetLocalTime,
+    ReloadRtc,
+    SetAutoSleep,
+    SaveAlarm
 };
 
 struct SettingsCommand {
     SettingsCommand() = default;
-    SettingsCommand(SettingsCommandType command_type, int32_t command_value)
+    SettingsCommand(SettingsCommandType command_type, int64_t command_value)
         : type(command_type), value(command_value) {}
 
     SettingsCommandType type = SettingsCommandType::None;
-    int32_t value = 0;
+    int64_t value = 0;
+    uint8_t slot = 0;
+    Alarm alarm{};
 };
 
 class SettingsCommandQueue {

@@ -91,6 +91,7 @@ volatile uint32_t auto_sleep_ms = 30000UL;
 volatile unsigned long last_activity_time = 0;
 volatile unsigned long sleep_entered_at = 0;
 volatile unsigned long charge_overlay_started_at = 0;
+volatile uint32_t settings_command_failures = 0;
 bool alarm_ringing = false;
 volatile bool charging_overlay_visible = false;
 bool charging_last_state = false;

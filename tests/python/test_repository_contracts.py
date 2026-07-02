@@ -224,6 +224,33 @@ class RepositoryContracts(unittest.TestCase):
         self.assertIn("void ClockApp::tick", source)
         self.assertIn("lv_obj_set_size(button, width, 48)", source)
 
+    def test_settings_callbacks_only_post_commands_to_ui_consumer(self):
+        sketch = (ROOT / "Firefly" / "Firefly.ino").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        interaction = (ROOT / "Firefly" / "FireflyInteraction.cpp").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        callback_names = (
+            "alarm_slot_switch_cb",
+            "alarm_editor_confirm_cb",
+            "save_time_from_rollers",
+            "load_time_from_rtc",
+            "slider_volume_cb",
+            "slider_brightness_cb",
+            "auto_sleep_cb",
+        )
+        for index, name in enumerate(callback_names):
+            body = sketch.split(f"void {name}", 1)[1]
+            if index + 1 < len(callback_names):
+                body = body.split(f"void {callback_names[index + 1]}", 1)[0]
+            self.assertIn("settings_app.postCommand", body, name)
+            self.assertNotIn("prefs.put", body, name)
+            self.assertNotIn("save_alarm_preferences", body, name)
+            self.assertNotIn("save_volume_preference", body, name)
+        self.assertIn("void firefly_process_settings_commands()", interaction)
+        self.assertIn("firefly_process_settings_commands();", sketch)
+
 
 if __name__ == "__main__":
     unittest.main()

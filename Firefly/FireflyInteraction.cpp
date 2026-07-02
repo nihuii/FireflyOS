@@ -330,6 +330,19 @@ firefly::Alarm service_alarm_from_legacy(const FireflyAlarm & legacy_alarm) {
     return alarm;
 }
 
+void copy_service_alarm_to_legacy(uint8_t slot,
+                                  const firefly::Alarm & alarm) {
+    if(slot >= FIREFLY_ALARM_SLOT_COUNT) return;
+    FireflyAlarm & legacy = firefly_alarms[slot];
+    legacy.configured = alarm.configured;
+    legacy.enabled = alarm.enabled;
+    legacy.hour = alarm.hour;
+    legacy.minute = alarm.minute;
+    legacy.days_mask = alarm.days_mask;
+    legacy.ringtone_index = alarm.ringtone;
+    strlcpy(legacy.name, alarm.name, sizeof(legacy.name));
+}
+
 void sync_alarm_service_from_legacy() {
     for(uint8_t slot = 0; slot < FIREFLY_ALARM_SLOT_COUNT; ++slot) {
         alarm_service.set(slot, service_alarm_from_legacy(firefly_alarms[slot]));
@@ -1117,6 +1130,58 @@ void firefly_process_clock_sessions() {
     }
 }
 
+void firefly_process_settings_commands() {
+    firefly::SettingsCommand command{};
+    while(settings_app.takeCommand(command)) {
+        switch(command.type) {
+            case firefly::SettingsCommandType::SetBrightness:
+                set_screen_brightness_level(static_cast<uint8_t>(
+                    command.value < 0 ? 0 :
+                    (command.value > 255 ? 255 : command.value)));
+                break;
+            case firefly::SettingsCommandType::SetVolume:
+                volume_level = static_cast<uint8_t>(
+                    command.value < 0 ? 0 :
+                    (command.value > 100 ? 100 : command.value));
+                save_volume_preference();
+                refresh_sound_alarm_ui();
+                break;
+            case firefly::SettingsCommandType::SetLocalTime:
+                if(command.value >= 0 &&
+                   time_service.setLocalTime(command.value)) {
+                    sync_time_to_system_from_epoch(command.value);
+                    clear_alarm_trigger_history();
+                    update_time_cb(nullptr);
+                }
+                break;
+            case firefly::SettingsCommandType::ReloadRtc: {
+                const firefly::TimeSnapshot snapshot = time_service.reloadRtc();
+                if(snapshot.valid) {
+                    sync_time_to_system_from_epoch(snapshot.epoch_seconds);
+                    clear_alarm_trigger_history();
+                    update_time_cb(nullptr);
+                }
+                break;
+            }
+            case firefly::SettingsCommandType::SetAutoSleep:
+                auto_sleep_ms = static_cast<uint32_t>(
+                    command.value < 0 ? 0 : command.value);
+                break;
+            case firefly::SettingsCommandType::SaveAlarm:
+                if(command.slot < FIREFLY_ALARM_SLOT_COUNT &&
+                   alarm_service.set(command.slot, command.alarm)) {
+                    copy_service_alarm_to_legacy(command.slot, command.alarm);
+                    save_alarm_preferences();
+                    clear_alarm_trigger_history();
+                    refresh_sound_alarm_ui();
+                }
+                break;
+            default:
+                break;
+        }
+    }
+}
+
 void firefly_process_tools_commands() {
     tools_app.tick(millis());
     firefly::ToolsCommand command{};
@@ -1137,13 +1202,14 @@ void firefly_report_gate_a_diagnostics() {
     Serial.printf(
         "FIREFLY_GATE_A uptime_ms=%lu internal_free=%u internal_min=%u "
         "psram_free=%u event_post_failures=%lu event_queue=%u "
-        "desktop_transition_max_ms=%lu\n",
+        "settings_command_failures=%lu desktop_transition_max_ms=%lu\n",
         static_cast<unsigned long>(now),
         ESP.getFreeHeap(),
         ESP.getMinFreeHeap(),
         ESP.getFreePsram(),
         static_cast<unsigned long>(event_post_failures),
         static_cast<unsigned>(system_event_bus.size()),
+        static_cast<unsigned long>(settings_command_failures),
         static_cast<unsigned long>(desktop_transition_max_ms)
     );
 }
