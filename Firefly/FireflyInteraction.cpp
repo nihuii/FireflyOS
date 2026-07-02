@@ -2,6 +2,7 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <esp_timer.h>
 #include <sys/time.h>
 
 firefly::EventBus system_event_bus;
@@ -809,6 +810,17 @@ void dismiss_alarm_alert() {
     ui_shell.closeOverlay(alarm_overlay);
 }
 
+void show_timer_alert() {
+    alarm_ringing = true;
+    if(is_sleeping) exit_sleep_screen_mode();
+    if(alarm_overlay_title) lv_label_set_text(alarm_overlay_title, "Timer");
+    if(alarm_overlay_detail) {
+        lv_label_set_text(alarm_overlay_detail,
+                          "Countdown complete\nTap dismiss to continue");
+    }
+    ui_shell.showOverlay(4, alarm_overlay);
+}
+
 void update_charging_overlay() {
     static unsigned long last_charge_poll_at = 0;
     const unsigned long now = millis();
@@ -1081,9 +1093,27 @@ void firefly_process_system_events() {
             case firefly::EventType::SleepBlackout:
                 apply_sleep_blackout();
                 break;
+            case firefly::EventType::TimerExpired:
+                show_timer_alert();
+                break;
             default:
                 break;
         }
+    }
+}
+
+void firefly_process_clock_sessions() {
+    const uint32_t now_ms = millis();
+    clock_app.tick(now_ms, esp_timer_get_time());
+    if(alarm_ringing || !clock_app.timerExpired(now_ms)) return;
+    const firefly::SystemEvent event{
+        firefly::EventType::TimerExpired,
+        0,
+        now_ms,
+        firefly::EventPriority::Critical
+    };
+    if(system_event_bus.post(event)) {
+        clock_app.consumeTimerExpired(now_ms);
     }
 }
 

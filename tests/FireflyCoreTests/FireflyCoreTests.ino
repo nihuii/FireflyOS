@@ -381,6 +381,32 @@ static void test_countdown_timer_uses_target_time() {
     expect_true(timer.expired(601001), "countdown reports expired after target");
 }
 
+static void test_countdown_pause_resume_and_one_shot_expiry() {
+    firefly::CountdownTimer timer;
+    timer.start(60000, 1000);
+    timer.pause(11000);
+    expect_true(!timer.running() && timer.remainingMs(50000) == 50000,
+                "paused countdown preserves remaining time");
+    timer.resume(20000);
+    expect_true(timer.remainingMs(69999) == 1,
+                "resumed countdown uses a new target");
+    expect_true(timer.consumeExpired(70000),
+                "countdown publishes expiry once");
+    expect_true(!timer.consumeExpired(70001),
+                "countdown expiry is one shot");
+}
+
+static void test_stopwatch_survives_page_visibility_changes() {
+    firefly::StopwatchSession stopwatch;
+    stopwatch.start(1000000);
+    expect_true(stopwatch.elapsedUs(4000000) == 3000000,
+                "stopwatch follows monotonic time without page state");
+    stopwatch.pause(5000000);
+    stopwatch.start(9000000);
+    expect_true(stopwatch.elapsedUs(10000000) == 5000000,
+                "stopwatch resumes accumulated time");
+}
+
 static void test_stopwatch_uses_monotonic_time() {
     firefly::StopwatchSession stopwatch;
     stopwatch.start(1000000LL);
@@ -943,7 +969,9 @@ void setup() {
     test_time_service_invalid_rtc();
     test_time_service_reload_set_and_tick();
     test_countdown_timer_uses_target_time();
+    test_countdown_pause_resume_and_one_shot_expiry();
     test_stopwatch_uses_monotonic_time();
+    test_stopwatch_survives_page_visibility_changes();
     test_settings_app_command_queue();
     test_calendar_month_boundaries();
     test_calendar_agenda_truncates_to_eight();

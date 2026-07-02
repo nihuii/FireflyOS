@@ -1366,6 +1366,7 @@ void setup(void) {
 
 void loop() {
     firefly_process_system_events();
+    firefly_process_clock_sessions();
     firefly_process_tools_commands();
     update_charging_overlay();
     firefly_report_gate_a_diagnostics();

@@ -207,6 +207,23 @@ class RepositoryContracts(unittest.TestCase):
         self.assertIn("updateDots", source)
         self.assertIn("LV_EVENT_VALUE_CHANGED", source)
 
+    def test_clock_app_exposes_interactive_timer_and_stopwatch_pages(self):
+        header = (ROOT / "libraries" / "FireflyOS" / "src" / "firefly" /
+                  "apps" / "clock" / "ClockApp.h").read_text(encoding="utf-8")
+        source = (ROOT / "libraries" / "FireflyOS" / "src" / "firefly" /
+                  "apps" / "clock" / "ClockApp.cpp").read_text(encoding="utf-8")
+        for symbol in (
+            "timerPresetEvent",
+            "timerToggleEvent",
+            "timerResetEvent",
+            "stopwatchToggleEvent",
+            "stopwatchResetEvent",
+            "consumeTimerExpired",
+        ):
+            self.assertIn(symbol, header + source)
+        self.assertIn("void ClockApp::tick", source)
+        self.assertIn("lv_obj_set_size(button, width, 48)", source)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -174,6 +174,7 @@ void dismiss_alarm_alert();
 void update_charging_overlay();
 void build_firefly_os();
 void firefly_process_system_events();
+void firefly_process_clock_sessions();
 void firefly_process_tools_commands();
 void firefly_report_gate_a_diagnostics();
 void start_firefly_background_task();
