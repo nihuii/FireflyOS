@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>FireflyOS 计划 3 · 时钟与设置预览</title>
+  <title>FireflyOS 计划 3 · 核心应用预览</title>
   <style>
     :root {
       color-scheme: dark;
@@ -337,24 +337,136 @@
       top:328px;
       display:grid;
       grid-template-columns:repeat(4, 1fr);
-      gap:9px;
+      gap:4px;
     }
     .key {
-      min-height:48px;
-      border-radius:17px;
+      min-height:46px;
+      border-radius:12px;
       display:grid;
       place-items:center;
       color:var(--text);
       font-weight:800;
     }
+    .key.equals {
+      grid-column:1 / -1;
+      color:#04110e;
+      background:linear-gradient(135deg,var(--primary),var(--secondary));
+      border-color:transparent;
+    }
+
+    .calendar-grid {
+      position:absolute;
+      left:28px;
+      right:28px;
+      top:126px;
+      display:grid;
+      grid-template-columns:repeat(7, 1fr);
+      gap:7px;
+    }
+
+    .calendar-cell {
+      min-height:34px;
+      border-radius:13px;
+      display:grid;
+      place-items:center;
+      color:var(--text);
+      background:rgba(13,23,29,.62);
+      border:1px solid rgba(37,69,75,.70);
+      font-size:13px;
+      font-weight:800;
+    }
+
+    .calendar-cell.dim { color:var(--dim); background:rgba(13,23,29,.28); }
+    .calendar-cell.today { color:#02110d; background:var(--primary); border-color:transparent; }
+    .agenda-list { position:absolute; left:28px; right:28px; top:344px; display:grid; gap:8px; }
+    .month-nav {
+      position:absolute;
+      top:50px;
+      width:48px;
+      height:48px;
+      border-radius:18px;
+      border:1px solid var(--line);
+      background:rgba(13,23,29,.92);
+      color:var(--primary);
+      display:grid;
+      place-items:center;
+      font-size:22px;
+      font-weight:900;
+    }
+    .calc-display {
+      position:absolute;
+      left:28px;
+      right:28px;
+      top:108px;
+      min-height:46px;
+      border-radius:24px;
+      border:1px solid var(--line);
+      background:rgba(13,23,29,.92);
+      display:flex;
+      align-items:center;
+      justify-content:flex-end;
+      padding:0 20px;
+      font-size:26px;
+      font-weight:900;
+      font-family:"Bahnschrift","Segoe UI",sans-serif;
+    }
+
+    .flash-panel {
+      position:absolute;
+      left:28px;
+      right:28px;
+      top:132px;
+      bottom:76px;
+      border-radius:34px;
+      background:#f6fffb;
+      color:#051211;
+      display:grid;
+      place-items:center;
+      text-align:center;
+      padding:28px;
+      box-shadow:0 0 42px rgba(246,255,251,.32);
+    }
+    .flash-start {
+      position:absolute;
+      left:28px;
+      right:28px;
+      top:414px;
+      min-height:56px;
+      border-radius:20px;
+      border:1px solid var(--line);
+      background:rgba(13,23,29,.96);
+      color:var(--primary);
+      display:grid;
+      place-items:center;
+      font-size:14px;
+      font-weight:800;
+    }
+    .watch.flashlight-on {
+      background:#fff;
+      color:#506066;
+      border-color:#d7e3e0;
+      box-shadow:0 0 42px rgba(246,255,251,.32);
+    }
+    .watch.flashlight-on .safe { border-color:rgba(48,64,68,.26); }
+    .flash-close-hint {
+      position:absolute;
+      left:30px;
+      right:30px;
+      bottom:38px;
+      text-align:center;
+      color:#506066;
+      font-size:15px;
+      line-height:1.7;
+      font-weight:700;
+    }
   </style>
 </head>
 <body>
   <header>
-    <h1>计划 3 · 时钟与设置应用预览</h1>
-    <p>目标：在迁移正式 UI 前先确认 ClockApp 与 SettingsApp 的信息结构、410 × 502 圆角屏安全区、以及不小于 48px 的有效触摸区域。</p>
+    <h1>计划 3 · 核心应用预览</h1>
+    <p>目标：在迁移正式 UI 前先确认 ClockApp、SettingsApp、CalendarApp 与 ToolsApp 的信息结构、410 × 502 圆角屏安全区、以及不小于 48px 的有效触摸区域。</p>
     <p>说明：本页是审批用静态预览，正式图标/角色仍为几何占位；不会引入 LVGL v9 概念，也不代表已通过真机交互验收。</p>
-    <span class="note">请审批：时钟首页、双闹钟列表、闹钟编辑、计时器、秒表、时间日期设置、电源设置</span>
+    <span class="note">已覆盖：时钟、闹钟、计时器、秒表、设置、日历、计算器、屏幕手电筒</span>
   </header>
 
   <main>
@@ -540,6 +652,63 @@
         <div class="gesture"></div>
       </div>
       <div class="caption">电源页只展示服务状态和命令入口；实际关屏、亮度和睡眠仍必须由 UI 主循环/系统服务按事件执行。</div>
+    </article>
+
+    <article>
+      <h2>8. 日历月视图</h2>
+      <div class="watch">
+        <div class="status"><span>09:41</span><span class="icons">BLE ▮▮▮ 82%</span></div>
+        <div class="month-nav" style="left:24px;">‹</div>
+        <div class="title" style="left:0;right:0;text-align:center;">2026年07月</div>
+        <div class="month-nav" style="right:24px;">›</div>
+        <div class="subtitle" style="left:80px;right:80px;top:105px;text-align:center;">离线月视图 · 手机同步未连接</div>
+        <div class="calendar-grid">
+          <div class="calendar-cell dim">日</div><div class="calendar-cell dim">一</div><div class="calendar-cell dim">二</div><div class="calendar-cell dim">三</div><div class="calendar-cell dim">四</div><div class="calendar-cell dim">五</div><div class="calendar-cell dim">六</div>
+          <div class="calendar-cell dim">28</div><div class="calendar-cell dim">29</div><div class="calendar-cell dim">30</div><div class="calendar-cell">1</div><div class="calendar-cell today">2</div><div class="calendar-cell">3</div><div class="calendar-cell">4</div>
+          <div class="calendar-cell">5</div><div class="calendar-cell">6</div><div class="calendar-cell">7</div><div class="calendar-cell">8</div><div class="calendar-cell">9</div><div class="calendar-cell">10</div><div class="calendar-cell">11</div>
+          <div class="calendar-cell">12</div><div class="calendar-cell">13</div><div class="calendar-cell">14</div><div class="calendar-cell">15</div><div class="calendar-cell">16</div><div class="calendar-cell">17</div><div class="calendar-cell">18</div>
+          <div class="calendar-cell">19</div><div class="calendar-cell">20</div><div class="calendar-cell">21</div><div class="calendar-cell">22</div><div class="calendar-cell">23</div><div class="calendar-cell">24</div><div class="calendar-cell">25</div>
+          <div class="calendar-cell">26</div><div class="calendar-cell">27</div><div class="calendar-cell">28</div><div class="calendar-cell">29</div><div class="calendar-cell">30</div><div class="calendar-cell">31</div><div class="calendar-cell dim">1</div>
+        </div>
+        <div class="agenda-list">
+          <div class="row"><div class="icon">↺</div><div><strong>最近同步：无</strong><small>最多保留 8 条手机摘要；断连后显示缓存时间</small></div></div>
+          <div class="row"><div class="icon" style="color:var(--violet);">•</div><div><strong>暂无同步日程</strong><small>手表端首版不编辑复杂日程</small></div></div>
+        </div>
+        <div class="safe"></div>
+        <div class="gesture"></div>
+      </div>
+      <div class="caption">CalendarApp 离线生成 42 格月视图；星期列从周日开始，摘要固定最多 8 条，不依赖手机也能打开。</div>
+    </article>
+
+    <article>
+      <h2>9. 计算器</h2>
+      <div class="watch">
+        <div class="status"><span>09:41</span><span class="icons">BLE ▮▮▮ 82%</span></div>
+        <div class="title">计算器</div>
+        <div class="subtitle">固定缓冲区 · 24 字符表达式</div>
+        <div class="calc-display">12.5+3</div>
+        <div class="keypad" style="top:158px;">
+          <div class="key">7</div><div class="key">8</div><div class="key">9</div><div class="key" style="color:var(--primary);">÷</div>
+          <div class="key">4</div><div class="key">5</div><div class="key">6</div><div class="key" style="color:var(--primary);">×</div>
+          <div class="key">1</div><div class="key">2</div><div class="key">3</div><div class="key" style="color:var(--primary);">−</div>
+          <div class="key" style="color:var(--danger);">C</div><div class="key">0</div><div class="key">.</div><div class="key" style="color:var(--primary);">+</div>
+          <div class="key equals">=</div>
+        </div>
+        <div class="flash-start">屏幕手电筒 · 点击开启（最长 60 秒）</div>
+        <div class="touch-note" style="right:34px;top:432px;">48+</div>
+        <div class="safe"></div>
+        <div class="gesture"></div>
+      </div>
+      <div class="caption">17 个交互键均提供至少 48px 有效触控区域；计算器只支持加减乘除和小数，固定缓冲区解析，不执行脚本或函数。</div>
+    </article>
+
+    <article>
+      <h2>10. 屏幕手电筒</h2>
+      <div class="watch flashlight-on">
+        <div class="flash-close-hint">触摸 / BOOT / PWR 关闭<br>最长 60 秒 · 关闭后恢复原亮度</div>
+        <div class="safe"></div>
+      </div>
+      <div class="caption">手电筒覆盖整个 410 × 502 屏幕；低于 15% 电量或温度超出 0–45°C 时拒绝启动，亮度命令只由 UI 主循环执行。PWR 关闭将在计划 3 的统一输入任务接线后真机验收。</div>
     </article>
   </main>
 </body>

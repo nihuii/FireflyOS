@@ -68,7 +68,9 @@ void apply_sleep_blackout() {
 void wake_sleep_screen_from_blackout();
 
 void run_short_press_action() {
-    if(settings_panel && !lv_obj_has_flag(settings_panel, LV_OBJ_FLAG_HIDDEN)) {
+    if(tools_app.closeFlashlightFromInput()) {
+        return;
+    } else if(settings_panel && !lv_obj_has_flag(settings_panel, LV_OBJ_FLAG_HIDDEN)) {
         if(settings_menu_container && lv_obj_has_flag(settings_menu_container, LV_OBJ_FLAG_HIDDEN)) {
             set_settings_subpage(NULL);
         } else {
@@ -497,8 +499,10 @@ void refresh_runtime_status_ui() {
                            ui_state_store.revision());
     lock_screen.refresh(state);
     home_screen.refresh(state);
+    calendar_app.refresh(state);
     clock_app.refresh(state);
     settings_app.refresh(state);
+    tools_app.refresh(state, screen_brightness, millis());
     notification_center.refresh(state);
     ui_shell.refresh(state, ui_state_store.revision());
 }
@@ -525,8 +529,10 @@ void refresh_battery_ui() {
     control_center.refresh(state, volume_level, screen_brightness,
                            ui_state_store.revision());
     lock_screen.refresh(state);
+    calendar_app.refresh(state);
     clock_app.refresh(state);
     settings_app.refresh(state);
+    tools_app.refresh(state, screen_brightness, millis());
     ui_shell.refresh(state, ui_state_store.revision());
 }
 
@@ -821,6 +827,16 @@ void firefly_process_system_events() {
                 break;
             default:
                 break;
+        }
+    }
+}
+
+void firefly_process_tools_commands() {
+    tools_app.tick(millis());
+    firefly::ToolsCommand command{};
+    while(tools_app.takeCommand(command)) {
+        if(command.type == firefly::ToolsCommandType::SetBrightness) {
+            set_screen_brightness_level(command.value);
         }
     }
 }

@@ -8,6 +8,8 @@ firefly::Route route_for_app(const char * id) {
     if(!id) return firefly::Route::Home;
     if(strcmp(id, "settings") == 0) return firefly::Route::Settings;
     if(strcmp(id, "clock") == 0) return firefly::Route::Clock;
+    if(strcmp(id, "calendar") == 0) return firefly::Route::Calendar;
+    if(strcmp(id, "tools") == 0) return firefly::Route::Tools;
     if(strcmp(id, "activity") == 0) return firefly::Route::Activity;
     if(strcmp(id, "weather") == 0) return firefly::Route::Weather;
     if(strcmp(id, "music") == 0) return firefly::Route::Music;
@@ -36,7 +38,9 @@ const char * title_for_route(firefly::Route route) {
 void handle_shell_route(firefly::Route previous, firefly::Route current) {
     LV_UNUSED(previous);
     close_settings_panel();
+    calendar_app.hide();
     clock_app.hide();
+    tools_app.hide();
     app_shell_screen.hide();
 
     if(current == firefly::Route::Lock) {
@@ -56,6 +60,18 @@ void handle_shell_route(firefly::Route previous, firefly::Route current) {
         clock_app.refresh(ui_state_store.snapshot());
         clock_app.show();
         ui_shell.bringAppToFront(clock_app.root());
+        return;
+    }
+    if(current == firefly::Route::Calendar) {
+        calendar_app.refresh(ui_state_store.snapshot());
+        calendar_app.show();
+        ui_shell.bringAppToFront(calendar_app.root());
+        return;
+    }
+    if(current == firefly::Route::Tools) {
+        tools_app.refresh(ui_state_store.snapshot(), screen_brightness, millis());
+        tools_app.show();
+        ui_shell.bringAppToFront(tools_app.root());
         return;
     }
 
@@ -546,6 +562,8 @@ void build_firefly_os() {
 
     if(ui_app_registry.count() == 0) {
         ui_app_registry.add({"clock", "Clock", 0});
+        ui_app_registry.add({"calendar", "Calendar", 0});
+        ui_app_registry.add({"tools", "Tools", 0});
         ui_app_registry.add({"activity", "Activity", 0});
         ui_app_registry.add({"weather", "Weather", 0});
         ui_app_registry.add({"music", "Music", 0});
@@ -560,6 +578,8 @@ void build_firefly_os() {
     app_shell_screen.create(ui_shell.appHost(), ui_tokens);
     static firefly::UiComponents app_components;
     clock_app.create(ui_shell.appHost(), app_components, time_service, alarm_service);
+    calendar_app.create(ui_shell.appHost(), app_components);
+    tools_app.create(ui_shell.appHost(), app_components);
     ui_shell.setRouteHandler(handle_shell_route);
 
     notif_panel = lv_obj_create(ui_shell.panelHost());
@@ -1318,6 +1338,7 @@ void setup(void) {
 
 void loop() {
     firefly_process_system_events();
+    firefly_process_tools_commands();
     update_charging_overlay();
     firefly_report_gate_a_diagnostics();
 

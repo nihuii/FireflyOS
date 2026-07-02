@@ -1,7 +1,10 @@
 #include <Arduino.h>
 #include <FireflyOS.h>
+#include <string.h>
 #include <firefly/apps/clock/ClockApp.h>
+#include <firefly/apps/calendar/CalendarApp.h>
 #include <firefly/apps/settings/SettingsApp.h>
+#include <firefly/apps/tools/ToolsApp.h>
 #include <firefly/services/AlarmService.h>
 #include <firefly/services/TimeService.h>
 
@@ -383,6 +386,179 @@ static void test_settings_app_command_queue() {
     expect_true(!queue.take(command), "settings command queue drains");
 }
 
+static void test_calendar_month_boundaries() {
+    const firefly::CalendarMonth feb_2028 =
+        firefly::CalendarModel::buildMonth(2028, 2, 15);
+    expect_true(feb_2028.year == 2028 && feb_2028.month == 2,
+                "calendar keeps requested month");
+    expect_true(feb_2028.days_in_month == 29, "calendar handles leap february");
+    expect_true(feb_2028.first_weekday == 2, "calendar maps Tuesday start");
+    expect_true(feb_2028.cells[2].day == 1 && feb_2028.cells[2].in_current_month,
+                "calendar places first day after sunday slots");
+
+    const firefly::CalendarMonth sunday_start =
+        firefly::CalendarModel::buildMonth(2026, 2, 1);
+    expect_true(sunday_start.first_weekday == 0,
+                "calendar uses sunday as first column");
+    expect_true(sunday_start.cells[0].day == 1 && sunday_start.cells[0].today,
+                "calendar marks today in sunday slot");
+
+    const firefly::CalendarMonth next_year =
+        firefly::CalendarModel::shiftMonth(2027, 12, 1);
+    expect_true(next_year.year == 2028 && next_year.month == 1,
+                "calendar rolls december to january");
+    const firefly::CalendarMonth previous_year =
+        firefly::CalendarModel::shiftMonth(2028, 1, -1);
+    expect_true(previous_year.year == 2027 && previous_year.month == 12,
+                "calendar rolls january to december");
+}
+
+static void test_calendar_agenda_truncates_to_eight() {
+    firefly::CalendarAgendaCache agenda;
+    firefly::CalendarSummary summaries[10]{};
+    for(uint8_t i = 0; i < 10; ++i) {
+        summaries[i].valid = true;
+        summaries[i].start_epoch = 1800000000LL + i;
+        snprintf(summaries[i].title, sizeof(summaries[i].title),
+                 "Event %u", static_cast<unsigned>(i + 1U));
+    }
+
+    agenda.setSummaries(summaries, 10, 1800001234LL);
+    expect_true(agenda.count() == firefly::CalendarAgendaCache::kMaxSummaries,
+                "calendar agenda caps summaries");
+    expect_true(strcmp(agenda.at(7).title, "Event 8") == 0,
+                "calendar agenda preserves first eight summaries");
+    expect_true(agenda.lastUpdatedEpoch() == 1800001234LL,
+                "calendar agenda stores sync timestamp");
+}
+
+static void test_calculator_engine_basic_operations() {
+    firefly::CalculatorEngine calculator;
+    expect_true(calculator.setExpression("12.5+3.5"),
+                "calculator accepts decimal expression");
+    expect_true(calculator.evaluate(), "calculator evaluates addition");
+    expect_true(strcmp(calculator.display(), "16") == 0,
+                "calculator trims trailing zeroes");
+
+    calculator.clear();
+    expect_true(calculator.setExpression("-6*2"),
+                "calculator accepts negative first operand");
+    expect_true(calculator.evaluate(), "calculator evaluates multiplication");
+    expect_true(strcmp(calculator.display(), "-12") == 0,
+                "calculator shows negative result");
+
+    calculator.clear();
+    expect_true(calculator.setExpression("7/2"), "calculator accepts division");
+    expect_true(calculator.evaluate(), "calculator evaluates division");
+    expect_true(strcmp(calculator.display(), "3.5") == 0,
+                "calculator keeps decimal result");
+}
+
+static void test_calculator_engine_limits_and_errors() {
+    firefly::CalculatorEngine calculator;
+    expect_true(!calculator.setExpression("1234567890123456789012345"),
+                "calculator rejects expressions over 24 chars");
+    expect_true(calculator.setExpression("4/0"), "calculator accepts divide expression");
+    expect_true(!calculator.evaluate(), "calculator rejects divide by zero");
+    expect_true(strcmp(calculator.display(), "无法除以零") == 0,
+                "calculator reports divide by zero");
+    calculator.clear();
+    expect_true(strcmp(calculator.display(), "0") == 0,
+                "calculator clear resets display");
+
+    expect_true(calculator.setExpression("1000000000*9"),
+                "calculator accepts large visible result");
+    expect_true(calculator.evaluate(), "calculator evaluates large result");
+    expect_true(strlen(calculator.display()) <= firefly::CalculatorEngine::kMaxDisplayChars,
+                "calculator display fits visible limit");
+}
+
+static void test_calculator_key_input_flow() {
+    firefly::CalculatorEngine calculator;
+    expect_true(calculator.inputKey("1"), "calculator accepts first key");
+    expect_true(calculator.inputKey("2"), "calculator appends digit key");
+    expect_true(calculator.inputKey("."), "calculator accepts decimal key");
+    expect_true(calculator.inputKey("5"), "calculator appends decimal digit");
+    expect_true(calculator.inputKey("+"), "calculator accepts operator key");
+    expect_true(calculator.inputKey("3"), "calculator accepts rhs key");
+    expect_true(strcmp(calculator.display(), "12.5+3") == 0,
+                "calculator displays expression while editing");
+    expect_true(calculator.inputKey("="), "calculator evaluates equals key");
+    expect_true(strcmp(calculator.display(), "15.5") == 0,
+                "calculator displays key-entered result");
+    expect_true(calculator.inputKey("C"), "calculator clear key succeeds");
+    expect_true(strcmp(calculator.display(), "0") == 0,
+                "calculator clear key resets display");
+}
+
+static void test_tools_command_queue_is_fixed_fifo() {
+    firefly::ToolsCommandQueue queue;
+    for(uint8_t i = 0; i < firefly::ToolsCommandQueue::kCapacity; ++i) {
+        expect_true(queue.post({firefly::ToolsCommandType::SetBrightness,
+                                static_cast<uint8_t>(20U + i)}),
+                    "tools queue accepts command within capacity");
+    }
+    expect_true(!queue.post({firefly::ToolsCommandType::SetBrightness, 255}),
+                "tools queue rejects overflow");
+
+    firefly::ToolsCommand command{};
+    expect_true(queue.take(command), "tools queue returns first command");
+    expect_true(command.type == firefly::ToolsCommandType::SetBrightness &&
+                    command.value == 20,
+                "tools queue preserves FIFO order");
+    for(uint8_t i = 1; i < firefly::ToolsCommandQueue::kCapacity; ++i) {
+        expect_true(queue.take(command), "tools queue drains queued command");
+    }
+    expect_true(!queue.take(command), "tools queue reports empty state");
+}
+
+static void test_flashlight_session_policy() {
+    firefly::FlashlightSession flashlight;
+    const firefly::FlashlightPowerState ok{50, 30, true};
+    expect_true(flashlight.start(ok, 1000, 72), "flashlight starts when safe");
+    expect_true(flashlight.active(60999), "flashlight remains active before limit");
+    expect_true(!flashlight.active(61001), "flashlight stops after sixty seconds");
+    expect_true(flashlight.originalBrightness() == 72,
+                "flashlight remembers original brightness");
+
+    flashlight.stop();
+    const firefly::FlashlightPowerState low{14, 30, true};
+    expect_true(!flashlight.start(low, 2000, 90),
+                "flashlight rejects low battery");
+    const firefly::FlashlightPowerState hot{80, 50, true};
+    expect_true(!flashlight.start(hot, 2000, 90),
+                "flashlight rejects unsafe temperature");
+
+    expect_true(flashlight.start(ok, 3000, 128),
+                "flashlight restarts after safe state");
+    flashlight.closeFromUser();
+    expect_true(!flashlight.active(3001), "flashlight closes from input");
+}
+
+static void test_flashlight_controller_posts_brightness_commands() {
+    firefly::FlashlightController controller;
+    const firefly::FlashlightPowerState safe{80, 28, true};
+    expect_true(controller.start(safe, 1000, 96),
+                "flashlight controller starts safe session");
+
+    firefly::ToolsCommand command{};
+    expect_true(controller.takeCommand(command),
+                "flashlight start posts brightness command");
+    expect_true(command.type == firefly::ToolsCommandType::SetBrightness &&
+                    command.value == 255,
+                "flashlight start requests maximum brightness");
+    expect_true(!controller.tick(60999),
+                "flashlight controller stays active before timeout");
+    expect_true(controller.tick(61000),
+                "flashlight controller closes at timeout");
+    expect_true(controller.takeCommand(command),
+                "flashlight timeout posts restore command");
+    expect_true(command.value == 96,
+                "flashlight restores original brightness");
+    expect_true(!controller.stop(),
+                "flashlight controller does not restore twice");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -406,6 +582,14 @@ void setup() {
     test_countdown_timer_uses_target_time();
     test_stopwatch_uses_monotonic_time();
     test_settings_app_command_queue();
+    test_calendar_month_boundaries();
+    test_calendar_agenda_truncates_to_eight();
+    test_calculator_engine_basic_operations();
+    test_calculator_engine_limits_and_errors();
+    test_calculator_key_input_flow();
+    test_tools_command_queue_is_fixed_fifo();
+    test_flashlight_session_policy();
+    test_flashlight_controller_posts_brightness_commands();
     Serial.printf("FIREFLY_TEST_RESULT failures=%u\n", failures);
 }
 

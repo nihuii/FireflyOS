@@ -42,6 +42,8 @@ const char * HomeScreen::symbolFor(const char * id) {
     if(!id) return LV_SYMBOL_DUMMY;
     if(strcmp(id, "settings") == 0) return LV_SYMBOL_SETTINGS;
     if(strcmp(id, "clock") == 0) return LV_SYMBOL_BELL;
+    if(strcmp(id, "calendar") == 0) return LV_SYMBOL_LIST;
+    if(strcmp(id, "tools") == 0) return LV_SYMBOL_SETTINGS;
     if(strcmp(id, "weather") == 0) return LV_SYMBOL_GPS;
     if(strcmp(id, "music") == 0) return LV_SYMBOL_AUDIO;
     if(strcmp(id, "recorder") == 0) return LV_SYMBOL_EDIT;
