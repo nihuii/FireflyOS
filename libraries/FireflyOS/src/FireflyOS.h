@@ -18,6 +18,7 @@
 #include "firefly/hal/I2cBusManager.h"
 #include "firefly/hal/LockedRegisterDevice.h"
 #include "firefly/hal/Qmi8658Device.h"
+#include "firefly/hal/SdCardDevice.h"
 #include "firefly/services/AlarmService.h"
 #include "firefly/services/InputService.h"
 #include "firefly/services/MotionService.h"

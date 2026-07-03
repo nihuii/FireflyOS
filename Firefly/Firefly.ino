@@ -1255,6 +1255,12 @@ void setup(void) {
     gfx->fillScreen(BLACK);
     touch_init(gfx->width(), gfx->height(), gfx->getRotation());
 
+    const bool sd_ready = sd_card.begin();
+    system_capabilities.set(firefly::Capability::Sd, sd_ready);
+    if(!sd_ready) {
+        Serial.println("SD card unavailable; core features remain active.");
+    }
+
     Wire.begin(IIC_SDA, IIC_SCL);
     if(firefly_i2c_bus.lock(250)) {
         if(power.begin(Wire, AXP2101_SLAVE_ADDRESS, IIC_SDA, IIC_SCL)) {
@@ -1375,6 +1381,7 @@ void setup(void) {
 }
 
 void loop() {
+    firefly_process_sd_card();
     firefly_process_system_events();
     firefly_process_clock_sessions();
     firefly_process_settings_commands();

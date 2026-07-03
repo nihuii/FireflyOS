@@ -1148,8 +1148,47 @@ void firefly_process_system_events() {
             case firefly::EventType::TimerExpired:
                 show_timer_alert();
                 break;
+            case firefly::EventType::SdRemoved:
+                Serial.println("SD card unavailable; media features disabled.");
+                break;
             default:
                 break;
+        }
+    }
+}
+
+void firefly_process_sd_card() {
+    static uint32_t last_check_at = 0;
+    static uint32_t last_mount_attempt_at = 0;
+    const uint32_t now = millis();
+
+    if(sd_card.mounted()) {
+        if(last_check_at == 0 || now - last_check_at >= 1000UL) {
+            last_check_at = now;
+            sd_card.validateSession();
+        }
+        if(sd_card.takeRemovedEvent()) {
+            system_capabilities.set(firefly::Capability::Sd, false);
+            post_background_system_event({
+                firefly::EventType::SdRemoved,
+                0,
+                now,
+                firefly::EventPriority::Critical
+            });
+        }
+        return;
+    }
+
+    if(last_mount_attempt_at == 0 || now - last_mount_attempt_at >= 5000UL) {
+        last_mount_attempt_at = now;
+        if(sd_card.begin()) {
+            system_capabilities.set(firefly::Capability::Sd, true);
+            post_background_system_event({
+                firefly::EventType::CapabilityChanged,
+                firefly::capabilityBit(firefly::Capability::Sd),
+                now
+            });
+            Serial.println("SD card mounted at /FireflyOS.");
         }
     }
 }

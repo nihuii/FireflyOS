@@ -16,6 +16,7 @@ enum class EventType : uint8_t {
     ChargingChanged,
     AlarmTriggered,
     TimerExpired,
+    SdRemoved,
     CapabilityChanged,
     AppOpenRequested,
     AppCloseRequested

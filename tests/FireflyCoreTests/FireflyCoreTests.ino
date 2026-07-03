@@ -11,6 +11,7 @@
 #include <firefly/services/PowerService.h>
 #include <firefly/services/StorageService.h>
 #include <firefly/services/TimeService.h>
+#include <firefly/hal/SdCardDevice.h>
 
 static uint16_t failures = 0;
 
@@ -458,6 +459,29 @@ static void test_settings_commands_preserve_time_and_alarm_payloads() {
     expect_true(queue.take(actual) && actual.slot == 1 &&
                     actual.alarm.minute == 30,
                 "settings preserves fixed alarm payload");
+}
+
+static void test_sd_paths_stay_inside_managed_root() {
+    expect_true(firefly::SdCardDevice::isSafeRelativePath("Music/track.wav"),
+                "SD accepts managed relative file");
+    expect_true(firefly::SdCardDevice::isSafeRelativePath("Themes/Firefly/theme.json"),
+                "SD accepts nested managed relative file");
+    expect_true(!firefly::SdCardDevice::isSafeRelativePath("/Music/track.wav"),
+                "SD rejects absolute path");
+    expect_true(!firefly::SdCardDevice::isSafeRelativePath("Music/../Backups/file"),
+                "SD rejects parent traversal");
+    expect_true(!firefly::SdCardDevice::isSafeRelativePath("Music\\track.wav"),
+                "SD rejects backslash traversal");
+}
+
+static void test_sd_removal_requires_two_consecutive_failures() {
+    firefly::SdFailureMonitor monitor;
+    expect_true(!monitor.noteResult(false), "first SD failure is tolerated");
+    expect_true(monitor.noteResult(true) == false,
+                "successful SD access clears failure count");
+    expect_true(!monitor.noteResult(false), "failure count restarts after success");
+    expect_true(monitor.noteResult(false),
+                "second consecutive SD failure reports removal");
 }
 
 static void test_storage_settings_defaults_and_namespaces() {
@@ -1131,6 +1155,8 @@ void setup() {
     test_event_bus_preserves_full_critical_queue();
     test_state_store_revision();
     test_capability_registry();
+    test_sd_paths_stay_inside_managed_root();
+    test_sd_removal_requires_two_consecutive_failures();
     test_app_registry();
     test_lifecycle_and_resource_governor();
     test_app_manager_publishes_requests();
