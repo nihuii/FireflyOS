@@ -533,7 +533,7 @@ static void test_calculator_engine_limits_and_errors() {
                 "calculator rejects expressions over 24 chars");
     expect_true(calculator.setExpression("4/0"), "calculator accepts divide expression");
     expect_true(!calculator.evaluate(), "calculator rejects divide by zero");
-    expect_true(strcmp(calculator.display(), "无法除以零") == 0,
+    expect_true(strcmp(calculator.display(), "Divide by zero") == 0,
                 "calculator reports divide by zero");
     calculator.clear();
     expect_true(strcmp(calculator.display(), "0") == 0,

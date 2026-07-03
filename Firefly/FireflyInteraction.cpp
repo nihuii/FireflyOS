@@ -251,23 +251,23 @@ void ensure_power_menu() {
     lv_obj_add_flag(power_menu_overlay, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t * title = lv_label_create(power_menu_overlay);
-    lv_label_set_text(title, "电源菜单");
+    lv_label_set_text(title, "Power menu");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0xEFFFFB), 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 64);
 
     lv_obj_t * detail = lv_label_create(power_menu_overlay);
-    lv_label_set_text(detail, "PWR 长按唤出 · 请选择操作");
+    lv_label_set_text(detail, "Hold PWR | Choose an action");
     lv_obj_set_style_text_color(detail, lv_color_hex(0x8BA6AA), 0);
     lv_obj_align(detail, LV_ALIGN_TOP_MID, 0, 102);
 
-    create_power_menu_button(power_menu_overlay, "息屏", 152,
+    create_power_menu_button(power_menu_overlay, "Sleep", 152,
                              power_menu_sleep_cb, 0x153238);
-    create_power_menu_button(power_menu_overlay, "重新启动", 220,
+    create_power_menu_button(power_menu_overlay, "Restart", 220,
                              power_menu_restart_cb, 0x244149);
-    create_power_menu_button(power_menu_overlay, "关机", 288,
+    create_power_menu_button(power_menu_overlay, "Shutdown", 288,
                              power_menu_shutdown_cb, 0x5A252B);
-    create_power_menu_button(power_menu_overlay, "取消", 384,
+    create_power_menu_button(power_menu_overlay, "Cancel", 384,
                              power_menu_cancel_cb, 0x162126);
 }
 

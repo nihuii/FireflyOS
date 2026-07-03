@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 
 
@@ -267,6 +268,36 @@ class RepositoryContracts(unittest.TestCase):
         self.assertIn("configure_power_sleep_hooks();", sketch)
         self.assertNotIn("attemptLightSleep", background)
         self.assertNotIn("esp_light_sleep_start", background)
+
+    def test_plan3_labels_match_the_available_ascii_fonts(self):
+        lv_conf = (ROOT / "libraries" / "lv_conf.h").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        cjk_enabled = re.search(
+            r"#define\s+LV_FONT_SIMSUN_16_CJK\s+1\b", lv_conf
+        )
+        generated_fonts = list((ROOT / "Firefly" / "assets" / "fonts").glob("*.c"))
+        if cjk_enabled or generated_fonts:
+            self.skipTest("a firmware CJK font is available")
+
+        sources = (
+            ROOT / "libraries" / "FireflyOS" / "src" / "firefly" /
+            "apps" / "calendar" / "CalendarApp.cpp",
+            ROOT / "libraries" / "FireflyOS" / "src" / "firefly" /
+            "apps" / "tools" / "ToolsApp.cpp",
+            ROOT / "Firefly" / "FireflyInteraction.cpp",
+        )
+        offenders = []
+        for source in sources:
+            text = source.read_text(encoding="utf-8", errors="ignore")
+            for literal in re.findall(r'"(?:\\.|[^"\\])*"', text):
+                if any(ord(character) > 127 for character in literal):
+                    offenders.append(f"{source.relative_to(ROOT)}: {literal}")
+        self.assertFalse(
+            offenders,
+            "Plan 3 firmware labels require unavailable glyphs:\n" +
+            "\n".join(offenders),
+        )
 
 
 if __name__ == "__main__":

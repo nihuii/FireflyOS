@@ -27,7 +27,7 @@ uint8_t clampMonth(uint8_t month) {
 }
 
 const char * weekdayName(uint8_t index) {
-    static const char * names[] = {"日", "一", "二", "三", "四", "五", "六"};
+    static const char * names[] = {"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"};
     return names[index < 7 ? index : 0];
 }
 
@@ -182,7 +182,7 @@ bool CalendarApp::create(lv_obj_t * parent, UiComponents & components) {
     lv_obj_set_width(sync_label_, 250);
     lv_obj_set_style_text_align(sync_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(sync_label_, lv_color_hex(tokens.text_secondary), 0);
-    lv_label_set_text(sync_label_, "离线月视图 · 手机同步未连接");
+    lv_label_set_text(sync_label_, "Offline month | Phone not linked");
     lv_obj_set_pos(sync_label_, 80, 102);
 
     static const uint8_t left = 28;
@@ -280,7 +280,7 @@ void CalendarApp::shiftDisplayedMonth(int8_t delta_months) {
 void CalendarApp::refreshMonthLabels() {
     if(!root_) return;
     char title[32];
-    snprintf(title, sizeof(title), "%d年%02u月",
+    snprintf(title, sizeof(title), "%04d/%02u",
              static_cast<int>(month_.year),
              static_cast<unsigned>(month_.month));
     lv_label_set_text(title_label_, title);
@@ -300,11 +300,11 @@ void CalendarApp::refreshMonthLabels() {
 void CalendarApp::refreshAgendaLabels() {
     if(!root_) return;
     char sync[64];
-    snprintf(sync, sizeof(sync), "最多 8 条摘要 · 最近同步 %lld",
+    snprintf(sync, sizeof(sync), "8 max | Last sync %lld",
              static_cast<long long>(agenda_.lastUpdatedEpoch()));
     lv_label_set_text(sync_label_, agenda_.count() > 0
         ? sync
-        : "离线月视图 · 手机同步未连接");
+        : "Offline month | Phone not linked");
 
     for(uint8_t i = 0; i < CalendarAgendaCache::kMaxSummaries; ++i) {
         if(i < agenda_.count() && agenda_.at(i).valid) {
@@ -313,7 +313,7 @@ void CalendarApp::refreshAgendaLabels() {
                      static_cast<unsigned>(i + 1U), agenda_.at(i).title);
             lv_label_set_text(agenda_labels_[i], line);
         } else {
-            lv_label_set_text(agenda_labels_[i], i == 0 ? "暂无同步日程" : "");
+            lv_label_set_text(agenda_labels_[i], i == 0 ? "No synced events" : "");
         }
     }
 }

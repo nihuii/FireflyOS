@@ -85,7 +85,7 @@ bool CalculatorEngine::evaluate() {
     char * first_end = nullptr;
     const double lhs = strtod(expression_, &first_end);
     if(first_end == expression_) {
-        return setError("错误");
+        return setError("Error");
     }
 
     while(*first_end == ' ') ++first_end;
@@ -95,7 +95,7 @@ bool CalculatorEngine::evaluate() {
         return true;
     }
     if(op != '+' && op != '-' && op != '*' && op != '/') {
-        return setError("错误");
+        return setError("Error");
     }
 
     const char * rhs_start = first_end + 1;
@@ -103,11 +103,11 @@ bool CalculatorEngine::evaluate() {
     char * second_end = nullptr;
     const double rhs = strtod(rhs_start, &second_end);
     if(second_end == rhs_start) {
-        return setError("错误");
+        return setError("Error");
     }
     while(*second_end == ' ') ++second_end;
     if(*second_end != '\0') {
-        return setError("错误");
+        return setError("Error");
     }
 
     double result = 0.0;
@@ -117,12 +117,12 @@ bool CalculatorEngine::evaluate() {
         case '*': result = lhs * rhs; break;
         case '/':
             if(fabs(rhs) < 0.000001) {
-                return setError("无法除以零");
+                return setError("Divide by zero");
             }
             result = lhs / rhs;
             break;
         default:
-            return setError("错误");
+            return setError("Error");
     }
 
     formatResult(result);
@@ -135,13 +135,13 @@ void CalculatorEngine::clear() {
 }
 
 bool CalculatorEngine::setError(const char * text) {
-    strlcpy(display_, text ? text : "错误", sizeof(display_));
+    strlcpy(display_, text ? text : "Error", sizeof(display_));
     return false;
 }
 
 void CalculatorEngine::formatResult(double value) {
     if(isnan(value) || isinf(value)) {
-        setError("错误");
+        setError("Error");
         return;
     }
     snprintf(display_, sizeof(display_), "%.6f", value);
@@ -257,12 +257,12 @@ bool ToolsApp::create(lv_obj_t * parent, UiComponents & components) {
     lv_obj_t * title = lv_label_create(root_);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(tokens.text_primary), 0);
-    lv_label_set_text(title, "计算器");
+    lv_label_set_text(title, "Calculator");
     lv_obj_set_pos(title, 28, 48);
 
     lv_obj_t * subtitle = lv_label_create(root_);
     lv_obj_set_style_text_color(subtitle, lv_color_hex(tokens.text_secondary), 0);
-    lv_label_set_text(subtitle, "固定缓冲区 · 基础四则运算");
+    lv_label_set_text(subtitle, "Fixed buffer | basic math");
     lv_obj_set_pos(subtitle, 30, 80);
 
     lv_obj_t * calculator_card = UiComponents::createCard(root_, tokens);
@@ -279,8 +279,8 @@ bool ToolsApp::create(lv_obj_t * parent, UiComponents & components) {
     lv_obj_set_pos(calculator_display_label_, 8, 10);
 
     static const char * keys[] = {
-        "7", "8", "9", "÷",
-        "4", "5", "6", "×",
+        "7", "8", "9", "/",
+        "4", "5", "6", "*",
         "1", "2", "3", "-",
         "C", "0", ".", "+",
         "="
@@ -323,7 +323,7 @@ bool ToolsApp::create(lv_obj_t * parent, UiComponents & components) {
     lv_obj_set_style_text_align(flashlight_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(flashlight_label_,
                                 lv_color_hex(tokens.firefly_primary), 0);
-    lv_label_set_text(flashlight_label_, "屏幕手电筒 · 检查电源状态");
+    lv_label_set_text(flashlight_label_, "Screen flashlight | Check power");
     lv_obj_center(flashlight_label_);
 
     battery_label_ = lv_label_create(root_);
@@ -331,7 +331,7 @@ bool ToolsApp::create(lv_obj_t * parent, UiComponents & components) {
     lv_obj_set_style_text_align(battery_label_, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_color(battery_label_,
                                 lv_color_hex(tokens.text_secondary), 0);
-    lv_label_set_text(battery_label_, "电源状态：未知");
+    lv_label_set_text(battery_label_, "Power unknown");
     lv_obj_set_pos(battery_label_, 196, 54);
 
     flashlight_overlay_ = lv_obj_create(root_);
@@ -350,7 +350,7 @@ bool ToolsApp::create(lv_obj_t * parent, UiComponents & components) {
     lv_obj_set_width(close_hint, 350);
     lv_obj_set_style_text_align(close_hint, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(close_hint, lv_color_hex(0x506066), 0);
-    lv_label_set_text(close_hint, "触摸 / BOOT / PWR 关闭\n最长 60 秒");
+    lv_label_set_text(close_hint, "Tap / BOOT / PWR to close\n60s max");
     lv_obj_align(close_hint, LV_ALIGN_BOTTOM_MID, 0, -38);
     lv_obj_add_flag(flashlight_overlay_, LV_OBJ_FLAG_HIDDEN);
 
@@ -424,8 +424,6 @@ void ToolsApp::handleCalculatorKey(lv_obj_t * button) {
     if(!button) return;
     lv_obj_t * label = lv_obj_get_child(button, 0);
     const char * key = label ? lv_label_get_text(label) : nullptr;
-    if(key && strcmp(key, "×") == 0) key = "*";
-    if(key && strcmp(key, "÷") == 0) key = "/";
     calculator_.inputKey(key);
     if(calculator_display_label_) {
         lv_label_set_text(calculator_display_label_, calculator_.display());
@@ -460,10 +458,10 @@ void ToolsApp::refreshStatusLabels(const SystemState & state) {
     if(!battery_label_ || !flashlight_label_) return;
 
     if(!state.battery.valid) {
-        lv_label_set_text(battery_label_, "电源状态：未知");
+        lv_label_set_text(battery_label_, "Power unknown");
     } else {
         char battery[48];
-        snprintf(battery, sizeof(battery), "电量 %d%% · 温度 %d°C",
+        snprintf(battery, sizeof(battery), "BAT %d%% | %dC",
                  static_cast<int>(state.battery.percent),
                  static_cast<int>(state.battery.temperature_c));
         lv_label_set_text(battery_label_, battery);
@@ -474,12 +472,12 @@ void ToolsApp::refreshStatusLabels(const SystemState & state) {
         static_cast<int8_t>(state.battery.temperature_c),
         state.battery.valid);
     if(flashlight_controller_.session().running()) {
-        lv_label_set_text(flashlight_label_, "手电筒已开启 · 触摸白屏关闭");
+        lv_label_set_text(flashlight_label_, "Flashlight on | Tap white screen");
     } else {
         lv_label_set_text(flashlight_label_,
                           flashlight_controller_.session().canStart(power_state)
-                              ? "屏幕手电筒 · 点击开启（最长 60 秒）"
-                              : "手电筒保护中 · 电量/温度不可用");
+                              ? "Screen flashlight | Tap (60s max)"
+                              : "Flashlight locked | Check power");
     }
 }
 
