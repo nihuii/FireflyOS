@@ -141,6 +141,8 @@ void restore_verified_light_sleep() {
 firefly::PowerMode evaluate_runtime_power_mode(unsigned long now) {
     const unsigned long last_activity = last_activity_time;
     const uint32_t auto_sleep = auto_sleep_ms;
+    const firefly::SystemState state = ui_state_store.snapshot();
+    power_service.setBatteryState(state.battery);
 
     if(power_menu_visible) {
         runtime_power_mode = firefly::PowerMode::Active;
@@ -816,7 +818,6 @@ void set_settings_subpage(lv_obj_t * page) {
 
 void refresh_runtime_status_ui() {
     const firefly::BatteryState battery = firefly_board.readBattery();
-    power_service.setBatteryState(battery);
     ui_state_store.setBattery(battery);
     const firefly::SystemState state = ui_state_store.snapshot();
     control_center.refresh(state, volume_level, screen_brightness,
@@ -834,7 +835,6 @@ void refresh_runtime_status_ui() {
 
 void refresh_battery_ui() {
     const firefly::BatteryState battery = firefly_board.readBattery();
-    power_service.setBatteryState(battery);
     const int battery_percent = battery.percent;
     const char * battery_symbol = battery_symbol_for_percent(battery_percent);
     const lv_color_t battery_color = battery_color_for_percent(battery_percent);

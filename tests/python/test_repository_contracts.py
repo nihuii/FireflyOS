@@ -269,6 +269,17 @@ class RepositoryContracts(unittest.TestCase):
         self.assertNotIn("attemptLightSleep", background)
         self.assertNotIn("esp_light_sleep_start", background)
 
+    def test_power_service_battery_snapshot_has_one_cross_core_owner(self):
+        interaction = (ROOT / "Firefly" / "FireflyInteraction.cpp").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        evaluator = interaction.split(
+            "firefly::PowerMode evaluate_runtime_power_mode", 1
+        )[1].split("void apply_sleep_blackout", 1)[0]
+        self.assertIn("ui_state_store.snapshot()", evaluator)
+        self.assertIn("power_service.setBatteryState(state.battery)", evaluator)
+        self.assertEqual(interaction.count("power_service.setBatteryState("), 1)
+
     def test_plan3_labels_match_the_available_ascii_fonts(self):
         lv_conf = (ROOT / "libraries" / "lv_conf.h").read_text(
             encoding="utf-8", errors="ignore"
