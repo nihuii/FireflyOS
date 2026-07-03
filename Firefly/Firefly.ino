@@ -1282,6 +1282,7 @@ void setup(void) {
     } else {
         Serial.println("QMI8658 initialized at address 0x6B.");
     }
+    configure_power_sleep_hooks();
 
     prefs.begin(UI_PREF_NAMESPACE, false);
     load_sound_alarm_preferences();
@@ -1374,6 +1375,7 @@ void loop() {
     firefly_process_system_events();
     firefly_process_clock_sessions();
     firefly_process_settings_commands();
+    firefly_process_power_policy();
     firefly_process_tools_commands();
     update_charging_overlay();
     firefly_report_gate_a_diagnostics();

@@ -177,9 +177,11 @@ void build_firefly_os();
 void firefly_process_system_events();
 void firefly_process_clock_sessions();
 void firefly_process_settings_commands();
+void firefly_process_power_policy();
 void firefly_process_tools_commands();
 void firefly_report_gate_a_diagnostics();
 void start_firefly_background_task();
+void configure_power_sleep_hooks();
 void init_default_settings_theme();
 void init_settings_theme_from_wallpaper(const lv_img_dsc_t * wallpaper);
 

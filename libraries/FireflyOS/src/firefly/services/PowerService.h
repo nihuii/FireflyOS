@@ -55,6 +55,13 @@ struct SleepHooks {
     void (*restore)();
 };
 
+enum class SleepAttemptResult : uint8_t {
+    Entered,
+    GateClosed,
+    PrepareFailed,
+    EnterFailed
+};
+
 class PowerService {
 public:
     static constexpr int16_t kSaverPercent = 25;
@@ -80,6 +87,7 @@ public:
     bool canEnterLightSleep() const;
     bool prepareForLightSleep();
     void restoreFromLightSleep();
+    SleepAttemptResult attemptLightSleep(bool (*enter)());
 
 private:
     static constexpr uint8_t kWakeSourceCount =

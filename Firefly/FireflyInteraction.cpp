@@ -3,6 +3,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_timer.h>
+#include <esp_sleep.h>
 #include <sys/time.h>
 
 firefly::EventBus system_event_bus;
@@ -20,6 +21,9 @@ uint32_t motion_last_saved_at = 0;
 uint32_t motion_last_saved_day = 0;
 uint32_t motion_last_saved_steps = UINT32_MAX;
 uint16_t motion_last_saved_active_minutes = UINT16_MAX;
+volatile firefly::PowerMode runtime_power_mode = firefly::PowerMode::Active;
+bool light_sleep_entered = false;
+bool light_sleep_motion_low_power = false;
 
 uint32_t current_local_day_key() {
     const time_t current_time = time(nullptr);
@@ -71,11 +75,71 @@ bool poll_motion_source(uint32_t now_ms) {
     return motion_service.consumeWristRaise();
 }
 
+bool prepare_verified_light_sleep() {
+    light_sleep_entered = false;
+    persist_motion_summary(true);
+    tools_app.closeFlashlightFromInput();
+    if(firefly_background_task_handle) {
+        vTaskSuspend(firefly_background_task_handle);
+    }
+    if(system_capabilities.has(firefly::Capability::Motion)) {
+        light_sleep_motion_low_power = motion_service.setLowPower(true);
+        if(!light_sleep_motion_low_power) {
+            if(firefly_background_task_handle) {
+                vTaskResume(firefly_background_task_handle);
+            }
+            return false;
+        }
+    }
+    firefly_board.setDisplayBrightness(0);
+    return true;
+}
+
+bool enter_verified_light_sleep() {
+#if defined(FIREFLY_PWR_WAKE_GPIO) && defined(FIREFLY_RTC_WAKE_GPIO)
+    const uint64_t wake_mask =
+        (1ULL << 0) |
+        (1ULL << FIREFLY_PWR_WAKE_GPIO) |
+        (1ULL << FIREFLY_RTC_WAKE_GPIO);
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+    if(esp_sleep_enable_ext1_wakeup(wake_mask,
+                                    ESP_EXT1_WAKEUP_ANY_LOW) != ESP_OK) {
+        return false;
+    }
+    light_sleep_entered = esp_light_sleep_start() == ESP_OK;
+    return light_sleep_entered;
+#else
+    return false;
+#endif
+}
+
+void restore_verified_light_sleep() {
+    if(light_sleep_motion_low_power) {
+        if(!motion_service.setLowPower(false)) {
+            system_capabilities.set(firefly::Capability::Motion, false);
+        }
+        light_sleep_motion_low_power = false;
+    }
+    if(firefly_background_task_handle) {
+        vTaskResume(firefly_background_task_handle);
+    }
+    if(light_sleep_entered) {
+        sleep_display_off = false;
+        sleep_entered_at = millis();
+        ui_state_store.setSleepState(true, false);
+        glance_screen.show();
+        ui_shell.bringAppToFront(sleep_screen);
+        firefly_board.setDisplayBrightness(screen_brightness);
+    }
+    light_sleep_entered = false;
+}
+
 firefly::PowerMode evaluate_runtime_power_mode(unsigned long now) {
     const unsigned long last_activity = last_activity_time;
     const uint32_t auto_sleep = auto_sleep_ms;
 
     if(power_menu_visible) {
+        runtime_power_mode = firefly::PowerMode::Active;
         return firefly::PowerMode::Active;
     }
     if(is_sleeping) {
@@ -83,16 +147,26 @@ firefly::PowerMode evaluate_runtime_power_mode(unsigned long now) {
         if(entered_at == 0) return firefly::PowerMode::Glance;
         power_service.configure({0, 0, 2000});
         power_service.onActivity(entered_at);
-        return power_service.evaluateIdle(now);
+    } else if(!is_on_lockscreen || auto_sleep == 0 || last_activity == 0) {
+        power_service.configure({UINT32_MAX, 0, 0});
+        power_service.onActivity(now);
+    } else {
+        power_service.configure({auto_sleep, 0, 2000});
+        power_service.onActivity(last_activity);
     }
 
-    if(!is_on_lockscreen || auto_sleep == 0 || last_activity == 0) {
+    const firefly::PowerMode evaluated = power_service.evaluate(now);
+    runtime_power_mode = evaluated;
+    if(evaluated == firefly::PowerMode::Charging ||
+       evaluated == firefly::PowerMode::ThermalProtection) {
         return firefly::PowerMode::Active;
     }
-
-    power_service.configure({auto_sleep, 0, 2000});
-    power_service.onActivity(last_activity);
-    return power_service.evaluateIdle(now);
+    if(evaluated == firefly::PowerMode::Saver ||
+       evaluated == firefly::PowerMode::LowBattery ||
+       evaluated == firefly::PowerMode::CriticalBattery) {
+        return power_service.evaluateIdle(now);
+    }
+    return evaluated;
 }
 
 void apply_sleep_blackout() {
@@ -104,6 +178,7 @@ void apply_sleep_blackout() {
     ui_state_store.setSleepState(true, true);
     firefly_board.setDisplayBrightness(0);
     glance_screen.hide();
+    power_service.attemptLightSleep(enter_verified_light_sleep);
 }
 
 void wake_sleep_screen_from_blackout();
@@ -516,6 +591,11 @@ void refresh_sleep_icon(bool advance) {
 }
 
 } // namespace
+
+void configure_power_sleep_hooks() {
+    power_service.setSleepHooks({prepare_verified_light_sleep,
+                                 restore_verified_light_sleep});
+}
 
 void load_motion_summary_preference() {
     if(motion_summary_preference_loaded) return;
@@ -1179,6 +1259,23 @@ void firefly_process_settings_commands() {
             default:
                 break;
         }
+    }
+}
+
+void firefly_process_power_policy() {
+    static uint8_t last_applied_brightness = UINT8_MAX;
+    uint8_t effective_brightness = screen_brightness;
+    const firefly::PowerMode mode = runtime_power_mode;
+    uint8_t cap = UINT8_MAX;
+    if(mode == firefly::PowerMode::Saver) cap = 160;
+    else if(mode == firefly::PowerMode::LowBattery) cap = 96;
+    else if(mode == firefly::PowerMode::CriticalBattery ||
+            mode == firefly::PowerMode::ThermalProtection) cap = 64;
+    if(effective_brightness > cap) effective_brightness = cap;
+
+    if(!sleep_display_off && effective_brightness != last_applied_brightness) {
+        firefly_board.setDisplayBrightness(effective_brightness);
+        last_applied_brightness = effective_brightness;
     }
 }
 

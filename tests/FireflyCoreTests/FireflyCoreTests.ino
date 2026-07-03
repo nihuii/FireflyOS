@@ -763,6 +763,44 @@ static void test_light_sleep_requires_verified_wake_matrix() {
                 "sleep hooks run once around verified lifecycle");
 }
 
+static bool fake_sleep_enter_result = true;
+static uint8_t fake_sleep_enter_calls = 0;
+
+static bool fake_sleep_enter() {
+    ++fake_sleep_enter_calls;
+    return fake_sleep_enter_result;
+}
+
+static void test_light_sleep_attempt_restores_on_success_and_failure() {
+    sleep_prepare_calls = 0;
+    sleep_restore_calls = 0;
+    fake_sleep_enter_calls = 0;
+    firefly::PowerService power;
+    power.setSleepHooks({fake_sleep_prepare, fake_sleep_restore});
+    expect_true(power.attemptLightSleep(fake_sleep_enter) ==
+                    firefly::SleepAttemptResult::GateClosed,
+                "sleep attempt rejects unverified wake matrix");
+    expect_true(fake_sleep_enter_calls == 0,
+                "closed sleep gate never enters platform sleep");
+
+    power.recordWakeVerification(firefly::WakeSource::Boot, 100, 100);
+    power.recordWakeVerification(firefly::WakeSource::PowerButton, 100, 100);
+    power.recordWakeVerification(firefly::WakeSource::RtcAlarm, 100, 100);
+    fake_sleep_enter_result = false;
+    expect_true(power.attemptLightSleep(fake_sleep_enter) ==
+                    firefly::SleepAttemptResult::EnterFailed,
+                "failed platform entry is reported");
+    expect_true(sleep_prepare_calls == 1 && sleep_restore_calls == 1,
+                "failed entry restores prepared resources");
+
+    fake_sleep_enter_result = true;
+    expect_true(power.attemptLightSleep(fake_sleep_enter) ==
+                    firefly::SleepAttemptResult::Entered,
+                "verified platform sleep completes lifecycle");
+    expect_true(sleep_prepare_calls == 2 && sleep_restore_calls == 2,
+                "successful entry restores prepared resources");
+}
+
 class FakeMotionDevice : public firefly::MotionDevice {
 public:
     bool begin() override {
@@ -1009,6 +1047,7 @@ void setup() {
     test_debounced_button_short_and_long_press();
     test_debounced_button_rejects_jitter();
     test_light_sleep_requires_verified_wake_matrix();
+    test_light_sleep_attempt_restores_on_success_and_failure();
     test_motion_service_fixed_sample_buffer();
     test_motion_service_low_power_forwarding();
     test_step_detector_static_and_regular_cadence();

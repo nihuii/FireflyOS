@@ -251,6 +251,23 @@ class RepositoryContracts(unittest.TestCase):
         self.assertIn("void firefly_process_settings_commands()", interaction)
         self.assertIn("firefly_process_settings_commands();", sketch)
 
+    def test_light_sleep_entry_is_ui_main_and_verification_gated(self):
+        interaction = (ROOT / "Firefly" / "FireflyInteraction.cpp").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        sketch = (ROOT / "Firefly" / "Firefly.ino").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        background = interaction.split("void firefly_background_task", 1)[1].split(
+            "String two_digit_text", 1
+        )[0]
+        self.assertIn("power_service.evaluate(now)", interaction)
+        self.assertIn("power_service.attemptLightSleep", interaction)
+        self.assertIn("esp_light_sleep_start", interaction)
+        self.assertIn("configure_power_sleep_hooks();", sketch)
+        self.assertNotIn("attemptLightSleep", background)
+        self.assertNotIn("esp_light_sleep_start", background)
+
 
 if __name__ == "__main__":
     unittest.main()

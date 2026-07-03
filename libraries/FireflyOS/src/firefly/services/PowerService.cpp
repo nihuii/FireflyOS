@@ -95,4 +95,13 @@ void PowerService::restoreFromLightSleep() {
     if(sleep_hooks_.restore) sleep_hooks_.restore();
 }
 
+SleepAttemptResult PowerService::attemptLightSleep(bool (*enter)()) {
+    if(!canEnterLightSleep()) return SleepAttemptResult::GateClosed;
+    if(!prepareForLightSleep()) return SleepAttemptResult::PrepareFailed;
+    const bool entered = enter && enter();
+    restoreFromLightSleep();
+    return entered ? SleepAttemptResult::Entered
+                   : SleepAttemptResult::EnterFailed;
+}
+
 }  // namespace firefly
