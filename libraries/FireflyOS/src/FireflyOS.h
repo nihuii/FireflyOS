@@ -24,6 +24,7 @@
 #include "firefly/services/MotionService.h"
 #include "firefly/services/PowerService.h"
 #include "firefly/services/StorageService.h"
+#include "firefly/services/ThemePackageService.h"
 #include "firefly/services/TimeService.h"
 #include "firefly/apps/calendar/CalendarApp.h"
 #include "firefly/apps/activity/ActivityApp.h"

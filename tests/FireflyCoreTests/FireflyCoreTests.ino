@@ -11,6 +11,7 @@
 #include <firefly/services/PowerService.h>
 #include <firefly/services/StorageService.h>
 #include <firefly/services/TimeService.h>
+#include <firefly/services/ThemePackageService.h>
 #include <firefly/hal/SdCardDevice.h>
 
 static uint16_t failures = 0;
@@ -482,6 +483,38 @@ static void test_sd_removal_requires_two_consecutive_failures() {
     expect_true(!monitor.noteResult(false), "failure count restarts after success");
     expect_true(monitor.noteResult(false),
                 "second consecutive SD failure reports removal");
+}
+
+static void test_theme_manifest_validation() {
+    static const char valid[] =
+        "{\"schema\":1,\"id\":\"firefly-night\",\"name\":\"Firefly Night\","
+        "\"author\":\"FireflyOS\",\"palette\":{"
+        "\"bg_base\":\"#05090C\",\"bg_surface\":\"#0C1820\","
+        "\"primary\":\"#5FE7C7\",\"secondary\":\"#6EC4D6\","
+        "\"critical\":\"#FF5A5F\"},"
+        "\"wallpaper\":\"wallpaper.rgb565\",\"glance\":\"glance.png\","
+        "\"icon_pack\":\"icons\"}";
+    firefly::ThemePackageService service;
+    firefly::ThemeManifest manifest{};
+    firefly::ThemeValidationError error = firefly::ThemeValidationError::None;
+    expect_true(service.parseManifest(valid, sizeof(valid) - 1, manifest, error),
+                "valid theme manifest parses");
+    expect_true(strcmp(manifest.id, "firefly-night") == 0,
+                "theme manifest preserves id");
+    expect_true(manifest.palette[2] == 0x5FE7C7,
+                "theme manifest parses primary color");
+
+    static const char traversal[] =
+        "{\"schema\":1,\"id\":\"bad-theme\",\"name\":\"Bad\","
+        "\"author\":\"Test\",\"palette\":{"
+        "\"bg_base\":\"#05090C\",\"bg_surface\":\"#0C1820\","
+        "\"primary\":\"#5FE7C7\",\"secondary\":\"#6EC4D6\","
+        "\"critical\":\"#FF5A5F\"},"
+        "\"wallpaper\":\"../wallpaper.rgb565\",\"glance\":\"glance.png\","
+        "\"icon_pack\":\"icons\"}";
+    expect_true(!service.parseManifest(traversal, sizeof(traversal) - 1,
+                                       manifest, error),
+                "theme manifest rejects parent traversal");
 }
 
 static void test_storage_settings_defaults_and_namespaces() {
@@ -1157,6 +1190,7 @@ void setup() {
     test_capability_registry();
     test_sd_paths_stay_inside_managed_root();
     test_sd_removal_requires_two_consecutive_failures();
+    test_theme_manifest_validation();
     test_app_registry();
     test_lifecycle_and_resource_governor();
     test_app_manager_publishes_requests();
