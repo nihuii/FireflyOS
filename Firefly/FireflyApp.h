@@ -9,7 +9,6 @@
 #include "pin_config.h"
 #include "SleepIcons.h"
 #include <Wire.h>
-#include <Preferences.h>
 #include <time.h>
 #include "SensorPCF85063.hpp"
 #include "XPowersLib.h"
@@ -24,12 +23,13 @@ extern "C" {
 
 extern SensorPCF85063 rtc;
 extern XPowersPMU power;
-extern Preferences prefs;
 extern firefly::I2cBusManager firefly_i2c_bus;
 extern firefly::LegacyBoardAdapter firefly_board;
 extern firefly::Qmi8658Device qmi8658_device;
 extern firefly::AlarmService alarm_service;
 extern firefly::PowerService power_service;
+extern firefly::StorageService storage_service;
+extern firefly::SystemSettings system_settings;
 extern firefly::TimeService time_service;
 extern firefly::MotionService motion_service;
 extern firefly::CapabilityRegistry system_capabilities;
@@ -47,15 +47,6 @@ extern firefly::AppRegistry ui_app_registry;
 extern firefly::ControlCenter control_center;
 extern firefly::NotificationCenter notification_center;
 extern firefly::StateStore ui_state_store;
-
-extern const char * UI_PREF_NAMESPACE;
-extern const char * UI_PREF_VOLUME_KEY;
-extern const char * UI_PREF_ALARM_ENABLED_KEY;
-extern const char * UI_PREF_ALARM_HOUR_KEY;
-extern const char * UI_PREF_ALARM_MINUTE_KEY;
-extern const char * UI_PREF_MOTION_DAY_KEY;
-extern const char * UI_PREF_MOTION_STEPS_KEY;
-extern const char * UI_PREF_MOTION_ACTIVE_KEY;
 
 extern lv_obj_t * lock_date_label;
 extern lv_obj_t * lock_time_label;

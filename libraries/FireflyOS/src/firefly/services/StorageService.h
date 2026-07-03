@@ -1,0 +1,89 @@
+#pragma once
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include "AlarmService.h"
+
+namespace firefly {
+
+struct SystemSettings {
+    uint16_t schema_version = 1;
+    uint8_t volume = 50;
+    uint8_t brightness = 128;
+    uint16_t auto_sleep_seconds = 30;
+    bool hide_notification_content = true;
+    bool wrist_raise_enabled = true;
+    char theme_id[24] = "firefly-default";
+};
+
+struct ActivityStats {
+    uint16_t schema_version = 1;
+    uint32_t day_key = 0;
+    uint32_t steps = 0;
+    uint16_t active_minutes = 0;
+};
+
+struct LegacyStorageSnapshot {
+    bool has_volume = false;
+    uint8_t volume = 50;
+    bool has_alarm[AlarmService::kSlots]{};
+    Alarm alarms[AlarmService::kSlots]{};
+};
+
+enum class StorageDiagnosticCode : uint8_t {
+    None,
+    NamespaceOpenFailed,
+    SchemaMismatch,
+    ReadFailed,
+    WriteFailed,
+    LegacyMigrationFailed,
+    LittleFsMountFailed,
+};
+
+struct StorageDiagnostics {
+    uint32_t failures = 0;
+    StorageDiagnosticCode last = StorageDiagnosticCode::None;
+};
+
+class StorageService {
+public:
+    static constexpr uint16_t kSchemaVersion = 1;
+    static constexpr const char * kSystemNamespace = "ff_sys";
+    static constexpr const char * kAlarmNamespace = "ff_alarm";
+    static constexpr const char * kPairNamespace = "ff_pair";
+    static constexpr const char * kStatsNamespace = "ff_stats";
+    static constexpr const char * kLegacyNamespace = "firefly";
+
+    bool begin();
+    bool loadSettings(SystemSettings & settings);
+    bool saveSettings(const SystemSettings & settings);
+    bool loadAlarm(uint8_t slot, Alarm & alarm, bool & present);
+    bool saveAlarm(uint8_t slot, const Alarm & alarm);
+    bool loadActivityStats(ActivityStats & stats);
+    bool saveActivityStats(const ActivityStats & stats);
+    bool loadThemeTokens(void * data, size_t length);
+    bool saveThemeTokens(const void * data, size_t length);
+    bool saveThemeCache(const char * theme_id, const uint32_t palette[5]);
+
+    bool littleFsMounted() const { return littlefs_mounted_; }
+    bool littleFsReadOnly() const { return littlefs_read_only_; }
+    StorageDiagnostics diagnostics() const { return diagnostics_; }
+
+    static void applyLegacySnapshot(const LegacyStorageSnapshot & legacy,
+                                    SystemSettings & settings,
+                                    Alarm alarms[AlarmService::kSlots],
+                                    bool present[AlarmService::kSlots]);
+
+private:
+    bool initializeNamespaces();
+    bool migrateLegacyPreferences();
+    bool mountLittleFs();
+    void recordFailure(StorageDiagnosticCode code);
+
+    bool littlefs_mounted_ = false;
+    bool littlefs_read_only_ = false;
+    StorageDiagnostics diagnostics_{};
+};
+
+}  // namespace firefly

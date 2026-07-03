@@ -1241,6 +1241,11 @@ void setup(void) {
     setenv("TZ", "CST-8", 1);
     tzset();
 
+    if(!storage_service.begin()) {
+        Serial.println("Versioned storage unavailable; using safe defaults.");
+    }
+    load_sound_alarm_preferences();
+
 #ifdef GFX_EXTRA_PRE_INIT
     GFX_EXTRA_PRE_INIT();
 #endif
@@ -1284,8 +1289,6 @@ void setup(void) {
     }
     configure_power_sleep_hooks();
 
-    prefs.begin(UI_PREF_NAMESPACE, false);
-    load_sound_alarm_preferences();
     init_default_settings_theme();
 
     bool rtc_ready = false;

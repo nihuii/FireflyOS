@@ -163,8 +163,6 @@ void init_default_settings_theme() {
 
 namespace {
 
-const char * THEME_CACHE_KEY = "theme_v1";
-
 lv_color_t color_from_565(uint16_t value) {
     const uint8_t red5 = static_cast<uint8_t>((value >> 11) & 0x1F);
     const uint8_t green6 = static_cast<uint8_t>((value >> 5) & 0x3F);
@@ -208,13 +206,12 @@ void init_settings_theme_from_wallpaper(const lv_img_dsc_t * wallpaper) {
     firefly::UiTokens tokens = firefly::UiTheme::fireflyDefault();
     sample_wallpaper(wallpaper, tokens);
     apply_theme_tokens(tokens);
-    prefs.putBytes(THEME_CACHE_KEY, &tokens, sizeof(tokens));
+    storage_service.saveThemeTokens(&tokens, sizeof(tokens));
 }
 
 void init_default_settings_theme() {
     firefly::UiTokens tokens{};
-    if(prefs.getBytesLength(THEME_CACHE_KEY) == sizeof(tokens)) {
-        prefs.getBytes(THEME_CACHE_KEY, &tokens, sizeof(tokens));
+    if(storage_service.loadThemeTokens(&tokens, sizeof(tokens))) {
         apply_theme_tokens(tokens);
         return;
     }

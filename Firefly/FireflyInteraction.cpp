@@ -608,8 +608,9 @@ void load_motion_summary_preference() {
     const uint32_t today = current_local_day_key();
     if(today == 0) return;
     motion_summary_preference_loaded = true;
-    const uint32_t saved_day = prefs.getUInt(UI_PREF_MOTION_DAY_KEY, 0);
-    if(saved_day != today) {
+    firefly::ActivityStats stats{};
+    storage_service.loadActivityStats(stats);
+    if(stats.day_key != today) {
         motion_service.setDayKey(today);
         motion_last_saved_day = today;
         motion_last_saved_steps = 0;
@@ -617,13 +618,10 @@ void load_motion_summary_preference() {
         motion_last_saved_at = millis();
         return;
     }
-    const uint32_t steps = prefs.getUInt(UI_PREF_MOTION_STEPS_KEY, 0);
-    const uint16_t active_minutes = static_cast<uint16_t>(
-        prefs.getUShort(UI_PREF_MOTION_ACTIVE_KEY, 0));
-    motion_service.restoreDailySummary(today, steps, active_minutes);
+    motion_service.restoreDailySummary(today, stats.steps, stats.active_minutes);
     motion_last_saved_day = today;
-    motion_last_saved_steps = steps;
-    motion_last_saved_active_minutes = active_minutes;
+    motion_last_saved_steps = stats.steps;
+    motion_last_saved_active_minutes = stats.active_minutes;
     motion_last_saved_at = millis();
 }
 
@@ -640,12 +638,16 @@ void persist_motion_summary(bool force) {
     if(today != motion_last_saved_day ||
        summary.steps != motion_last_saved_steps ||
        summary.active_minutes != motion_last_saved_active_minutes) {
-        prefs.putUInt(UI_PREF_MOTION_DAY_KEY, today);
-        prefs.putUInt(UI_PREF_MOTION_STEPS_KEY, summary.steps);
-        prefs.putUShort(UI_PREF_MOTION_ACTIVE_KEY, summary.active_minutes);
-        motion_last_saved_day = today;
-        motion_last_saved_steps = summary.steps;
-        motion_last_saved_active_minutes = summary.active_minutes;
+        firefly::ActivityStats stats{};
+        stats.schema_version = firefly::StorageService::kSchemaVersion;
+        stats.day_key = today;
+        stats.steps = summary.steps;
+        stats.active_minutes = summary.active_minutes;
+        if(storage_service.saveActivityStats(stats)) {
+            motion_last_saved_day = today;
+            motion_last_saved_steps = summary.steps;
+            motion_last_saved_active_minutes = summary.active_minutes;
+        }
     }
     motion_last_saved_at = now;
 }
@@ -692,54 +694,20 @@ void sync_time_to_system_from_epoch(int64_t epoch_seconds) {
 }
 
 void load_sound_alarm_preferences() {
-    volume_level = prefs.getUChar(UI_PREF_VOLUME_KEY, 50);
+    storage_service.loadSettings(system_settings);
+    volume_level = system_settings.volume;
     if(volume_level > 100) volume_level = 100;
+    screen_brightness = system_settings.brightness;
+    auto_sleep_ms = static_cast<uint32_t>(
+        system_settings.auto_sleep_seconds) * 1000UL;
 
-    bool has_configured_alarm = false;
     for(uint8_t slot = 0; slot < FIREFLY_ALARM_SLOT_COUNT; ++slot) {
         FireflyAlarm & alarm = firefly_alarms[slot];
         firefly_alarm_reset(alarm, slot);
-
-        char key[20];
-        snprintf(key, sizeof(key), "al%u_cfg", static_cast<unsigned>(slot));
-        alarm.configured = prefs.getBool(key, false);
-        snprintf(key, sizeof(key), "al%u_en", static_cast<unsigned>(slot));
-        alarm.enabled = prefs.getBool(key, false);
-        snprintf(key, sizeof(key), "al%u_hr", static_cast<unsigned>(slot));
-        alarm.hour = prefs.getUChar(key, alarm.hour);
-        snprintf(key, sizeof(key), "al%u_mn", static_cast<unsigned>(slot));
-        alarm.minute = prefs.getUChar(key, alarm.minute);
-        snprintf(key, sizeof(key), "al%u_dy", static_cast<unsigned>(slot));
-        alarm.days_mask = prefs.getUChar(key, firefly_alarm_days_mask_from_option(0));
-        snprintf(key, sizeof(key), "al%u_rg", static_cast<unsigned>(slot));
-        alarm.ringtone_index = prefs.getUChar(key, 0);
-        snprintf(key, sizeof(key), "al%u_nm", static_cast<unsigned>(slot));
-        const String stored_name = prefs.getString(key, alarm.name);
-        strncpy(alarm.name, stored_name.c_str(), sizeof(alarm.name) - 1U);
-        alarm.name[sizeof(alarm.name) - 1U] = '\0';
-
-        if(alarm.hour > 23) alarm.hour = 7;
-        if(alarm.minute > 59) alarm.minute = 30;
-        if(alarm.days_mask == 0) alarm.days_mask = firefly_alarm_days_mask_from_option(0);
-        if(alarm.ringtone_index >= FIREFLY_ALARM_RINGTONE_COUNT) alarm.ringtone_index = 0;
-        if(alarm.configured) {
-            has_configured_alarm = true;
-        }
-    }
-
-    if(!has_configured_alarm) {
-        const bool legacy_enabled = prefs.getBool(UI_PREF_ALARM_ENABLED_KEY, false);
-        const uint8_t legacy_hour = prefs.getUChar(UI_PREF_ALARM_HOUR_KEY, 7);
-        const uint8_t legacy_minute = prefs.getUChar(UI_PREF_ALARM_MINUTE_KEY, 30);
-        if(legacy_enabled) {
-            FireflyAlarm & alarm = firefly_alarms[0];
-            alarm.configured = true;
-            alarm.enabled = true;
-            alarm.hour = legacy_hour > 23 ? 7 : legacy_hour;
-            alarm.minute = legacy_minute > 59 ? 30 : legacy_minute;
-            alarm.days_mask = firefly_alarm_days_mask_from_option(0);
-            strncpy(alarm.name, "Alarm 1", sizeof(alarm.name) - 1U);
-            alarm.name[sizeof(alarm.name) - 1U] = '\0';
+        firefly::Alarm stored{};
+        bool present = false;
+        if(storage_service.loadAlarm(slot, stored, present) && present) {
+            copy_service_alarm_to_legacy(slot, stored);
         }
     }
 
@@ -748,27 +716,14 @@ void load_sound_alarm_preferences() {
 }
 
 void save_volume_preference() {
-    prefs.putUChar(UI_PREF_VOLUME_KEY, volume_level);
+    system_settings.volume = volume_level;
+    storage_service.saveSettings(system_settings);
 }
 
 void save_alarm_preferences() {
     for(uint8_t slot = 0; slot < FIREFLY_ALARM_SLOT_COUNT; ++slot) {
-        const FireflyAlarm & alarm = firefly_alarms[slot];
-        char key[20];
-        snprintf(key, sizeof(key), "al%u_cfg", static_cast<unsigned>(slot));
-        prefs.putBool(key, alarm.configured);
-        snprintf(key, sizeof(key), "al%u_en", static_cast<unsigned>(slot));
-        prefs.putBool(key, alarm.enabled);
-        snprintf(key, sizeof(key), "al%u_hr", static_cast<unsigned>(slot));
-        prefs.putUChar(key, alarm.hour);
-        snprintf(key, sizeof(key), "al%u_mn", static_cast<unsigned>(slot));
-        prefs.putUChar(key, alarm.minute);
-        snprintf(key, sizeof(key), "al%u_dy", static_cast<unsigned>(slot));
-        prefs.putUChar(key, alarm.days_mask);
-        snprintf(key, sizeof(key), "al%u_rg", static_cast<unsigned>(slot));
-        prefs.putUChar(key, alarm.ringtone_index);
-        snprintf(key, sizeof(key), "al%u_nm", static_cast<unsigned>(slot));
-        prefs.putString(key, String(alarm.name));
+        storage_service.saveAlarm(
+            slot, service_alarm_from_legacy(firefly_alarms[slot]));
     }
 }
 
@@ -1222,6 +1177,8 @@ void firefly_process_settings_commands() {
                 set_screen_brightness_level(static_cast<uint8_t>(
                     command.value < 0 ? 0 :
                     (command.value > 255 ? 255 : command.value)));
+                system_settings.brightness = screen_brightness;
+                storage_service.saveSettings(system_settings);
                 break;
             case firefly::SettingsCommandType::SetVolume:
                 volume_level = static_cast<uint8_t>(
@@ -1250,6 +1207,9 @@ void firefly_process_settings_commands() {
             case firefly::SettingsCommandType::SetAutoSleep:
                 auto_sleep_ms = static_cast<uint32_t>(
                     command.value < 0 ? 0 : command.value);
+                system_settings.auto_sleep_seconds = static_cast<uint16_t>(
+                    auto_sleep_ms / 1000UL);
+                storage_service.saveSettings(system_settings);
                 break;
             case firefly::SettingsCommandType::SaveAlarm:
                 if(command.slot < FIREFLY_ALARM_SLOT_COUNT &&
@@ -1301,12 +1261,13 @@ void firefly_report_gate_a_diagnostics() {
     }
     last_report_at = now;
     const firefly::MotionDiagnostics motion = motion_service.diagnostics();
+    const firefly::StorageDiagnostics storage = storage_service.diagnostics();
     Serial.printf(
         "FIREFLY_GATE_A uptime_ms=%lu internal_free=%u internal_min=%u "
         "psram_free=%u event_post_failures=%lu event_queue=%u "
         "settings_command_failures=%lu desktop_transition_max_ms=%lu "
         "motion_valid=%lu motion_invalid=%lu motion_steps=%lu "
-        "motion_wrist_events=%lu\n",
+        "motion_wrist_events=%lu storage_failures=%lu\n",
         static_cast<unsigned long>(now),
         ESP.getFreeHeap(),
         ESP.getMinFreeHeap(),
@@ -1318,6 +1279,7 @@ void firefly_report_gate_a_diagnostics() {
         static_cast<unsigned long>(motion.valid_samples),
         static_cast<unsigned long>(motion.invalid_samples),
         static_cast<unsigned long>(motion.steps),
-        static_cast<unsigned long>(motion.wrist_events)
+        static_cast<unsigned long>(motion.wrist_events),
+        static_cast<unsigned long>(storage.failures)
     );
 }

@@ -3,16 +3,6 @@
 
 SensorPCF85063 rtc;
 XPowersPMU power;
-Preferences prefs;
-
-const char * UI_PREF_NAMESPACE = "firefly";
-const char * UI_PREF_VOLUME_KEY = "ui_volume";
-const char * UI_PREF_ALARM_ENABLED_KEY = "alarm_on";
-const char * UI_PREF_ALARM_HOUR_KEY = "alarm_hour";
-const char * UI_PREF_ALARM_MINUTE_KEY = "alarm_min";
-const char * UI_PREF_MOTION_DAY_KEY = "motion_day";
-const char * UI_PREF_MOTION_STEPS_KEY = "motion_steps";
-const char * UI_PREF_MOTION_ACTIVE_KEY = "motion_active";
 
 lv_obj_t * lock_date_label = NULL;
 lv_obj_t * lock_time_label = NULL;
@@ -115,6 +105,8 @@ firefly::LegacyBoardAdapter firefly_board(rtc, power, *gfx_co5300, &firefly_i2c_
 firefly::Qmi8658Device qmi8658_device(firefly_i2c_bus);
 firefly::AlarmService alarm_service;
 firefly::PowerService power_service;
+firefly::StorageService storage_service;
+firefly::SystemSettings system_settings;
 firefly::TimeService time_service(firefly_board);
 firefly::MotionService motion_service(qmi8658_device);
 firefly::CapabilityRegistry system_capabilities;

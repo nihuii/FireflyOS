@@ -9,6 +9,7 @@
 #include <firefly/services/InputService.h>
 #include <firefly/services/MotionService.h>
 #include <firefly/services/PowerService.h>
+#include <firefly/services/StorageService.h>
 #include <firefly/services/TimeService.h>
 
 static uint16_t failures = 0;
@@ -457,6 +458,72 @@ static void test_settings_commands_preserve_time_and_alarm_payloads() {
     expect_true(queue.take(actual) && actual.slot == 1 &&
                     actual.alarm.minute == 30,
                 "settings preserves fixed alarm payload");
+}
+
+static void test_storage_settings_defaults_and_namespaces() {
+    firefly::SystemSettings settings{};
+    expect_true(settings.schema_version == 1,
+                "settings schema version");
+    expect_true(settings.volume == 50,
+                "default volume");
+    expect_true(settings.brightness == 128,
+                "default brightness");
+    expect_true(settings.auto_sleep_seconds == 30,
+                "default sleep timeout");
+    expect_true(settings.hide_notification_content,
+                "notification content hidden by default");
+    expect_true(settings.wrist_raise_enabled,
+                "wrist raise enabled by default");
+    expect_true(strcmp(settings.theme_id, "firefly-default") == 0,
+                "default theme id");
+    expect_true(strcmp(firefly::StorageService::kSystemNamespace,
+                       "ff_sys") == 0 &&
+                    strcmp(firefly::StorageService::kAlarmNamespace,
+                           "ff_alarm") == 0 &&
+                    strcmp(firefly::StorageService::kPairNamespace,
+                           "ff_pair") == 0 &&
+                    strcmp(firefly::StorageService::kStatsNamespace,
+                           "ff_stats") == 0,
+                "storage namespaces are fixed");
+}
+
+static void test_storage_legacy_migration_preserves_alarm_fields() {
+    firefly::LegacyStorageSnapshot legacy{};
+    legacy.has_volume = true;
+    legacy.volume = 73;
+    for(uint8_t slot = 0; slot < firefly::AlarmService::kSlots; ++slot) {
+        legacy.has_alarm[slot] = true;
+        legacy.alarms[slot].configured = true;
+        legacy.alarms[slot].enabled = slot == 0;
+        legacy.alarms[slot].hour = static_cast<uint8_t>(6 + slot);
+        legacy.alarms[slot].minute = static_cast<uint8_t>(15 + slot);
+        legacy.alarms[slot].days_mask = static_cast<uint8_t>(0x3E + slot);
+        legacy.alarms[slot].ringtone = static_cast<uint8_t>(slot + 1);
+        snprintf(legacy.alarms[slot].name,
+                 sizeof(legacy.alarms[slot].name),
+                 "Legacy %u", static_cast<unsigned>(slot));
+    }
+
+    firefly::SystemSettings settings{};
+    firefly::Alarm migrated[firefly::AlarmService::kSlots]{};
+    bool present[firefly::AlarmService::kSlots]{};
+    firefly::StorageService::applyLegacySnapshot(
+        legacy, settings, migrated, present);
+
+    expect_true(settings.volume == 73,
+                "legacy volume migrates");
+    for(uint8_t slot = 0; slot < firefly::AlarmService::kSlots; ++slot) {
+        expect_true(present[slot], "legacy alarm remains present");
+        expect_true(migrated[slot].configured == legacy.alarms[slot].configured &&
+                        migrated[slot].enabled == legacy.alarms[slot].enabled &&
+                        migrated[slot].hour == legacy.alarms[slot].hour &&
+                        migrated[slot].minute == legacy.alarms[slot].minute &&
+                        migrated[slot].days_mask == legacy.alarms[slot].days_mask &&
+                        migrated[slot].ringtone == legacy.alarms[slot].ringtone &&
+                        strcmp(migrated[slot].name,
+                               legacy.alarms[slot].name) == 0,
+                    "legacy alarm fields migrate exactly");
+    }
 }
 
 static void test_calendar_month_boundaries() {
@@ -1080,6 +1147,8 @@ void setup() {
     test_stopwatch_survives_page_visibility_changes();
     test_settings_app_command_queue();
     test_settings_commands_preserve_time_and_alarm_payloads();
+    test_storage_settings_defaults_and_namespaces();
+    test_storage_legacy_migration_preserves_alarm_fields();
     test_calendar_month_boundaries();
     test_calendar_agenda_truncates_to_eight();
     test_calculator_engine_basic_operations();

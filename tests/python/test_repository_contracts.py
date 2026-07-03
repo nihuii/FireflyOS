@@ -280,6 +280,36 @@ class RepositoryContracts(unittest.TestCase):
         self.assertIn("power_service.setBatteryState(state.battery)", evaluator)
         self.assertEqual(interaction.count("power_service.setBatteryState("), 1)
 
+    def test_storage_service_owns_runtime_preferences(self):
+        interaction = (ROOT / "Firefly" / "FireflyInteraction.cpp").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        state = (ROOT / "Firefly" / "FireflyState.cpp").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        sketch = (ROOT / "Firefly" / "Firefly.ino").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        theme = (ROOT / "Firefly" / "FireflyTheme.cpp").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        self.assertIn("firefly::StorageService storage_service", state)
+        self.assertIn("storage_service.begin()", sketch)
+        for call in (
+            "storage_service.loadSettings",
+            "storage_service.saveSettings",
+            "storage_service.loadAlarm",
+            "storage_service.saveAlarm",
+            "storage_service.loadActivityStats",
+            "storage_service.saveActivityStats",
+        ):
+            self.assertIn(call, interaction + sketch)
+        self.assertIn("storage_service.loadThemeTokens", theme)
+        self.assertIn("storage_service.saveThemeTokens", theme)
+        self.assertNotIn("prefs.", interaction)
+        self.assertNotIn("prefs.", theme)
+        self.assertNotIn("Preferences prefs", state)
+
     def test_plan3_labels_match_the_available_ascii_fonts(self):
         lv_conf = (ROOT / "libraries" / "lv_conf.h").read_text(
             encoding="utf-8", errors="ignore"
