@@ -74,6 +74,24 @@ struct MotionSummary {
     bool sensor_available = false;
 };
 
+enum class MotionPowerMode : uint8_t {
+    Normal,
+    LowPower,
+};
+
+class MotionPowerPolicy {
+public:
+    static MotionPowerMode modeFor(bool screen_off,
+                                   bool entering_light_sleep);
+};
+
+struct MotionDiagnostics {
+    uint32_t valid_samples = 0;
+    uint32_t invalid_samples = 0;
+    uint32_t steps = 0;
+    uint32_t wrist_events = 0;
+};
+
 class MotionService {
 public:
     static constexpr uint8_t kSampleCapacity = 32;
@@ -91,6 +109,7 @@ public:
     MotionSample sampleAt(uint8_t index) const;
     MotionSample latest() const;
     MotionSummary summary() const;
+    MotionDiagnostics diagnostics() const;
     bool consumeWristRaise();
     void setDayKey(uint32_t day_key);
     void restoreDailySummary(uint32_t day_key, uint32_t steps,
@@ -104,6 +123,7 @@ private:
     StepDetector step_detector_{};
     WristRaiseDetector wrist_detector_{};
     MotionSummary summary_{};
+    MotionDiagnostics diagnostics_{};
     uint32_t day_key_ = 0;
     uint32_t last_active_minute_bucket_ = 0;
     bool has_active_minute_ = false;

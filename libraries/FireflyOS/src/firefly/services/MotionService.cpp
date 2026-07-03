@@ -4,6 +4,14 @@
 
 namespace firefly {
 
+MotionPowerMode MotionPowerPolicy::modeFor(bool screen_off,
+                                           bool entering_light_sleep) {
+    (void)screen_off;
+    return entering_light_sleep
+        ? MotionPowerMode::LowPower
+        : MotionPowerMode::Normal;
+}
+
 bool StepDetector::update(const MotionSample & sample) {
     if(!sample.valid) return false;
     const float magnitude = sqrtf(sample.ax * sample.ax +
@@ -91,12 +99,24 @@ bool MotionService::poll(const MotionContext & context) {
 
 bool MotionService::processSample(const MotionSample & sample,
                                   const MotionContext & context) {
+    if(!sample.valid) {
+        portENTER_CRITICAL(&mux_);
+        if(diagnostics_.invalid_samples < UINT32_MAX) {
+            ++diagnostics_.invalid_samples;
+        }
+        portEXIT_CRITICAL(&mux_);
+        return false;
+    }
     if(!pushSample(sample)) return false;
     portENTER_CRITICAL(&mux_);
+    if(diagnostics_.valid_samples < UINT32_MAX) {
+        ++diagnostics_.valid_samples;
+    }
     const bool stepped = step_detector_.update(sample);
     const bool wrist_raised = wrist_detector_.update(sample, context);
 
     summary_.steps = step_detector_.totalSteps();
+    diagnostics_.steps = summary_.steps;
     if(stepped) {
         const uint32_t minute_bucket = sample.timestamp_ms / 60000UL;
         if(!has_active_minute_ || minute_bucket != last_active_minute_bucket_) {
@@ -105,7 +125,12 @@ bool MotionService::processSample(const MotionSample & sample,
             has_active_minute_ = true;
         }
     }
-    if(wrist_raised) wrist_raise_pending_ = true;
+    if(wrist_raised) {
+        wrist_raise_pending_ = true;
+        if(diagnostics_.wrist_events < UINT32_MAX) {
+            ++diagnostics_.wrist_events;
+        }
+    }
     portEXIT_CRITICAL(&mux_);
     return true;
 }
@@ -159,6 +184,13 @@ MotionSummary MotionService::summary() const {
     return result;
 }
 
+MotionDiagnostics MotionService::diagnostics() const {
+    portENTER_CRITICAL(&mux_);
+    const MotionDiagnostics result = diagnostics_;
+    portEXIT_CRITICAL(&mux_);
+    return result;
+}
+
 bool MotionService::consumeWristRaise() {
     portENTER_CRITICAL(&mux_);
     const bool result = wrist_raise_pending_;
@@ -177,6 +209,7 @@ void MotionService::setDayKey(uint32_t day_key) {
     step_detector_.reset();
     day_key_ = day_key;
     summary_.steps = 0;
+    diagnostics_.steps = 0;
     summary_.active_minutes = 0;
     has_active_minute_ = false;
     portEXIT_CRITICAL(&mux_);
@@ -189,6 +222,7 @@ void MotionService::restoreDailySummary(uint32_t day_key, uint32_t steps,
     step_detector_.restoreTotalSteps(steps);
     day_key_ = day_key;
     summary_.steps = steps;
+    diagnostics_.steps = steps;
     summary_.active_minutes = active_minutes;
     has_active_minute_ = false;
     portEXIT_CRITICAL(&mux_);

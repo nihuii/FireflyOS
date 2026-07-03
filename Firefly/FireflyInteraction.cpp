@@ -83,7 +83,11 @@ bool prepare_verified_light_sleep() {
         vTaskSuspend(firefly_background_task_handle);
     }
     if(system_capabilities.has(firefly::Capability::Motion)) {
-        light_sleep_motion_low_power = motion_service.setLowPower(true);
+        const firefly::MotionPowerMode motion_mode =
+            firefly::MotionPowerPolicy::modeFor(true, true);
+        light_sleep_motion_low_power =
+            motion_mode == firefly::MotionPowerMode::LowPower &&
+            motion_service.setLowPower(true);
         if(!light_sleep_motion_low_power) {
             if(firefly_background_task_handle) {
                 vTaskResume(firefly_background_task_handle);
@@ -1296,10 +1300,13 @@ void firefly_report_gate_a_diagnostics() {
         return;
     }
     last_report_at = now;
+    const firefly::MotionDiagnostics motion = motion_service.diagnostics();
     Serial.printf(
         "FIREFLY_GATE_A uptime_ms=%lu internal_free=%u internal_min=%u "
         "psram_free=%u event_post_failures=%lu event_queue=%u "
-        "settings_command_failures=%lu desktop_transition_max_ms=%lu\n",
+        "settings_command_failures=%lu desktop_transition_max_ms=%lu "
+        "motion_valid=%lu motion_invalid=%lu motion_steps=%lu "
+        "motion_wrist_events=%lu\n",
         static_cast<unsigned long>(now),
         ESP.getFreeHeap(),
         ESP.getMinFreeHeap(),
@@ -1307,6 +1314,10 @@ void firefly_report_gate_a_diagnostics() {
         static_cast<unsigned long>(event_post_failures),
         static_cast<unsigned>(system_event_bus.size()),
         static_cast<unsigned long>(settings_command_failures),
-        static_cast<unsigned long>(desktop_transition_max_ms)
+        static_cast<unsigned long>(desktop_transition_max_ms),
+        static_cast<unsigned long>(motion.valid_samples),
+        static_cast<unsigned long>(motion.invalid_samples),
+        static_cast<unsigned long>(motion.steps),
+        static_cast<unsigned long>(motion.wrist_events)
     );
 }

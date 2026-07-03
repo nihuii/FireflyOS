@@ -859,6 +859,52 @@ static void test_motion_service_low_power_forwarding() {
                 "motion service forwards low power request");
 }
 
+static void test_motion_power_policy_keeps_gyro_for_screen_off_wrist_raise() {
+    expect_true(firefly::MotionPowerPolicy::modeFor(false, false) ==
+                    firefly::MotionPowerMode::Normal,
+                "active mode keeps normal sampling");
+    expect_true(firefly::MotionPowerPolicy::modeFor(true, false) ==
+                    firefly::MotionPowerMode::Normal,
+                "screen off cpu mode keeps gyro for wrist raise");
+    expect_true(firefly::MotionPowerPolicy::modeFor(true, true) ==
+                    firefly::MotionPowerMode::LowPower,
+                "light sleep preparation uses low power sensor mode");
+}
+
+static void test_motion_service_bounded_diagnostics() {
+    FakeMotionDevice device;
+    firefly::MotionService motion(device);
+    firefly::MotionContext context{};
+
+    firefly::MotionSample invalid{};
+    expect_true(!motion.processSample(invalid, context),
+                "invalid sample is rejected");
+
+    firefly::MotionSample lowered{};
+    lowered.valid = true;
+    lowered.az = -0.2f;
+    lowered.timestamp_ms = 1000;
+    motion.processSample(lowered, context);
+
+    firefly::MotionSample raised{};
+    raised.valid = true;
+    raised.ay = -0.5f;
+    raised.az = 0.8f;
+    raised.gx = 60.0f;
+    raised.timestamp_ms = 1200;
+    motion.processSample(raised, context);
+
+    const firefly::MotionDiagnostics diagnostics = motion.diagnostics();
+    expect_true(diagnostics.valid_samples == 2,
+                "motion diagnostics count valid samples");
+    expect_true(diagnostics.invalid_samples == 1,
+                "motion diagnostics count invalid samples");
+    expect_true(diagnostics.wrist_events == 1,
+                "motion diagnostics count wrist events");
+    expect_true(diagnostics.steps == motion.summary().steps,
+                "motion diagnostics snapshot current step total");
+}
+
 static void feed_step_cycle(firefly::StepDetector & detector,
                             uint32_t & timestamp_ms,
                             uint8_t peak_samples,
@@ -1050,6 +1096,8 @@ void setup() {
     test_light_sleep_attempt_restores_on_success_and_failure();
     test_motion_service_fixed_sample_buffer();
     test_motion_service_low_power_forwarding();
+    test_motion_power_policy_keeps_gyro_for_screen_off_wrist_raise();
+    test_motion_service_bounded_diagnostics();
     test_step_detector_static_and_regular_cadence();
     test_step_detector_limits_high_frequency_jitter();
     test_wrist_raise_requires_posture_rotation_and_cooldown();
