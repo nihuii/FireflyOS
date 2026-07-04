@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <FS.h>
 
 namespace firefly {
 
@@ -31,6 +32,8 @@ public:
     bool exists(const char * relative_path) const;
     bool validateSession() const;
     bool takeRemovedEvent();
+    void noteIoResult(bool success) const;
+    static fs::FS & filesystem();
 
     static bool isSafeRelativePath(const char * relative_path);
 
@@ -38,8 +41,6 @@ private:
     static bool makeManagedPath(const char * relative_path,
                                 char * out,
                                 size_t out_size);
-    void noteIoResult(bool success) const;
-
     mutable bool mounted_ = false;
     mutable bool removed_event_pending_ = false;
     mutable SdFailureMonitor failure_monitor_{};

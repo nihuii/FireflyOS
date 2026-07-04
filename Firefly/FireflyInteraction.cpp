@@ -79,6 +79,7 @@ bool prepare_verified_light_sleep() {
     light_sleep_entered = false;
     persist_motion_summary(true);
     tools_app.closeFlashlightFromInput();
+    audio_service.stop();
     if(firefly_background_task_handle) {
         vTaskSuspend(firefly_background_task_handle);
     }
@@ -179,6 +180,9 @@ void apply_sleep_blackout() {
     if(!is_sleeping || sleep_display_off) {
         return;
     }
+    if(recorder_app.recording()) {
+        return;
+    }
 
     sleep_display_off = true;
     ui_state_store.setSleepState(true, true);
@@ -218,6 +222,7 @@ void power_menu_restart_cb(lv_event_t * event) {
 
 void power_menu_shutdown_cb(lv_event_t * event) {
     LV_UNUSED(event);
+    recorder_app.stopForSafety();
     firefly_board.setDisplayBrightness(0);
     firefly_board.shutdown();
 }
@@ -528,16 +533,29 @@ void trigger_alarm_alert(uint8_t slot, const String& current_time) {
     if(alarm_overlay_title) {
         lv_label_set_text(alarm_overlay_title, alarm_name_text(alarm, slot).c_str());
     }
-    if(alarm_overlay_detail) {
-        String detail = "It is " + current_time;
+    String detail = "It is " + current_time;
+    detail += "\n";
+    detail += firefly_alarm_day_label(alarm.days_mask);
+    detail += "  ";
+    detail += firefly_alarm_ringtone_name(alarm.ringtone_index);
+    detail += "\nVolume " + String(volume_level) + "%";
+    if(alarm_overlay_detail) lv_label_set_text(alarm_overlay_detail, detail.c_str());
+    ui_shell.showOverlay(firefly::SystemOverlayHost::kAlarmPriority,
+                         alarm_overlay);
+
+    const firefly::AlarmToneResource & tone =
+        firefly::AlarmService::ringtoneResource(alarm.ringtone_index);
+    const bool sound_started =
+        system_capabilities.has(firefly::Capability::Audio) &&
+        audio_service.startLoopingPcm(tone.samples, tone.frames,
+                                      tone.sample_rate,
+                                      firefly::AudioUse::Alarm);
+    if(!sound_started && alarm_overlay_detail) {
+        constexpr const char * unavailable = "Sound unavailable";
         detail += "\n";
-        detail += firefly_alarm_day_label(alarm.days_mask);
-        detail += "  ";
-        detail += firefly_alarm_ringtone_name(alarm.ringtone_index);
-        detail += "\nVolume " + String(volume_level) + "%";
+        detail += unavailable;
         lv_label_set_text(alarm_overlay_detail, detail.c_str());
     }
-    ui_shell.showOverlay(4, alarm_overlay);
 }
 
 void wake_sleep_screen_from_blackout() {
@@ -648,6 +666,8 @@ void persist_motion_summary(bool force) {
             motion_last_saved_steps = summary.steps;
             motion_last_saved_active_minutes = summary.active_minutes;
         }
+
+        file_scan_service.service(system_event_bus, now);
     }
     motion_last_saved_at = now;
 }
@@ -859,6 +879,9 @@ void set_screen_brightness_level(uint8_t brightness) {
 
 void dismiss_alarm_alert() {
     alarm_ringing = false;
+    if(audio_service.activeUse() == firefly::AudioUse::Alarm) {
+        audio_service.stop();
+    }
     ui_shell.closeOverlay(alarm_overlay);
 }
 
@@ -870,7 +893,8 @@ void show_timer_alert() {
         lv_label_set_text(alarm_overlay_detail,
                           "Countdown complete\nTap dismiss to continue");
     }
-    ui_shell.showOverlay(4, alarm_overlay);
+    ui_shell.showOverlay(firefly::SystemOverlayHost::kAlarmPriority,
+                         alarm_overlay);
 }
 
 void update_charging_overlay() {
@@ -1049,14 +1073,8 @@ void update_time_cb(lv_timer_t * timer) {
     }
     lock_screen.setNextAlarm(next_alarm_text);
 
-    const String current_alarm_key = String(date_str) + " " + time_str;
     if(!alarm_ringing) {
-        uint8_t triggered_slot = 0;
-        if(alarm_service.shouldTrigger(current_epoch, triggered_slot)) {
-            firefly_alarm_last_trigger_keys[triggered_slot] =
-                String(triggered_slot) + " " + current_alarm_key;
-            trigger_alarm_alert(triggered_slot, time_str);
-        }
+        alarm_service.publishTrigger(current_epoch, millis(), system_event_bus);
     }
 
     refresh_sound_alarm_ui();
@@ -1148,7 +1166,35 @@ void firefly_process_system_events() {
             case firefly::EventType::TimerExpired:
                 show_timer_alert();
                 break;
+            case firefly::EventType::AlarmTriggered: {
+                const uint8_t slot = static_cast<uint8_t>(event.value);
+                if(slot < FIREFLY_ALARM_SLOT_COUNT && !alarm_ringing) {
+                    const time_t now_epoch = time(nullptr);
+                    struct tm local{};
+                    char alarm_time[8] = "--:--";
+                    if(localtime_r(&now_epoch, &local)) {
+                        snprintf(alarm_time, sizeof(alarm_time), "%02d:%02d",
+                                 local.tm_hour, local.tm_min);
+                    }
+                    firefly_alarm_last_trigger_keys[slot] =
+                        String(slot) + " " + alarm_time;
+                    trigger_alarm_alert(slot, alarm_time);
+                }
+                break;
+            }
+            case firefly::EventType::FilesPageReady:
+                files_app.onPageReady();
+                break;
             case firefly::EventType::SdRemoved:
+                if(audio_service.activeUse() == firefly::AudioUse::Music ||
+                   audio_service.activeUse() == firefly::AudioUse::Recorder) {
+                    audio_service.stop();
+                }
+                files_app.onSdRemoved();
+                music_app.onSdRemoved();
+                recorder_app.onSdRemoved();
+                themes_app.onSdRemoved();
+                storage_service.detachSd();
                 Serial.println("SD card unavailable; media features disabled.");
                 break;
             default:
@@ -1165,7 +1211,7 @@ void firefly_process_sd_card() {
     if(sd_card.mounted()) {
         if(last_check_at == 0 || now - last_check_at >= 1000UL) {
             last_check_at = now;
-            sd_card.validateSession();
+            storage_service.validateSdSession();
         }
         if(sd_card.takeRemovedEvent()) {
             system_capabilities.set(firefly::Capability::Sd, false);
@@ -1182,13 +1228,17 @@ void firefly_process_sd_card() {
     if(last_mount_attempt_at == 0 || now - last_mount_attempt_at >= 5000UL) {
         last_mount_attempt_at = now;
         if(sd_card.begin()) {
+            storage_service.attachSd(sd_card.filesystem(), sd_card);
+            const uint16_t removed =
+                firefly::AudioService::cleanupTemporaryRecordings(storage_service);
             system_capabilities.set(firefly::Capability::Sd, true);
             post_background_system_event({
                 firefly::EventType::CapabilityChanged,
                 firefly::capabilityBit(firefly::Capability::Sd),
                 now
             });
-            Serial.println("SD card mounted at /FireflyOS.");
+            Serial.printf("SD card mounted at /FireflyOS; removed %u "
+                          "incomplete recording(s).\n", removed);
         }
     }
 }
@@ -1224,6 +1274,7 @@ void firefly_process_settings_commands() {
                     command.value < 0 ? 0 :
                     (command.value > 100 ? 100 : command.value));
                 save_volume_preference();
+                audio_service.setVolume(volume_level);
                 refresh_sound_alarm_ui();
                 break;
             case firefly::SettingsCommandType::SetLocalTime:
@@ -1280,6 +1331,10 @@ void firefly_process_power_policy() {
         firefly_board.setDisplayBrightness(effective_brightness);
         last_applied_brightness = effective_brightness;
     }
+    if(mode == firefly::PowerMode::CriticalBattery ||
+       mode == firefly::PowerMode::ThermalProtection) {
+        recorder_app.stopForSafety();
+    }
 }
 
 void firefly_process_tools_commands() {
@@ -1289,6 +1344,62 @@ void firefly_process_tools_commands() {
         if(command.type == firefly::ToolsCommandType::SetBrightness) {
             set_screen_brightness_level(command.value);
         }
+    }
+}
+
+void firefly_process_media_apps() {
+    const bool sd_available =
+        system_capabilities.has(firefly::Capability::Sd) && sd_card.mounted();
+    static uint32_t last_storage_probe_at = 0;
+    static uint64_t total = 0;
+    static uint64_t used = 0;
+    const uint32_t now = millis();
+    if(!sd_available) {
+        total = 0;
+        used = 0;
+    } else if(last_storage_probe_at == 0 ||
+              now - last_storage_probe_at >= 1000UL) {
+        last_storage_probe_at = now;
+        total = storage_service.sdTotalBytes();
+        used = storage_service.sdUsedBytes();
+    }
+    const uint64_t free_bytes = total > used ? total - used : 0;
+
+    files_app.bindStorage(storage_service, file_scan_service, sd_available);
+    files_app.tick();
+    music_app.bindStorage(storage_service, sd_available);
+    music_app.tick(now, runtime_power_mode != firefly::PowerMode::Active);
+    recorder_app.bindStorage(storage_service, sd_available, free_bytes);
+    recorder_app.tick(now, static_cast<int64_t>(time(nullptr)));
+    themes_app.bindStorage(storage_service, sd_available);
+    themes_app.tick();
+
+    uint32_t applied_palette[5]{};
+    if(themes_app.takeAppliedPalette(applied_palette)) {
+        const firefly::UiTokens previous_tokens = firefly::UiTheme::fireflyDefault();
+        const firefly::UiTokens next_tokens = firefly::UiTheme::fromPalette(
+            applied_palette);
+        firefly::UiComponents::applyThemeTree(scr_firefly, previous_tokens,
+                                               next_tokens);
+        firefly::UiTheme::setRuntime(next_tokens);
+        settings_theme_surface = lv_color_hex(applied_palette[1]);
+        settings_theme_accent = lv_color_hex(applied_palette[2]);
+        settings_theme_action = lv_color_hex(applied_palette[3]);
+        storage_service.loadSettings(system_settings);
+        if(scr_firefly) lv_obj_invalidate(scr_firefly);
+    }
+
+    const char * media_status = "";
+    const char * glance_status = "";
+    if(recorder_app.recording()) {
+        media_status = "REC";
+        glance_status = "RECORDING";
+    } else if(music_app.playing()) {
+        media_status = "PLAY";
+    }
+    if(media_status_label) lv_label_set_text(media_status_label, media_status);
+    if(sleep_media_status_label) {
+        lv_label_set_text(sleep_media_status_label, glance_status);
     }
 }
 

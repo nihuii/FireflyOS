@@ -7,6 +7,7 @@ namespace firefly {
 
 class SystemOverlayHost {
 public:
+    static constexpr uint8_t kAlarmPriority = 4;
     static bool acceptsPriority(uint8_t current, uint8_t incoming) {
         return incoming >= 1 && incoming <= 5 && incoming >= current;
     }

@@ -5,6 +5,8 @@
 #include <esp_littlefs.h>
 #include <string.h>
 
+#include "../hal/SdCardDevice.h"
+
 namespace firefly {
 namespace {
 
@@ -265,6 +267,278 @@ bool StorageService::saveThemeCache(const char * theme_id,
     preferences.end();
     if(!ok) recordFailure(StorageDiagnosticCode::WriteFailed);
     return ok;
+}
+
+bool StorageService::loadThemeCache(char * theme_id,
+                                    size_t id_size,
+                                    uint32_t palette[5],
+                                    bool & present) {
+    if(!theme_id || id_size == 0 || !palette) return false;
+    theme_id[0] = '\0';
+    memset(palette, 0, sizeof(uint32_t) * 5);
+    present = false;
+    Preferences preferences;
+    if(!openNamespace(preferences, kSystemNamespace, true)) {
+        recordFailure(StorageDiagnosticCode::NamespaceOpenFailed);
+        return false;
+    }
+    present = preferences.isKey("cache_theme");
+    bool ok = true;
+    if(present) {
+        const String cached = preferences.getString("cache_theme", "");
+        strlcpy(theme_id, cached.c_str(), id_size);
+        const char * keys[] = {"th_bg", "th_surface", "th_primary",
+                              "th_second", "th_critical"};
+        for(uint8_t i = 0; i < 5; ++i) {
+            if(!preferences.isKey(keys[i])) {
+                ok = false;
+                break;
+            }
+            palette[i] = preferences.getUInt(keys[i], 0);
+        }
+    }
+    preferences.end();
+    if(!ok) recordFailure(StorageDiagnosticCode::ReadFailed);
+    return ok;
+}
+
+bool StorageService::clearThemeCache() {
+    Preferences preferences;
+    if(!openNamespace(preferences, kSystemNamespace, false)) {
+        recordFailure(StorageDiagnosticCode::NamespaceOpenFailed);
+        return false;
+    }
+    const char * keys[] = {"cache_theme", "th_bg", "th_surface",
+                          "th_primary", "th_second", "th_critical"};
+    bool ok = true;
+    for(const char * key : keys) {
+        if(preferences.isKey(key) && !preferences.remove(key)) ok = false;
+    }
+    preferences.end();
+    if(!ok) recordFailure(StorageDiagnosticCode::WriteFailed);
+    return ok;
+}
+
+void StorageService::attachSd(fs::FS & filesystem, SdCardDevice & device) {
+    if(!sd_mutex_) sd_mutex_ = xSemaphoreCreateMutex();
+    sd_filesystem_ = &filesystem;
+    sd_device_ = &device;
+}
+
+void StorageService::detachSd() {
+    sd_filesystem_ = nullptr;
+    sd_device_ = nullptr;
+}
+
+bool StorageService::sdAvailable() const {
+    return sd_filesystem_ && sd_device_ && sd_device_->mounted();
+}
+
+bool StorageService::validateSdSession() {
+    if(!sd_device_ || !takeSdLock()) return false;
+    const bool available = sd_device_->validateSession();
+    giveSdLock();
+    return available;
+}
+
+uint64_t StorageService::sdTotalBytes() {
+    if(!sdAvailable() || !takeSdLock()) return 0;
+    const uint64_t total = sd_device_->totalBytes();
+    giveSdLock();
+    return total;
+}
+
+uint64_t StorageService::sdUsedBytes() {
+    if(!sdAvailable() || !takeSdLock()) return 0;
+    const uint64_t used = sd_device_->usedBytes();
+    giveSdLock();
+    return used;
+}
+
+bool StorageService::isManagedPath(const char * path) {
+    constexpr const char * root = "/FireflyOS";
+    constexpr size_t root_length = 10;
+    if(!path || strncmp(path, root, root_length) != 0 ||
+       (path[root_length] != '\0' && path[root_length] != '/')) {
+        return false;
+    }
+    const char * component = path + root_length;
+    if(*component == '/') ++component;
+    if(*component) {
+        static const char * const names[] = {
+            "Music", "Recordings", "Pictures", "Themes",
+            "Updates", "Backups", "Logs",
+        };
+        bool managed_top_level = false;
+        for(const char * name : names) {
+            const size_t length = strlen(name);
+            if(strncmp(component, name, length) == 0 &&
+               (component[length] == '\0' || component[length] == '/')) {
+                managed_top_level = true;
+                break;
+            }
+        }
+        if(!managed_top_level) return false;
+    }
+    for(const char * cursor = component; ; ++cursor) {
+        const char value = *cursor;
+        if(value == '\\' || value == ':' ||
+           (static_cast<unsigned char>(value) < 0x20 && value != '\0')) {
+            return false;
+        }
+        if(value == '/' || value == '\0') {
+            const size_t length = static_cast<size_t>(cursor - component);
+            if((length == 1 && component[0] == '.') ||
+               (length == 2 && component[0] == '.' && component[1] == '.')) {
+                return false;
+            }
+            if(value == '\0') break;
+            if(length == 0) return false;
+            component = cursor + 1;
+        }
+    }
+    return true;
+}
+
+bool StorageService::takeSdLock(TickType_t timeout) {
+    return sd_mutex_ && xSemaphoreTake(sd_mutex_, timeout) == pdTRUE;
+}
+
+void StorageService::giveSdLock() {
+    if(sd_mutex_) xSemaphoreGive(sd_mutex_);
+}
+
+fs::File StorageService::openManaged(const char * path, const char * mode) {
+    if(!sdAvailable() || !isManagedPath(path) || !takeSdLock()) return {};
+    fs::File file = sd_filesystem_->open(path, mode);
+    if(!file && sd_device_) sd_device_->validateSession();
+    else if(file && sd_device_) sd_device_->noteIoResult(true);
+    giveSdLock();
+    return file;
+}
+
+fs::File StorageService::openNextManaged(fs::File & directory) {
+    if(!sdAvailable() || !directory || !takeSdLock()) return {};
+    fs::File entry = directory.openNextFile();
+    if(!entry && sd_device_) sd_device_->validateSession();
+    else if(entry && sd_device_) sd_device_->noteIoResult(true);
+    giveSdLock();
+    return entry;
+}
+
+bool StorageService::managedFileName(fs::File & file,
+                                     char * out,
+                                     size_t out_size) {
+    if(!sdAvailable() || !file || !out || out_size == 0 || !takeSdLock()) {
+        return false;
+    }
+    const char * name = file.name();
+    const bool success = name && name[0];
+    if(success) strlcpy(out, name, out_size);
+    else out[0] = '\0';
+    if(sd_device_) sd_device_->noteIoResult(success);
+    giveSdLock();
+    return success;
+}
+
+bool StorageService::managedFilePath(fs::File & file,
+                                     char * out,
+                                     size_t out_size) {
+    if(!sdAvailable() || !file || !out || out_size == 0 || !takeSdLock()) {
+        return false;
+    }
+    const char * path = file.path();
+    const bool success = path && path[0] && isManagedPath(path);
+    if(success) strlcpy(out, path, out_size);
+    else out[0] = '\0';
+    if(sd_device_) sd_device_->noteIoResult(success);
+    giveSdLock();
+    return success;
+}
+
+bool StorageService::managedFileSize(fs::File & file, uint64_t & size) {
+    size = 0;
+    if(!sdAvailable() || !file || !takeSdLock()) return false;
+    size = file.size();
+    if(sd_device_) sd_device_->noteIoResult(true);
+    giveSdLock();
+    return true;
+}
+
+bool StorageService::managedFileIsDirectory(fs::File & file, bool & directory) {
+    directory = false;
+    if(!sdAvailable() || !file || !takeSdLock()) return false;
+    directory = file.isDirectory();
+    if(sd_device_) sd_device_->noteIoResult(true);
+    giveSdLock();
+    return true;
+}
+
+bool StorageService::managedExists(const char * path) {
+    if(!sdAvailable() || !isManagedPath(path) || !takeSdLock()) return false;
+    const bool present = sd_filesystem_->exists(path);
+    if(sd_device_) sd_device_->validateSession();
+    giveSdLock();
+    return present;
+}
+
+bool StorageService::removeManaged(const char * path) {
+    if(!sdAvailable() || !isManagedPath(path) || !takeSdLock()) return false;
+    const bool success = sd_filesystem_->remove(path);
+    if(sd_device_) sd_device_->noteIoResult(success);
+    giveSdLock();
+    return success;
+}
+
+bool StorageService::renameManaged(const char * from, const char * to) {
+    if(!sdAvailable() || !isManagedPath(from) || !isManagedPath(to) ||
+       !takeSdLock()) return false;
+    const bool success = sd_filesystem_->rename(from, to);
+    if(sd_device_) sd_device_->noteIoResult(success);
+    giveSdLock();
+    return success;
+}
+
+size_t StorageService::readManaged(fs::File & file,
+                                   uint8_t * data,
+                                   size_t length) {
+    if(!sdAvailable() || !file || !data || length == 0 || !takeSdLock()) return 0;
+    const size_t read = file.read(data, length);
+    if(sd_device_) sd_device_->noteIoResult(read == length);
+    giveSdLock();
+    return read;
+}
+
+size_t StorageService::writeManaged(fs::File & file,
+                                    const uint8_t * data,
+                                    size_t length) {
+    if(!sdAvailable() || !file || !data || length == 0 || !takeSdLock()) return 0;
+    const size_t written = file.write(data, length);
+    if(sd_device_) sd_device_->noteIoResult(written == length);
+    giveSdLock();
+    return written;
+}
+
+bool StorageService::seekManaged(fs::File & file, uint32_t position) {
+    if(!sdAvailable() || !file || !takeSdLock()) return false;
+    const bool success = file.seek(position);
+    if(sd_device_) sd_device_->noteIoResult(success);
+    giveSdLock();
+    return success;
+}
+
+void StorageService::closeManaged(fs::File & file) {
+    if(!file) return;
+    if(takeSdLock()) {
+        file.close();
+        giveSdLock();
+    } else {
+        file.close();
+    }
+}
+
+void StorageService::reportSdResult(bool success) {
+    if(sd_device_) sd_device_->noteIoResult(success);
 }
 
 void StorageService::applyLegacySnapshot(

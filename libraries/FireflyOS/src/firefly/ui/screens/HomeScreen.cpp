@@ -49,6 +49,7 @@ const char * HomeScreen::symbolFor(const char * id) {
     if(strcmp(id, "music") == 0) return LV_SYMBOL_AUDIO;
     if(strcmp(id, "recorder") == 0) return LV_SYMBOL_EDIT;
     if(strcmp(id, "files") == 0) return LV_SYMBOL_DIRECTORY;
+    if(strcmp(id, "themes") == 0) return LV_SYMBOL_IMAGE;
     if(strcmp(id, "diagnostics") == 0) return LV_SYMBOL_WARNING;
     return LV_SYMBOL_EYE_OPEN;
 }

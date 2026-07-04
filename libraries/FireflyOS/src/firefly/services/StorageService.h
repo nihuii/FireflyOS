@@ -2,10 +2,15 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <FS.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 #include "AlarmService.h"
 
 namespace firefly {
+
+class SdCardDevice;
 
 struct SystemSettings {
     uint16_t schema_version = 1;
@@ -65,6 +70,31 @@ public:
     bool loadThemeTokens(void * data, size_t length);
     bool saveThemeTokens(const void * data, size_t length);
     bool saveThemeCache(const char * theme_id, const uint32_t palette[5]);
+    bool loadThemeCache(char * theme_id, size_t id_size,
+                        uint32_t palette[5], bool & present);
+    bool clearThemeCache();
+
+    void attachSd(fs::FS & filesystem, SdCardDevice & device);
+    void detachSd();
+    bool sdAvailable() const;
+    bool validateSdSession();
+    uint64_t sdTotalBytes();
+    uint64_t sdUsedBytes();
+    fs::File openManaged(const char * path, const char * mode = FILE_READ);
+    fs::File openNextManaged(fs::File & directory);
+    bool managedFileName(fs::File & file, char * out, size_t out_size);
+    bool managedFilePath(fs::File & file, char * out, size_t out_size);
+    bool managedFileSize(fs::File & file, uint64_t & size);
+    bool managedFileIsDirectory(fs::File & file, bool & directory);
+    bool managedExists(const char * path);
+    bool removeManaged(const char * path);
+    bool renameManaged(const char * from, const char * to);
+    size_t readManaged(fs::File & file, uint8_t * data, size_t length);
+    size_t writeManaged(fs::File & file, const uint8_t * data, size_t length);
+    bool seekManaged(fs::File & file, uint32_t position);
+    void closeManaged(fs::File & file);
+    void reportSdResult(bool success);
+    static bool isManagedPath(const char * path);
 
     bool littleFsMounted() const { return littlefs_mounted_; }
     bool littleFsReadOnly() const { return littlefs_read_only_; }
@@ -79,10 +109,15 @@ private:
     bool initializeNamespaces();
     bool migrateLegacyPreferences();
     bool mountLittleFs();
+    bool takeSdLock(TickType_t timeout = pdMS_TO_TICKS(50));
+    void giveSdLock();
     void recordFailure(StorageDiagnosticCode code);
 
     bool littlefs_mounted_ = false;
     bool littlefs_read_only_ = false;
+    fs::FS * sd_filesystem_ = nullptr;
+    SdCardDevice * sd_device_ = nullptr;
+    SemaphoreHandle_t sd_mutex_ = nullptr;
     StorageDiagnostics diagnostics_{};
 };
 

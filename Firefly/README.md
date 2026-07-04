@@ -9,7 +9,7 @@
 - `loop()` 统一消费事件后执行页面动作；后台任务不可用时回退为单核轮询。
 - `LegacyBoardAdapter` 包裹现有 RTC、PMU 和 CO5300 对象，旧全局对象暂时保留，避免影响当前页面。
 - 新 HAL 的 I2C 事务通过带超时的 FreeRTOS mutex 串行化；持锁期间不更新 UI。
-- QMI8658 已通过受锁 HAL 接入运动服务；ES8311 音频功能仍按后续计划实现。
+- QMI8658 已通过受锁 HAL 接入运动服务；ES8311 通过同一共享 I2C 锁接入独占音频服务。
 - `FIREFLY_GATE_A` 周期日志记录内存低水位、事件投递失败数、桌面切换最大耗时，以及运动有效/无效样本、步数和抬腕事件计数。
 
 统一验证入口为：
@@ -38,6 +38,22 @@ powershell -ExecutionPolicy Bypass -File .\tools\verify_all.ps1
 - 自动验证已经通过 Python 契约、核心测试草图编译、完整固件编译和文档检查；计步精度、抬腕成功率、LightSleep 和续航不能据此视为真机通过。
 
 详细边界与验收状态见 `docs/模块说明/03-时间闹钟电源与活动.md`。
+
+## 计划 4：存储、音频与媒体
+
+- StorageService 管理版本化 NVS、旧设置迁移和 LittleFS 有界缓存。
+- StorageService 统一受管 SD 会话并串行化媒体文件 I/O；连续两次客户端 I/O 失败进入拔卡事件流程。
+- SD_MMC 固定在 `/FireflyOS/` 七个受管目录内，连续两次会话失败后发布拔卡事件。
+- ES8311/I2S 支持内置闹钟铃声、PCM/WAV 流式播放和 16kHz 单声道录音；功放空闲时关闭。
+- Files、Music、Recorder、Themes 已替换桌面占位路由，分别采用 32 项分页、128 首索引、2MB 录音门槛和 512KB 图标包上限。
+- Files 后台每轮最多扫描 4 项，并通过 `FilesPageReady` 由 UI 主循环接收 32 项固定页。
+- 闹钟通过 `AlarmTriggered` 事件驱动覆盖层和 AudioService，不再由时钟回调直接触发提醒 UI。
+- 主题包声明 RGB565 宽高并返回具体资源诊断；应用成功后递归重映射现有 LVGL 控件树主题令牌。
+- 录音状态在状态栏和一瞥界面持续可见；后台任务仍不访问 LVGL。
+- 2026-07-04 补全后的 Python 全集在受控沙箱外 51 项通过；FireflyCoreTests、AudioProbe 和 Firefly 主固件最新编译通过，文档与 diff 检查通过。沙箱内仍可能因测试临时目录 ACL 出现 2 项环境性 `PermissionError`。
+- 软件构建通过不能代替 SD 拔插、录放音、长时间循环、主题回滚和触摸延迟的真机验收。
+
+详细边界与待验项目见 `docs/模块说明/05-存储音频与媒体.md`。
 
 ## 本次功能
 

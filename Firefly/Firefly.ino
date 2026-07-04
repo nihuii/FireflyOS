@@ -43,6 +43,10 @@ void handle_shell_route(firefly::Route previous, firefly::Route current) {
     tools_app.hide();
     activity_app_active = false;
     activity_app.hide();
+    files_app.hide();
+    music_app.hide();
+    recorder_app.hide();
+    themes_app.hide();
     app_shell_screen.hide();
 
     if(current == firefly::Route::Lock) {
@@ -81,6 +85,26 @@ void handle_shell_route(firefly::Route previous, firefly::Route current) {
         activity_app.show();
         activity_app_active = true;
         ui_shell.bringAppToFront(activity_app.root());
+        return;
+    }
+    if(current == firefly::Route::Files) {
+        files_app.show();
+        ui_shell.bringAppToFront(files_app.root());
+        return;
+    }
+    if(current == firefly::Route::Music) {
+        music_app.show();
+        ui_shell.bringAppToFront(music_app.root());
+        return;
+    }
+    if(current == firefly::Route::Recorder) {
+        recorder_app.show();
+        ui_shell.bringAppToFront(recorder_app.root());
+        return;
+    }
+    if(current == firefly::Route::Themes) {
+        themes_app.show();
+        ui_shell.bringAppToFront(themes_app.root());
         return;
     }
 
@@ -596,6 +620,11 @@ void build_firefly_os() {
     calendar_app.create(ui_shell.appHost(), app_components);
     tools_app.create(ui_shell.appHost(), app_components);
     activity_app.create(ui_shell.appHost(), app_components);
+    files_app.create(ui_shell.appHost(), app_components);
+    music_app.create(ui_shell.appHost(), app_components, audio_service);
+    recorder_app.create(ui_shell.appHost(), app_components, audio_service);
+    themes_app.create(ui_shell.appHost(), app_components,
+                      theme_package_service, storage_service);
     ui_shell.setRouteHandler(handle_shell_route);
 
     notif_panel = lv_obj_create(ui_shell.panelHost());
@@ -745,6 +774,11 @@ void build_firefly_os() {
     lv_obj_set_style_text_color(status_time_label, lv_color_hex(0xFFFFFF), 0);
     lv_label_set_text(status_time_label, "--:--");
     lv_obj_align(status_time_label, LV_ALIGN_TOP_LEFT, 48, 15);
+
+    media_status_label = lv_label_create(top_status_bar);
+    lv_obj_set_style_text_color(media_status_label, lv_color_hex(0x62E8CA), 0);
+    lv_label_set_text(media_status_label, "");
+    lv_obj_align(media_status_label, LV_ALIGN_TOP_MID, 0, 21);
 
     notif_time_label = lv_label_create(top_status_bar);
     lv_obj_set_style_text_font(notif_time_label, &lv_font_montserrat_48, 0);
@@ -1229,6 +1263,12 @@ void build_firefly_os() {
     lv_label_set_text(sleep_date_label, "----/--/--");
     lv_obj_align(sleep_date_label, LV_ALIGN_TOP_MID, 0, 346);
 
+    sleep_media_status_label = lv_label_create(sleep_screen);
+    lv_obj_set_style_text_color(sleep_media_status_label,
+                                lv_color_hex(0xFF626A), 0);
+    lv_label_set_text(sleep_media_status_label, "");
+    lv_obj_align(sleep_media_status_label, LV_ALIGN_TOP_MID, 0, 390);
+
     glance_screen.bind(sleep_screen, sleep_icon_img, sleep_time_label,
                        sleep_date_label, sleep_image_provider, SLEEP_ICON_COUNT);
 
@@ -1257,7 +1297,14 @@ void setup(void) {
 
     const bool sd_ready = sd_card.begin();
     system_capabilities.set(firefly::Capability::Sd, sd_ready);
-    if(!sd_ready) {
+    if(sd_ready) {
+        storage_service.attachSd(sd_card.filesystem(), sd_card);
+        const uint16_t removed =
+            firefly::AudioService::cleanupTemporaryRecordings(storage_service);
+        if(removed > 0) {
+            Serial.printf("Removed %u incomplete recording(s).\n", removed);
+        }
+    } else {
         Serial.println("SD card unavailable; core features remain active.");
     }
 
@@ -1284,6 +1331,13 @@ void setup(void) {
         firefly_i2c_bus.unlock();
     } else {
         Serial.println("PMU initialization skipped: I2C lock timeout");
+    }
+
+    const bool audio_ready = audio_service.begin();
+    audio_service.setVolume(volume_level);
+    system_capabilities.set(firefly::Capability::Audio, audio_ready);
+    if(!audio_ready) {
+        Serial.println("ES8311/I2S unavailable; visual alerts remain active.");
     }
 
     const bool motion_ready = motion_service.begin();
@@ -1381,12 +1435,14 @@ void setup(void) {
 }
 
 void loop() {
+    audio_service.service();
     firefly_process_sd_card();
     firefly_process_system_events();
     firefly_process_clock_sessions();
     firefly_process_settings_commands();
     firefly_process_power_policy();
     firefly_process_tools_commands();
+    firefly_process_media_apps();
     update_charging_overlay();
     firefly_report_gate_a_diagnostics();
 

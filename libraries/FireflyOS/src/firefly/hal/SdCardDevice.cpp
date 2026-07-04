@@ -113,6 +113,10 @@ bool SdCardDevice::takeRemovedEvent() {
     return pending;
 }
 
+fs::FS & SdCardDevice::filesystem() {
+    return SD_MMC;
+}
+
 bool SdCardDevice::isSafeRelativePath(const char * relative_path) {
     if(!relative_path || !relative_path[0] || relative_path[0] == '/' ||
        !hasManagedTopLevel(relative_path)) {

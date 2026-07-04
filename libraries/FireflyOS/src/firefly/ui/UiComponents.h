@@ -18,6 +18,9 @@ public:
                                   const char * text);
     static void styleSlider(lv_obj_t * slider, const UiTokens & tokens);
     static void styleSwitch(lv_obj_t * sw, const UiTokens & tokens);
+    static void applyThemeTree(lv_obj_t * root,
+                               const UiTokens & previous,
+                               const UiTokens & next);
 
     // Migration bridges preserve current page colors while removing local style lambdas.
     static void styleCard(lv_obj_t * obj,

@@ -196,7 +196,7 @@ class RepositoryContracts(unittest.TestCase):
             encoding="utf-8", errors="ignore"
         )
         self.assertIn("alarm_service.nextTrigger", interaction)
-        self.assertIn("alarm_service.shouldTrigger", interaction)
+        self.assertIn("alarm_service.publishTrigger", interaction)
         self.assertIn("lock_screen.setNextAlarm", interaction)
 
     def test_home_pager_updates_its_position_indicator(self):

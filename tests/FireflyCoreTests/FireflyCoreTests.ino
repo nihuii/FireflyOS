@@ -12,7 +12,13 @@
 #include <firefly/services/StorageService.h>
 #include <firefly/services/TimeService.h>
 #include <firefly/services/ThemePackageService.h>
+#include <firefly/services/AudioService.h>
+#include <firefly/services/FileScanService.h>
 #include <firefly/hal/SdCardDevice.h>
+#include <firefly/apps/files/FilesApp.h>
+#include <firefly/apps/music/MusicApp.h>
+#include <firefly/apps/recorder/RecorderApp.h>
+#include <firefly/apps/themes/ThemesApp.h>
 
 static uint16_t failures = 0;
 
@@ -462,6 +468,32 @@ static void test_settings_commands_preserve_time_and_alarm_payloads() {
                 "settings preserves fixed alarm payload");
 }
 
+static void test_alarm_service_publishes_trigger_event_once() {
+    firefly::AlarmService service;
+    firefly::EventBus events;
+    const int64_t now = 1767222600;
+    const time_t raw = static_cast<time_t>(now);
+    struct tm local{};
+    localtime_r(&raw, &local);
+    firefly::Alarm alarm{};
+    alarm.configured = true;
+    alarm.enabled = true;
+    alarm.hour = static_cast<uint8_t>(local.tm_hour);
+    alarm.minute = static_cast<uint8_t>(local.tm_min);
+    alarm.days_mask = 0x7F;
+    service.set(1, alarm);
+
+    expect_true(service.publishTrigger(now, 1234, events),
+                "alarm publishes due trigger");
+    firefly::SystemEvent event{};
+    expect_true(events.take(event) &&
+                    event.type == firefly::EventType::AlarmTriggered &&
+                    event.value == 1 && event.timestamp_ms == 1234,
+                "alarm trigger event carries slot");
+    expect_true(!service.publishTrigger(now, 1235, events),
+                "alarm trigger publishes once per minute");
+}
+
 static void test_sd_paths_stay_inside_managed_root() {
     expect_true(firefly::SdCardDevice::isSafeRelativePath("Music/track.wav"),
                 "SD accepts managed relative file");
@@ -473,6 +505,15 @@ static void test_sd_paths_stay_inside_managed_root() {
                 "SD rejects parent traversal");
     expect_true(!firefly::SdCardDevice::isSafeRelativePath("Music\\track.wav"),
                 "SD rejects backslash traversal");
+    expect_true(firefly::StorageService::isManagedPath(
+                    "/FireflyOS/Themes/Firefly/theme.json"),
+                "storage accepts a managed absolute path");
+    expect_true(!firefly::StorageService::isManagedPath(
+                    "/FireflyOS/Other/file.bin"),
+                "storage rejects an unregistered top-level directory");
+    expect_true(!firefly::StorageService::isManagedPath(
+                    "/FireflyOS/Music/../Backups/file.bin"),
+                "storage rejects parent traversal");
 }
 
 static void test_sd_removal_requires_two_consecutive_failures() {
@@ -492,7 +533,9 @@ static void test_theme_manifest_validation() {
         "\"bg_base\":\"#05090C\",\"bg_surface\":\"#0C1820\","
         "\"primary\":\"#5FE7C7\",\"secondary\":\"#6EC4D6\","
         "\"critical\":\"#FF5A5F\"},"
-        "\"wallpaper\":\"wallpaper.rgb565\",\"glance\":\"glance.png\","
+        "\"wallpaper\":\"wallpaper.rgb565\","
+        "\"wallpaper_width\":410,\"wallpaper_height\":502,"
+        "\"glance\":\"glance.png\","
         "\"icon_pack\":\"icons\"}";
     firefly::ThemePackageService service;
     firefly::ThemeManifest manifest{};
@@ -510,11 +553,102 @@ static void test_theme_manifest_validation() {
         "\"bg_base\":\"#05090C\",\"bg_surface\":\"#0C1820\","
         "\"primary\":\"#5FE7C7\",\"secondary\":\"#6EC4D6\","
         "\"critical\":\"#FF5A5F\"},"
-        "\"wallpaper\":\"../wallpaper.rgb565\",\"glance\":\"glance.png\","
+        "\"wallpaper\":\"../wallpaper.rgb565\","
+        "\"wallpaper_width\":410,\"wallpaper_height\":502,"
+        "\"glance\":\"glance.png\","
         "\"icon_pack\":\"icons\"}";
     expect_true(!service.parseManifest(traversal, sizeof(traversal) - 1,
                                        manifest, error),
                 "theme manifest rejects parent traversal");
+}
+
+static void test_audio_session_priority() {
+    firefly::AudioSessionArbiter arbiter;
+    expect_true(arbiter.acquire(firefly::AudioUse::Music),
+                "music acquires audio");
+    expect_true(arbiter.acquire(firefly::AudioUse::System),
+                "system sound preempts music");
+    expect_true(arbiter.acquire(firefly::AudioUse::Alarm),
+                "alarm preempts system sound");
+    expect_true(arbiter.current() == firefly::AudioUse::Alarm,
+                "alarm owns audio");
+    expect_true(!arbiter.acquire(firefly::AudioUse::Recorder),
+                "recorder cannot interrupt alarm");
+    arbiter.release(firefly::AudioUse::Music);
+    expect_true(arbiter.current() == firefly::AudioUse::Alarm,
+                "non-owner cannot release audio");
+    arbiter.release(firefly::AudioUse::Alarm);
+    expect_true(arbiter.current() == firefly::AudioUse::None,
+                "owner releases audio");
+}
+
+static void test_pcm_wav_header_round_trip() {
+    uint8_t header[44]{};
+    expect_true(firefly::AudioService::buildWavHeader(
+                    header, sizeof(header), 32000, 16000, 1),
+                "build mono WAV header");
+    firefly::WavInfo info{};
+    expect_true(firefly::AudioService::parseWavHeader(
+                    header, sizeof(header), info),
+                "parse generated WAV header");
+    expect_true(info.sample_rate == 16000 && info.channels == 1 &&
+                    info.bits_per_sample == 16 && info.data_bytes == 32000,
+                "WAV metadata round trips");
+    header[20] = 3;
+    expect_true(!firefly::AudioService::parseWavHeader(
+                    header, sizeof(header), info),
+                "reject non-PCM WAV");
+}
+
+static void test_alarm_ringtone_resources() {
+    const char * expected[] = {
+        "Trailblaze", "Starglow", "Night Sky", "Classic Bell"
+    };
+    for(uint8_t i = 0; i < firefly::AlarmService::kRingtoneCount; ++i) {
+        const firefly::AlarmToneResource & resource =
+            firefly::AlarmService::ringtoneResource(i);
+        expect_true(strcmp(resource.name, expected[i]) == 0,
+                    "ringtone index remains stable");
+        expect_true(resource.samples != nullptr && resource.frames > 0,
+                    "ringtone has built-in PCM");
+        expect_true(resource.sample_rate == 16000 && resource.loop,
+                    "ringtone is looping 16 kHz mono PCM");
+        expect_true(resource.frames <=
+                        firefly::AlarmService::kMaximumRingtoneFrames,
+                    "ringtone stays within twenty-second budget");
+    }
+}
+
+static void test_media_app_fixed_boundaries() {
+    firefly::FileListItem music{};
+    strlcpy(music.name, "track.wav", sizeof(music.name));
+    expect_true(firefly::FilesApp::canDeleteFile("Music", music),
+                "ordinary music file can be deleted");
+    expect_true(!firefly::FilesApp::canDeleteFile("Logs", music),
+                "log files cannot be deleted from FilesApp");
+    strlcpy(music.name, "../escape.wav", sizeof(music.name));
+    expect_true(!firefly::FilesApp::canDeleteFile("Music", music),
+                "delete rejects path escape");
+    expect_true(firefly::FilesApp::kPageSize == 32 &&
+                    firefly::MusicApp::kMaxTracks == 128,
+                "media indexes use fixed capacities");
+
+    char name[48]{};
+    expect_true(firefly::RecorderApp::makeRecordingName(
+                    0, 42, name, sizeof(name)),
+                "fallback recording name formats");
+    expect_true(strcmp(name, "REC_000042.wav") == 0,
+                "fallback recording name is monotonic");
+}
+
+static void test_file_scan_page_is_fixed_and_bounded() {
+    firefly::FileScanPage page{};
+    expect_true(firefly::FileScanService::kPageSize == 32,
+                "file scanner page holds 32 items");
+    expect_true(firefly::FileScanService::kEntriesPerTick == 4,
+                "file scanner work per tick is bounded");
+    expect_true(sizeof(page.items[0].name) == 48,
+                "file scanner names stay fixed");
 }
 
 static void test_storage_settings_defaults_and_namespaces() {
@@ -1191,6 +1325,11 @@ void setup() {
     test_sd_paths_stay_inside_managed_root();
     test_sd_removal_requires_two_consecutive_failures();
     test_theme_manifest_validation();
+    test_audio_session_priority();
+    test_pcm_wav_header_round_trip();
+    test_alarm_ringtone_resources();
+    test_media_app_fixed_boundaries();
+    test_file_scan_page_is_fixed_and_bounded();
     test_app_registry();
     test_lifecycle_and_resource_governor();
     test_app_manager_publishes_requests();
@@ -1199,6 +1338,7 @@ void setup() {
     test_navigation_stack();
     test_overlay_priority_policy();
     test_alarm_next_trigger();
+    test_alarm_service_publishes_trigger_event_once();
     test_time_service_invalid_rtc();
     test_time_service_reload_set_and_tick();
     test_countdown_timer_uses_target_time();

@@ -12,6 +12,81 @@ lv_color_t colorFrom565(uint16_t value) {
                          static_cast<uint8_t>((blue << 3) | (blue >> 2)));
 }
 
+uint32_t colorDistance(lv_color_t left, lv_color_t right) {
+    const int32_t red = static_cast<int32_t>(LV_COLOR_GET_R(left)) -
+                        LV_COLOR_GET_R(right);
+    const int32_t green = static_cast<int32_t>(LV_COLOR_GET_G(left)) -
+                          LV_COLOR_GET_G(right);
+    const int32_t blue = static_cast<int32_t>(LV_COLOR_GET_B(left)) -
+                         LV_COLOR_GET_B(right);
+    return static_cast<uint32_t>(red * red + green * green + blue * blue);
+}
+
+bool remapSemanticColor(lv_color_t current,
+                        const UiTokens & previous,
+                        const UiTokens & next,
+                        lv_color_t & mapped) {
+    const uint16_t old_values[] = {
+        previous.bg_base, previous.bg_surface, previous.firefly_primary,
+        previous.firefly_secondary, previous.critical,
+    };
+    const uint16_t new_values[] = {
+        next.bg_base, next.bg_surface, next.firefly_primary,
+        next.firefly_secondary, next.critical,
+    };
+    uint32_t best_distance = UINT32_MAX;
+    uint8_t best = 0;
+    for(uint8_t i = 0; i < 5; ++i) {
+        const uint32_t distance = colorDistance(current, colorFrom565(old_values[i]));
+        if(distance < best_distance) {
+            best_distance = distance;
+            best = i;
+        }
+    }
+    if(best_distance > 3600) return false;
+    mapped = colorFrom565(new_values[best]);
+    return true;
+}
+
+void applySelector(lv_obj_t * object,
+                   lv_style_selector_t selector,
+                   const UiTokens & previous,
+                   const UiTokens & next) {
+    lv_color_t mapped{};
+    if(remapSemanticColor(lv_obj_get_style_bg_color(object, selector),
+                          previous, next, mapped)) {
+        lv_obj_set_style_bg_color(object, mapped, selector);
+    }
+    if(remapSemanticColor(lv_obj_get_style_text_color(object, selector),
+                          previous, next, mapped)) {
+        lv_obj_set_style_text_color(object, mapped, selector);
+    }
+    if(remapSemanticColor(lv_obj_get_style_border_color(object, selector),
+                          previous, next, mapped)) {
+        lv_obj_set_style_border_color(object, mapped, selector);
+    }
+    if(remapSemanticColor(lv_obj_get_style_outline_color(object, selector),
+                          previous, next, mapped)) {
+        lv_obj_set_style_outline_color(object, mapped, selector);
+    }
+    if(remapSemanticColor(lv_obj_get_style_arc_color(object, selector),
+                          previous, next, mapped)) {
+        lv_obj_set_style_arc_color(object, mapped, selector);
+    }
+    if(remapSemanticColor(lv_obj_get_style_line_color(object, selector),
+                          previous, next, mapped)) {
+        lv_obj_set_style_line_color(object, mapped, selector);
+    }
+    if(remapSemanticColor(lv_obj_get_style_shadow_color(object, selector),
+                          previous, next, mapped)) {
+        lv_obj_set_style_shadow_color(object, mapped, selector);
+    }
+    if(remapSemanticColor(lv_obj_get_style_img_recolor(object, selector),
+                          previous, next, mapped)) {
+        lv_obj_set_style_img_recolor(object, mapped, selector);
+    }
+}
+
 }  // namespace
 
 lv_obj_t * UiComponents::createPage(lv_obj_t * parent, const UiTokens & tokens) {
@@ -139,6 +214,31 @@ void UiComponents::styleSwitch(lv_obj_t * sw,
     lv_obj_set_style_bg_color(sw, lv_color_white(), LV_PART_KNOB);
     lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, LV_PART_KNOB);
     lv_obj_set_style_shadow_width(sw, 0, LV_PART_KNOB);
+}
+
+void UiComponents::applyThemeTree(lv_obj_t * root,
+                                  const UiTokens & previous,
+                                  const UiTokens & next) {
+    if(!root) return;
+    const lv_style_selector_t selectors[] = {
+        LV_PART_MAIN,
+        LV_PART_MAIN | LV_STATE_CHECKED,
+        LV_PART_MAIN | LV_STATE_PRESSED,
+        LV_PART_INDICATOR,
+        LV_PART_INDICATOR | LV_STATE_CHECKED,
+        LV_PART_KNOB,
+        LV_PART_ITEMS,
+        LV_PART_ITEMS | LV_STATE_CHECKED,
+        LV_PART_SCROLLBAR,
+    };
+    for(const lv_style_selector_t selector : selectors) {
+        applySelector(root, selector, previous, next);
+    }
+    const uint32_t child_count = lv_obj_get_child_cnt(root);
+    for(uint32_t i = 0; i < child_count; ++i) {
+        applyThemeTree(lv_obj_get_child(root, i), previous, next);
+    }
+    lv_obj_invalidate(root);
 }
 
 }  // namespace firefly

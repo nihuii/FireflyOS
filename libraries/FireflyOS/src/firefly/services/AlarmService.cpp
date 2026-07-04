@@ -5,6 +5,68 @@
 namespace firefly {
 namespace {
 
+constexpr int16_t kTrailblaze[] = {
+    0, 3212, 6392, 9512, 12539, 15446, 18204, 20787,
+    23170, 25330, 27245, 28898, 30273, 31356, 32137, 32609,
+    32767, 32609, 32137, 31356, 30273, 28898, 27245, 25330,
+    23170, 20787, 18204, 15446, 12539, 9512, 6392, 3212,
+    0, -3212, -6392, -9512, -12539, -15446, -18204, -20787,
+    -23170, -25330, -27245, -28898, -30273, -31356, -32137, -32609,
+    -32767, -32609, -32137, -31356, -30273, -28898, -27245, -25330,
+    -23170, -20787, -18204, -15446, -12539, -9512, -6392, -3212,
+};
+
+constexpr int16_t kStarglow[] = {
+    0, 6392, 12539, 18204, 23170, 27245, 30273, 32137,
+    32767, 32137, 30273, 27245, 23170, 18204, 12539, 6392,
+    0, -6392, -12539, -18204, -23170, -27245, -30273, -32137,
+    -32767, -32137, -30273, -27245, -23170, -18204, -12539, -6392,
+};
+
+constexpr int16_t kNightSky[] = {
+    0, 1606, 3212, 4796, 6392, 7950, 9512, 11030,
+    12539, 13999, 15446, 16834, 18204, 19510, 20787, 21995,
+    23170, 24266, 25330, 26310, 27245, 28087, 28898, 29604,
+    30273, 30831, 31356, 31770, 32137, 32397, 32609, 32714,
+    32767, 32714, 32609, 32397, 32137, 31770, 31356, 30831,
+    30273, 29604, 28898, 28087, 27245, 26310, 25330, 24266,
+    23170, 21995, 20787, 19510, 18204, 16834, 15446, 13999,
+    12539, 11030, 9512, 7950, 6392, 4796, 3212, 1606,
+    0, -1606, -3212, -4796, -6392, -7950, -9512, -11030,
+    -12539, -13999, -15446, -16834, -18204, -19510, -20787, -21995,
+    -23170, -24266, -25330, -26310, -27245, -28087, -28898, -29604,
+    -30273, -30831, -31356, -31770, -32137, -32397, -32609, -32714,
+    -32767, -32714, -32609, -32397, -32137, -31770, -31356, -30831,
+    -30273, -29604, -28898, -28087, -27245, -26310, -25330, -24266,
+    -23170, -21995, -20787, -19510, -18204, -16834, -15446, -13999,
+    -12539, -11030, -9512, -7950, -6392, -4796, -3212, -1606,
+};
+
+constexpr int16_t kClassicBell[] = {
+    0, 20000, 28000, 22000, 8000, -10000, -22000, -26000,
+    -18000, -2000, 14000, 21000, 16000, 4000, -9000, -15000,
+    -11000, -1000, 8000, 12000, 9000, 2000, -5000, -8000,
+    -6000, -1000, 4000, 6000, 4000, 1000, -2500, -3500,
+};
+
+constexpr AlarmToneResource kRingtones[] = {
+    {"Trailblaze", kTrailblaze,
+     sizeof(kTrailblaze) / sizeof(kTrailblaze[0]), 16000, true},
+    {"Starglow", kStarglow,
+     sizeof(kStarglow) / sizeof(kStarglow[0]), 16000, true},
+    {"Night Sky", kNightSky,
+     sizeof(kNightSky) / sizeof(kNightSky[0]), 16000, true},
+    {"Classic Bell", kClassicBell,
+     sizeof(kClassicBell) / sizeof(kClassicBell[0]), 16000, true},
+};
+
+static_assert(sizeof(kRingtones) / sizeof(kRingtones[0]) ==
+                  AlarmService::kRingtoneCount,
+              "ringtone table must keep the public four-tone index");
+static_assert(sizeof(kNightSky) / sizeof(kNightSky[0]) <=
+                  AlarmService::kMaximumRingtoneFrames,
+              "ringtone exceeds the twenty-second PCM budget");
+
 uint8_t weekdayMaskForTmWday(int tm_wday) {
     if(tm_wday < 0 || tm_wday > 6) {
         return 0;
@@ -74,9 +136,27 @@ AlarmTrigger AlarmService::nextTrigger(int64_t now) const {
 }
 
 bool AlarmService::shouldTrigger(int64_t now, uint8_t & slot) {
+    if(!findDueSlot(now, slot)) return false;
+    last_trigger_minute_[slot] = now / 60;
+    return true;
+}
+
+bool AlarmService::publishTrigger(int64_t now,
+                                  uint32_t timestamp_ms,
+                                  EventBus & events) {
+    uint8_t slot = 0;
+    if(!findDueSlot(now, slot)) return false;
+    const SystemEvent event(EventType::AlarmTriggered, slot, timestamp_ms,
+                            EventPriority::Critical);
+    if(!events.post(event)) return false;
+    last_trigger_minute_[slot] = now / 60;
+    return true;
+}
+
+bool AlarmService::findDueSlot(int64_t now, uint8_t & slot) const {
     const time_t now_ts = static_cast<time_t>(now);
     struct tm now_tm;
-    localtime_r(&now_ts, &now_tm);
+    if(!localtime_r(&now_ts, &now_tm)) return false;
     const int64_t minute_key = now / 60;
 
     for(uint8_t alarm_slot = 0; alarm_slot < kSlots; ++alarm_slot) {
@@ -95,7 +175,6 @@ bool AlarmService::shouldTrigger(int64_t now, uint8_t & slot) {
             continue;
         }
 
-        last_trigger_minute_[alarm_slot] = minute_key;
         slot = alarm_slot;
         return true;
     }
@@ -111,6 +190,11 @@ void AlarmService::resetTriggerHistory() {
 
 bool AlarmService::matchesWeekday(uint8_t days_mask, int tm_wday) {
     return (days_mask & weekdayMaskForTmWday(tm_wday)) != 0;
+}
+
+const AlarmToneResource & AlarmService::ringtoneResource(uint8_t index) {
+    if(index >= kRingtoneCount) index = 0;
+    return kRingtones[index];
 }
 
 bool AlarmService::isActive(const Alarm & alarm) const {

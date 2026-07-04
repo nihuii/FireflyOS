@@ -1,15 +1,15 @@
 param(
-    [ValidateSet('Firefly', 'FireflyCoreTests')]
+    [ValidateSet('Firefly', 'FireflyCoreTests', 'AudioProbe')]
     [string]$Target = 'Firefly'
 )
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $fqbn = 'esp32:esp32:esp32s3:CPUFreq=240,FlashMode=qio,FlashSize=32M,PartitionScheme=app5M_fat24M_32MB,PSRAM=opi,LoopCore=0,EventsCore=0'
-$sketch = if($Target -eq 'Firefly') {
-    Join-Path $root 'Firefly'
-} else {
-    Join-Path $root 'tests\FireflyCoreTests'
+$sketch = switch($Target) {
+    'Firefly' { Join-Path $root 'Firefly' }
+    'FireflyCoreTests' { Join-Path $root 'tests\FireflyCoreTests' }
+    'AudioProbe' { Join-Path $root 'examples\09_FireflyOS_AudioProbe' }
 }
 $buildPath = Join-Path $root ".build\$Target"
 New-Item -ItemType Directory -Path $buildPath -Force | Out-Null

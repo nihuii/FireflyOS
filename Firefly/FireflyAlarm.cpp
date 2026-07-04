@@ -34,13 +34,6 @@ constexpr const char * DAY_LABELS[] = {
     "Sun"
 };
 
-constexpr const char * RINGTONE_NAMES[] = {
-    "Trailblaze",
-    "Starglow",
-    "Night Sky",
-    "Classic Bell"
-};
-
 constexpr char DAY_OPTIONS_TEXT[] =
     "Every day\nWeekdays\nWeekend\nMonday\nTuesday\nWednesday\nThursday\nFriday\nSaturday\nSunday";
 
@@ -83,10 +76,7 @@ void firefly_alarm_reset(FireflyAlarm & alarm, uint8_t slot_index) {
 }
 
 const char * firefly_alarm_ringtone_name(uint8_t index) {
-    if(index >= FIREFLY_ALARM_RINGTONE_COUNT) {
-        index = 0;
-    }
-    return RINGTONE_NAMES[index];
+    return firefly::AlarmService::ringtoneResource(index).name;
 }
 
 const char * firefly_alarm_day_label(uint8_t days_mask) {
