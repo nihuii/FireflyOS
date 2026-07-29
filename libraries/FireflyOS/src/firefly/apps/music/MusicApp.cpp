@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "../../ui/UiTheme.h"
+#include "../../services/CompanionSyncService.h"
 
 namespace firefly {
 namespace {
@@ -42,13 +43,21 @@ bool MusicApp::create(lv_obj_t * parent, UiComponents & components,
     lv_obj_t * title = UiComponents::createTitle(root_, tokens, "Music");
     lv_obj_set_pos(title, 28, 54);
     status_ = lv_label_create(root_);
-    lv_label_set_text(status_, "Local WAV library");
+    lv_obj_set_width(status_, 300);
+    lv_label_set_text(
+        status_,
+        "Target: Local library | Hold Refresh: Phone remote\n"
+        "Local WAV library"
+    );
     lv_obj_set_style_text_color(status_, lv_color_hex(tokens.text_secondary), 0);
     lv_obj_set_pos(status_, 30, 88);
     lv_obj_t * refresh = lv_btn_create(root_);
     lv_obj_set_size(refresh, 48, 48);
     lv_obj_set_pos(refresh, 334, 48);
-    lv_obj_add_event_cb(refresh, refreshEvent, LV_EVENT_CLICKED, this);
+    lv_obj_add_event_cb(refresh, refreshEvent, LV_EVENT_SHORT_CLICKED, this);
+    lv_obj_add_event_cb(
+        refresh, targetToggleEvent, LV_EVENT_LONG_PRESSED, this
+    );
     lv_obj_t * refresh_label = lv_label_create(refresh);
     lv_label_set_text(refresh_label, LV_SYMBOL_REFRESH);
     lv_obj_center(refresh_label);
@@ -66,14 +75,14 @@ bool MusicApp::create(lv_obj_t * parent, UiComponents & components,
     lv_obj_set_width(track_label_, 300);
     lv_obj_set_style_text_align(track_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(track_label_, lv_color_hex(tokens.text_primary), 0);
-    lv_label_set_text(track_label_, "Nothing playing");
+    lv_label_set_text(track_label_, "Target: Local | Nothing playing");
     lv_obj_align(track_label_, LV_ALIGN_TOP_MID, 0, 310);
     progress_ = lv_bar_create(root_);
     lv_obj_set_size(progress_, 300, 8);
     lv_obj_align(progress_, LV_ALIGN_TOP_MID, 0, 344);
     lv_bar_set_range(progress_, 0, 1000);
     time_label_ = lv_label_create(root_);
-    lv_label_set_text(time_label_, "00:00 / 00:00");
+    lv_label_set_text(time_label_, "Hold Refresh: Phone remote");
     lv_obj_set_style_text_color(time_label_, lv_color_hex(tokens.text_secondary), 0);
     lv_obj_align(time_label_, LV_ALIGN_TOP_MID, 0, 360);
 
@@ -102,7 +111,7 @@ bool MusicApp::create(lv_obj_t * parent, UiComponents & components,
     lv_obj_set_size(volume_, 250, 18);
     lv_obj_align(volume_, LV_ALIGN_BOTTOM_MID, 0, -24);
     lv_slider_set_range(volume_, 0, 100);
-    lv_slider_set_value(volume_, 50, LV_ANIM_OFF);
+    lv_slider_set_value(volume_, local_volume_, LV_ANIM_OFF);
     lv_obj_set_ext_click_area(volume_, 15);
     lv_obj_add_event_cb(volume_, volumeEvent, LV_EVENT_VALUE_CHANGED, this);
     UiComponents::styleSlider(volume_, tokens);
@@ -150,7 +159,7 @@ void MusicApp::onSdRemoved() {
     if(scan_directory_ && storage_) storage_->closeManaged(scan_directory_);
     scan_active_ = false;
     if(audio_) audio_->discardPlayback();
-    lv_label_set_text(status_, "SD card unavailable | Refresh after insert");
+    updateStatus("SD card unavailable | Refresh after insert");
     refreshPlayer(0, true);
 }
 
@@ -165,7 +174,7 @@ bool MusicApp::scanLibrary() {
     track_count_ = 0;
     index_limit_reached_ = false;
     if(!storage_ || !sd_available_) {
-        if(status_) lv_label_set_text(status_, "SD card unavailable");
+        updateStatus("SD unavailable");
         renderList();
         return false;
     }
@@ -175,12 +184,12 @@ bool MusicApp::scanLibrary() {
        !storage_->managedFileIsDirectory(scan_directory_, is_directory) ||
        !is_directory) {
         if(scan_directory_) storage_->closeManaged(scan_directory_);
-        lv_label_set_text(status_, "Music folder unavailable");
+        updateStatus("Music folder unavailable");
         renderList();
         return false;
     }
     scan_active_ = true;
-    lv_label_set_text(status_, "Scanning local WAV files...");
+    updateStatus("Scanning local WAV files...");
     renderList();
     return true;
 }
@@ -229,11 +238,13 @@ void MusicApp::scanStep() {
 void MusicApp::finishScan() {
     if(scan_directory_ && storage_) storage_->closeManaged(scan_directory_);
     scan_active_ = false;
+    control_selector_.noteScanCompleted(track_count_);
     char status[64];
     snprintf(status, sizeof(status), index_limit_reached_
              ? "%u tracks | 128 track limit reached" : "%u local WAV tracks",
              static_cast<unsigned>(track_count_));
-    lv_label_set_text(status_, status);
+    if(track_count_ == 0) strlcpy(status, "No local WAV files", sizeof(status));
+    updateStatus(status);
     if(current_index_ >= track_count_) current_index_ = 0;
     renderList();
 }
@@ -244,12 +255,43 @@ bool MusicApp::playIndex(uint16_t index) {
         audio_->stop();
     }
     if(!audio_->startWav(*storage_, tracks_[index].path, AudioUse::Music)) {
-        lv_label_set_text(status_, "Unable to play this WAV");
+        updateStatus("Unable to play this WAV");
         return false;
     }
     current_index_ = index;
     refreshPlayer(0, true);
     return true;
+}
+
+bool MusicApp::dispatchPhoneRemote(RemoteMediaCommand command,
+                                   uint8_t volume) {
+    const bool sent = phone_media_callback_ &&
+        phone_media_callback_(command, volume);
+    updateStatus(sent
+        ? "Phone command sent"
+        : "Phone remote unavailable | Connect paired phone");
+    return sent;
+}
+
+bool MusicApp::applyLocalVolume(uint8_t volume) {
+    if(volume > 100 || !local_volume_callback_ ||
+       !local_volume_callback_(volume)) {
+        return false;
+    }
+    local_volume_ = volume;
+    return true;
+}
+
+void MusicApp::updateStatus(const char * detail) {
+    if(!status_) return;
+    char text[128]{};
+    const bool local =
+        control_selector_.target() == MusicControlTarget::LocalLibrary;
+    snprintf(text, sizeof(text), "Target: %s | Hold Refresh: %s\n%s",
+             local ? "Local library" : "Phone remote",
+             local ? "Phone remote" : "Local library",
+             detail ? detail : "");
+    lv_label_set_text(status_, text);
 }
 
 void MusicApp::renderList() {
@@ -282,52 +324,100 @@ void MusicApp::renderList() {
 void MusicApp::refreshPlayer(uint32_t now_ms, bool force) {
     LV_UNUSED(now_ms);
     LV_UNUSED(force);
-    if(!audio_ || track_count_ == 0) {
-        lv_label_set_text(track_label_, "Nothing playing");
+    if(control_selector_.target() == MusicControlTarget::PhoneRemote) {
+        lv_label_set_text(track_label_, "Target: Phone remote");
         lv_bar_set_value(progress_, 0, LV_ANIM_OFF);
-        lv_label_set_text(time_label_, "00:00 / 00:00");
+        lv_label_set_text(time_label_, "Controls phone | Hold Refresh: Local");
         lv_label_set_text(play_label_, LV_SYMBOL_PLAY);
         return;
     }
-    lv_label_set_text(track_label_, tracks_[current_index_].title);
+    if(!audio_ || track_count_ == 0) {
+        lv_label_set_text(track_label_, "Target: Local | Nothing playing");
+        lv_bar_set_value(progress_, 0, LV_ANIM_OFF);
+        lv_label_set_text(
+            time_label_, "Hold Refresh: Phone remote"
+        );
+        lv_label_set_text(play_label_, LV_SYMBOL_PLAY);
+        return;
+    }
+    char track_text[96]{};
+    snprintf(track_text, sizeof(track_text), "Target: Local | %s",
+             tracks_[current_index_].title);
+    lv_label_set_text(track_label_, track_text);
     const uint32_t position = audio_->playbackPositionMs();
     const uint32_t duration = audio_->playbackDurationMs();
     lv_bar_set_value(progress_, duration == 0 ? 0 :
         static_cast<int32_t>((static_cast<uint64_t>(position) * 1000ULL) / duration),
         LV_ANIM_OFF);
-    char current[12], total[12], combined[32];
+    char current[12], total[12], combined[64];
     formatTime(position, current, sizeof(current));
     formatTime(duration, total, sizeof(total));
-    snprintf(combined, sizeof(combined), "%s / %s", current, total);
+    snprintf(combined, sizeof(combined), "%s / %s | Hold Refresh: Phone",
+             current, total);
     lv_label_set_text(time_label_, combined);
     lv_label_set_text(play_label_, playing() ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
 }
 
 void MusicApp::trackEvent(lv_event_t * event) {
     RowContext * context = static_cast<RowContext *>(lv_event_get_user_data(event));
-    if(context && context->app) context->app->playIndex(context->index);
+    if(context && context->app) {
+        context->app->control_selector_.noteLocalTrackSelected();
+        context->app->playIndex(context->index);
+    }
 }
 
 void MusicApp::playPauseEvent(lv_event_t * event) {
     MusicApp * app = static_cast<MusicApp *>(lv_event_get_user_data(event));
     if(!app || !app->audio_) return;
+    if(app->controlTarget() == MusicControlTarget::PhoneRemote) {
+        app->dispatchPhoneRemote(RemoteMediaCommand::PlayPause);
+        return;
+    }
+    uint16_t target = 0;
+    if(!MusicQueueNavigator::play(
+           app->current_index_, app->track_count_, target)) {
+        app->updateStatus("No local WAV files");
+        app->refreshPlayer(0, true);
+        return;
+    }
     if(app->playing()) app->audio_->pausePlayback();
     else if(app->audio_->playbackPaused()) app->audio_->resumePlayback();
-    else if(app->track_count_ > 0) app->playIndex(app->current_index_);
+    else app->playIndex(target);
     app->refreshPlayer(0, true);
 }
 
 void MusicApp::previousEvent(lv_event_t * event) {
     MusicApp * app = static_cast<MusicApp *>(lv_event_get_user_data(event));
-    if(!app || app->track_count_ == 0) return;
-    app->playIndex(app->current_index_ == 0
-        ? app->track_count_ - 1 : app->current_index_ - 1);
+    if(!app) return;
+    if(app->controlTarget() == MusicControlTarget::PhoneRemote) {
+        app->dispatchPhoneRemote(RemoteMediaCommand::Previous);
+        return;
+    }
+    uint16_t target = 0;
+    if(!MusicQueueNavigator::previous(
+           app->current_index_, app->track_count_, target)) {
+        app->updateStatus("No local WAV files");
+        app->refreshPlayer(0, true);
+        return;
+    }
+    app->playIndex(target);
 }
 
 void MusicApp::nextEvent(lv_event_t * event) {
     MusicApp * app = static_cast<MusicApp *>(lv_event_get_user_data(event));
-    if(!app || app->track_count_ == 0) return;
-    app->playIndex((app->current_index_ + 1) % app->track_count_);
+    if(!app) return;
+    if(app->controlTarget() == MusicControlTarget::PhoneRemote) {
+        app->dispatchPhoneRemote(RemoteMediaCommand::Next);
+        return;
+    }
+    uint16_t target = 0;
+    if(!MusicQueueNavigator::next(
+           app->current_index_, app->track_count_, target)) {
+        app->updateStatus("No local WAV files");
+        app->refreshPlayer(0, true);
+        return;
+    }
+    app->playIndex(target);
 }
 
 void MusicApp::refreshEvent(lv_event_t * event) {
@@ -335,11 +425,33 @@ void MusicApp::refreshEvent(lv_event_t * event) {
     if(app) app->requestRefresh();
 }
 
+void MusicApp::targetToggleEvent(lv_event_t * event) {
+    MusicApp * app = static_cast<MusicApp *>(lv_event_get_user_data(event));
+    if(!app) return;
+    app->control_selector_.toggle();
+    app->updateStatus(
+        app->controlTarget() == MusicControlTarget::PhoneRemote
+            ? "Phone controls selected"
+            : "Local controls selected"
+    );
+    app->refreshPlayer(0, true);
+}
+
 void MusicApp::volumeEvent(lv_event_t * event) {
     MusicApp * app = static_cast<MusicApp *>(lv_event_get_user_data(event));
-    if(app && app->audio_) {
-        app->audio_->setVolume(static_cast<uint8_t>(
-            lv_slider_get_value(lv_event_get_target(event))));
+    if(!app) return;
+    const uint8_t volume = static_cast<uint8_t>(
+        lv_slider_get_value(lv_event_get_target(event))
+    );
+    if(app->controlTarget() == MusicControlTarget::PhoneRemote) {
+        app->dispatchPhoneRemote(RemoteMediaCommand::Volume, volume);
+    } else if(!app->applyLocalVolume(volume)) {
+        lv_slider_set_value(
+            lv_event_get_target(event), app->localVolume(), LV_ANIM_OFF
+        );
+        app->updateStatus("Unable to save local volume");
+    } else {
+        app->updateStatus("Local volume saved");
     }
 }
 

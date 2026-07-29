@@ -36,6 +36,30 @@ class RepositoryContracts(unittest.TestCase):
         self.assertTrue(manifest.is_file(), "FireflyOS library manifest must exist")
         self.assertIn("name=FireflyOS", manifest.read_text(encoding="utf-8"))
 
+    def test_custom_32mb_partition_layout_is_project_owned(self):
+        partition = (
+            ROOT / "tools" / "partitions" / "app5M_fat24M_32MB.csv"
+        )
+        self.assertTrue(
+            partition.is_file(),
+            "the custom partition layout must not depend on an Arduino cache",
+        )
+        layout = partition.read_text(encoding="utf-8")
+        self.assertIn("app0,", layout)
+        self.assertIn("app1,", layout)
+        self.assertIn("0x480000", layout)
+        self.assertIn("0x16E0000", layout)
+
+        build_script = (ROOT / "tools" / "build_firmware.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("app5M_fat24M_32MB.csv", build_script)
+        self.assertIn("partitions.csv", build_script)
+        self.assertLess(
+            build_script.index("partitions.csv"),
+            build_script.index("& $arduinoCli compile"),
+        )
+
     def test_background_work_uses_event_bus(self):
         interaction = (ROOT / "Firefly" / "FireflyInteraction.cpp").read_text(
             encoding="utf-8", errors="ignore"

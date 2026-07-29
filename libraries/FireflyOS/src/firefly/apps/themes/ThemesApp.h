@@ -25,6 +25,7 @@ public:
     void releasePreview();
     bool importSelected();
     bool takeAppliedPalette(uint32_t out[5]);
+    const char * appliedThemeId() const { return applied_theme_id_; }
     lv_obj_t * root() const { return root_; }
 
 private:
@@ -66,6 +67,7 @@ private:
     bool scan_active_ = false;
     bool applied_palette_pending_ = false;
     uint32_t applied_palette_[5]{};
+    char applied_theme_id_[24]{};
 };
 
 }  // namespace firefly

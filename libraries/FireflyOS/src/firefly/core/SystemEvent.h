@@ -19,6 +19,13 @@ enum class EventType : uint8_t {
     FilesPageReady,
     SdRemoved,
     CapabilityChanged,
+    PhoneConnectionChanged,
+    BleMessageReceived,
+    BleProtocolError,
+    PairingRequested,
+    PairingResult,
+    UnpairConfirmationRequested,
+    PairingUnbound,
     AppOpenRequested,
     AppCloseRequested
 };

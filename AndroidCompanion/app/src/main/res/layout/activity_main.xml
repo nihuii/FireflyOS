@@ -1,0 +1,303 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:id="@+id/titleText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/app_name"
+            android:textColor="@color/firefly_text"
+            android:textSize="26sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/connectionStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/status_disconnected"
+            android:textColor="@color/firefly_text"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/offline_remote_reason"
+            android:textColor="@color/firefly_muted"
+            android:textSize="15sp" />
+
+        <Button
+            android:id="@+id/scanPairButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:minHeight="48dp"
+            android:text="@string/scan_pair" />
+
+        <Button
+            android:id="@+id/repairPairButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:minHeight="48dp"
+            android:text="@string/repair_pairing" />
+
+        <Button
+            android:id="@+id/requestUnpairButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:minHeight="48dp"
+            android:text="@string/request_unpair" />
+
+        <Button
+            android:id="@+id/notificationPermissionButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:minHeight="48dp"
+            android:text="@string/notification_permission" />
+
+        <Button
+            android:id="@+id/notificationListenerAccessButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:minHeight="48dp"
+            android:text="@string/notification_listener_access" />
+
+        <TextView
+            style="@style/Task9SectionTitle"
+            android:text="@string/settings_sync_title" />
+
+        <EditText
+            android:id="@+id/brightnessInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/brightness_hint"
+            android:inputType="number"
+            android:minHeight="48dp"
+            android:text="128" />
+
+        <Button
+            android:id="@+id/syncBrightnessButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/sync_brightness" />
+
+        <EditText
+            android:id="@+id/volumeInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/volume_hint"
+            android:inputType="number"
+            android:minHeight="48dp"
+            android:text="50" />
+
+        <Button
+            android:id="@+id/syncVolumeButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/sync_volume" />
+
+        <EditText
+            android:id="@+id/alarmInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/alarm_hint"
+            android:inputType="time"
+            android:minHeight="48dp"
+            android:text="07:30" />
+
+        <Button
+            android:id="@+id/syncAlarmButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/sync_alarm" />
+
+        <EditText
+            android:id="@+id/themeInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/theme_hint"
+            android:inputType="text"
+            android:maxLength="23"
+            android:minHeight="48dp"
+            android:text="firefly-default" />
+
+        <Button
+            android:id="@+id/syncThemeButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/sync_theme" />
+
+        <TextView
+            style="@style/Task9SectionTitle"
+            android:text="@string/weather_title" />
+
+        <EditText
+            android:id="@+id/weatherCityInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/city_hint"
+            android:inputType="textCapWords"
+            android:maxLength="47"
+            android:minHeight="48dp" />
+
+        <EditText
+            android:id="@+id/weatherTemperatureInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/temperature_hint"
+            android:inputType="numberDecimal|numberSigned"
+            android:minHeight="48dp" />
+
+        <EditText
+            android:id="@+id/weatherCodeInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/weather_code_hint"
+            android:inputType="number"
+            android:minHeight="48dp" />
+
+        <EditText
+            android:id="@+id/weatherHighInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/high_hint"
+            android:inputType="numberDecimal|numberSigned"
+            android:minHeight="48dp" />
+
+        <EditText
+            android:id="@+id/weatherLowInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/low_hint"
+            android:inputType="numberDecimal|numberSigned"
+            android:minHeight="48dp" />
+
+        <Button
+            android:id="@+id/syncWeatherButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/sync_weather" />
+
+        <TextView
+            style="@style/Task9SectionTitle"
+            android:text="@string/calendar_title" />
+
+        <Switch
+            android:id="@+id/calendarSyncSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/calendar_opt_in" />
+
+        <Button
+            android:id="@+id/syncCalendarButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/sync_calendar_now" />
+
+        <TextView
+            android:id="@+id/calendarText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/calendar_permission_note"
+            android:textColor="@color/firefly_muted"
+            android:textSize="14sp" />
+
+        <TextView
+            style="@style/Task9SectionTitle"
+            android:text="@string/media_title" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/mediaPreviousButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minHeight="48dp"
+                android:text="@string/media_previous" />
+
+            <Button
+                android:id="@+id/mediaPlayPauseButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minHeight="48dp"
+                android:text="@string/media_play_pause" />
+
+            <Button
+                android:id="@+id/mediaNextButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minHeight="48dp"
+                android:text="@string/media_next" />
+        </LinearLayout>
+
+        <EditText
+            android:id="@+id/mediaVolumeInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/media_volume_hint"
+            android:inputType="number"
+            android:minHeight="48dp"
+            android:text="50" />
+
+        <Button
+            android:id="@+id/mediaVolumeButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/media_set_volume" />
+
+        <TextView
+            style="@style/Task9SectionTitle"
+            android:text="@string/find_devices_title" />
+
+        <Button
+            android:id="@+id/findPhoneButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/find_phone" />
+
+        <Button
+            android:id="@+id/findWatchButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/find_watch" />
+
+        <Button
+            android:id="@+id/cancelFindWatchButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/cancel_find_watch" />
+    </LinearLayout>
+</ScrollView>

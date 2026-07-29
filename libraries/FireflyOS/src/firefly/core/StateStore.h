@@ -13,6 +13,7 @@ public:
     void setBattery(const BatteryState & value);
     void setTime(const TimeState & value);
     void setSleepState(bool sleeping, bool screen_off);
+    void setPhoneConnected(bool connected);
 
 private:
     mutable portMUX_TYPE mux_ = portMUX_INITIALIZER_UNLOCKED;

@@ -7,6 +7,27 @@
 #include <sys/time.h>
 
 firefly::EventBus system_event_bus;
+firefly::BlePeripheralDevice ble_peripheral_device;
+firefly::ConnectivityService connectivity_service(
+    ble_peripheral_device, system_event_bus, ui_state_store, storage_service
+);
+
+class FireflyCompanionSettingsPersistence final
+    : public firefly::CompanionSettingsPersistence {
+public:
+    bool saveSnapshot(
+        const firefly::CompanionSettingsSnapshot & snapshot) override;
+    bool restoreSnapshot(
+        const firefly::CompanionSettingsSnapshot & snapshot);
+};
+
+FireflyCompanionSettingsPersistence companion_settings_persistence;
+firefly::CompanionSyncService companion_sync_service(
+    &companion_settings_persistence
+);
+firefly::CompanionFrameDispatcher companion_frame_dispatcher(
+    notification_service, companion_sync_service
+);
 
 namespace {
 
@@ -24,6 +45,195 @@ uint16_t motion_last_saved_active_minutes = UINT16_MAX;
 volatile firefly::PowerMode runtime_power_mode = firefly::PowerMode::Active;
 bool light_sleep_entered = false;
 bool light_sleep_motion_low_power = false;
+bool find_watch_feedback_visible = false;
+bool find_watch_feedback_sound_started = false;
+uint8_t find_watch_feedback_restore_brightness = 0;
+char companion_error_status[16]{};
+uint32_t companion_error_status_until = 0;
+
+void refresh_notification_center_from_service() {
+    firefly::NotificationSummary visible[
+        firefly::NotificationCenter::kVisibleLimit
+    ]{};
+    const uint8_t available = notification_service.count();
+    const uint8_t count = available < firefly::NotificationCenter::kVisibleLimit
+        ? available
+        : firefly::NotificationCenter::kVisibleLimit;
+    for(uint8_t index = 0; index < count; ++index) {
+        notification_service.copyForDisplay(
+            index, is_on_lockscreen, visible[index]
+        );
+    }
+    notification_center.setNotifications(visible, count);
+}
+
+bool decode_companion_alarm(const firefly::VersionedCompanionSetting & setting,
+                            uint8_t & slot,
+                            firefly::Alarm & alarm) {
+    return firefly::CompanionSyncService::decodeAlarm(setting, slot, alarm);
+}
+
+bool resolve_remote_theme_palette(const char * theme_id,
+                                  uint32_t palette[5]) {
+    if(!theme_id || !theme_id[0] || !palette) return false;
+    const firefly::ThemeManifest & firefly_default =
+        firefly::ThemePackageService::fireflyDefault();
+    if(strcmp(theme_id, firefly_default.id) == 0) {
+        memcpy(palette, firefly_default.palette,
+               sizeof(firefly_default.palette));
+        return true;
+    }
+    const firefly::ThemeManifest & neutral_default =
+        firefly::ThemePackageService::neutralDefault();
+    if(strcmp(theme_id, neutral_default.id) == 0) {
+        memcpy(palette, neutral_default.palette,
+               sizeof(neutral_default.palette));
+        return true;
+    }
+
+    char cached_theme_id[sizeof(system_settings.theme_id)]{};
+    uint32_t cached_palette[5]{};
+    bool cache_present = false;
+    if(!storage_service.loadThemeCache(
+           cached_theme_id, sizeof(cached_theme_id),
+           cached_palette, cache_present) ||
+       !cache_present || strcmp(theme_id, cached_theme_id) != 0) {
+        return false;
+    }
+    memcpy(palette, cached_palette, sizeof(cached_palette));
+    return true;
+}
+
+void apply_runtime_theme_palette(const uint32_t palette[5]) {
+    if(!palette) return;
+    const firefly::UiTokens previous_tokens =
+        firefly::UiTheme::fireflyDefault();
+    const firefly::UiTokens next_tokens =
+        firefly::UiTheme::fromPalette(palette);
+    firefly::UiComponents::applyThemeTree(
+        scr_firefly, previous_tokens, next_tokens);
+    firefly::UiTheme::setRuntime(next_tokens);
+    settings_theme_surface = lv_color_hex(palette[1]);
+    settings_theme_surface_alt = lv_color_hex(palette[3]);
+    settings_theme_accent = lv_color_hex(palette[2]);
+    settings_theme_action = lv_color_hex(palette[3]);
+    if(scr_firefly) lv_obj_invalidate(scr_firefly);
+}
+
+bool prepare_companion_settings_snapshot(
+    const firefly::CompanionSettingsSnapshot & snapshot,
+    firefly::SystemSettings & next,
+    bool & has_alarm,
+    uint8_t & alarm_slot,
+    firefly::Alarm & alarm) {
+    if(snapshot.schema_version !=
+       firefly::CompanionSettingsSnapshot::kSchemaVersion) {
+        return false;
+    }
+    next = system_settings;
+    has_alarm = false;
+    for(uint8_t index = 0;
+        index < firefly::CompanionSettingsSnapshot::kCapacity;
+        ++index) {
+        if(snapshot.valid[index] > 1) return false;
+        if(!snapshot.valid[index]) continue;
+        const firefly::VersionedCompanionSetting & setting =
+            snapshot.settings[index];
+        const firefly::CompanionSettingKind kind =
+            static_cast<firefly::CompanionSettingKind>(index + 1);
+        if(kind == firefly::CompanionSettingKind::Alarm) {
+            if(!decode_companion_alarm(setting, alarm_slot, alarm)) {
+                return false;
+            }
+            has_alarm = true;
+        } else if(kind == firefly::CompanionSettingKind::Brightness) {
+            if(setting.value_length != 1 || setting.value[0] < 20) {
+                return false;
+            }
+            next.brightness = setting.value[0];
+        } else if(kind == firefly::CompanionSettingKind::Volume) {
+            if(setting.value_length != 1 || setting.value[0] > 100) {
+                return false;
+            }
+            next.volume = setting.value[0];
+        } else if(kind == firefly::CompanionSettingKind::Theme) {
+            if(setting.value_length == 0 ||
+               setting.value_length >= sizeof(next.theme_id)) {
+                return false;
+            }
+            memcpy(next.theme_id, setting.value, setting.value_length);
+            next.theme_id[setting.value_length] = '\0';
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+void update_companion_calendar_ui() {
+    const firefly::CompanionCalendar & synced =
+        companion_sync_service.calendar();
+    firefly::CalendarAgendaCache agenda;
+    firefly::CalendarSummary summaries[
+        firefly::CalendarAgendaCache::kMaxSummaries
+    ]{};
+    for(uint8_t index = 0; index < synced.count; ++index) {
+        summaries[index].valid = true;
+        summaries[index].start_epoch =
+            synced.entries[index].start_epoch_ms / 1000;
+        strlcpy(summaries[index].title, synced.entries[index].title,
+                sizeof(summaries[index].title));
+    }
+    agenda.setSummaries(summaries, synced.enabled ? synced.count : 0,
+                        synced.updated_at_epoch_ms / 1000);
+    calendar_app.setAgenda(agenda);
+}
+
+void stop_find_watch_feedback() {
+    if(find_watch_feedback_sound_started &&
+       audio_service.activeUse() == firefly::AudioUse::System) {
+        audio_service.stop();
+    }
+    find_watch_feedback_sound_started = false;
+    if(find_watch_feedback_visible) {
+        firefly_board.setDisplayBrightness(
+            find_watch_feedback_restore_brightness
+        );
+    }
+    find_watch_feedback_visible = false;
+}
+
+bool cancel_find_watch_feedback() {
+    if(!companion_sync_service.cancelFindWatch()) return false;
+    stop_find_watch_feedback();
+    return true;
+}
+
+void service_find_watch_feedback(uint32_t now_ms) {
+    const firefly::FindWatchState state =
+        companion_sync_service.findWatchAt(now_ms);
+    if(!state.active) {
+        stop_find_watch_feedback();
+        return;
+    }
+    if(!find_watch_feedback_visible) {
+        find_watch_feedback_visible = true;
+        find_watch_feedback_restore_brightness = screen_brightness;
+        if(state.play_audio &&
+           audio_service.activeUse() == firefly::AudioUse::None &&
+           system_capabilities.has(firefly::Capability::Audio)) {
+            const firefly::AlarmToneResource & tone =
+                firefly::AlarmService::ringtoneResource(0);
+            find_watch_feedback_sound_started =
+                audio_service.startLoopingPcm(
+                    tone.samples, tone.frames, tone.sample_rate,
+                    firefly::AudioUse::System
+                );
+        }
+    }
+    const bool bright_phase = ((now_ms / 500U) & 1U) == 0;
+    firefly_board.setDisplayBrightness(bright_phase ? 255 : 20);
+}
 
 uint32_t current_local_day_key() {
     const time_t current_time = time(nullptr);
@@ -288,6 +498,7 @@ void show_power_menu() {
 
 void run_power_press_action(firefly::ButtonAction action) {
     if(action == firefly::ButtonAction::None) return;
+    if(cancel_find_watch_feedback()) return;
     if(tools_app.closeFlashlightFromInput()) return;
     if(action == firefly::ButtonAction::LongPress) {
         if(is_sleeping) exit_sleep_screen_mode();
@@ -309,7 +520,9 @@ void run_power_press_action(firefly::ButtonAction action) {
 }
 
 void run_short_press_action() {
-    if(tools_app.closeFlashlightFromInput()) {
+    if(cancel_find_watch_feedback()) {
+        return;
+    } else if(tools_app.closeFlashlightFromInput()) {
         return;
     } else if(power_menu_visible) {
         close_power_menu();
@@ -382,6 +595,7 @@ void firefly_background_task(void * parameter) {
                                           firefly::EventPriority::Refresh});
         }
 
+        connectivity_service.service(now);
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
@@ -614,7 +828,176 @@ void refresh_sleep_icon(bool advance) {
     else glance_screen.presentCurrentImage();
 }
 
+int64_t local_setting_changed_at_ms() {
+    const time_t epoch = time(nullptr);
+    return epoch >= 1577836800
+        ? static_cast<int64_t>(epoch) * 1000LL
+        : static_cast<int64_t>(millis());
+}
+
+bool record_local_brightness(uint8_t brightness) {
+    return companion_sync_service.recordLocalSetting(
+        firefly::CompanionSettingKind::Brightness,
+        &brightness,
+        sizeof(brightness),
+        local_setting_changed_at_ms()
+    );
+}
+
+bool record_local_volume(uint8_t volume) {
+    return companion_sync_service.recordLocalSetting(
+        firefly::CompanionSettingKind::Volume,
+        &volume,
+        sizeof(volume),
+        local_setting_changed_at_ms()
+    );
+}
+
+bool record_local_alarm(uint8_t slot, const firefly::Alarm & alarm) {
+    const size_t name_length = strnlen(alarm.name, sizeof(alarm.name));
+    if(slot >= firefly::AlarmService::kSlots ||
+       name_length >= sizeof(alarm.name)) {
+        return false;
+    }
+    uint8_t value[8 + sizeof(alarm.name)]{};
+    value[0] = slot;
+    value[1] = alarm.configured ? 1 : 0;
+    value[2] = alarm.enabled ? 1 : 0;
+    value[3] = alarm.hour;
+    value[4] = alarm.minute;
+    value[5] = alarm.days_mask;
+    value[6] = alarm.ringtone;
+    value[7] = static_cast<uint8_t>(name_length);
+    if(name_length > 0) memcpy(value + 8, alarm.name, name_length);
+    return companion_sync_service.recordLocalSetting(
+        firefly::CompanionSettingKind::Alarm,
+        value,
+        static_cast<uint16_t>(8 + name_length),
+        local_setting_changed_at_ms()
+    );
+}
+
+bool record_local_theme(const char * theme_id) {
+    if(!theme_id) return false;
+    const size_t length = strnlen(theme_id, sizeof(system_settings.theme_id));
+    if(length == 0 || length >= sizeof(system_settings.theme_id)) return false;
+    return companion_sync_service.recordLocalSetting(
+        firefly::CompanionSettingKind::Theme,
+        reinterpret_cast<const uint8_t *>(theme_id),
+        static_cast<uint16_t>(length),
+        local_setting_changed_at_ms()
+    );
+}
+
 } // namespace
+
+bool firefly_apply_local_music_volume(uint8_t volume) {
+    if(volume > 100 || !record_local_volume(volume)) {
+        ++settings_command_failures;
+        return false;
+    }
+    if(!storage_service.saveSettings(system_settings)) {
+        ++settings_command_failures;
+    }
+    return true;
+}
+
+bool FireflyCompanionSettingsPersistence::saveSnapshot(
+    const firefly::CompanionSettingsSnapshot & snapshot) {
+    uint8_t alarm_slot = 0;
+    firefly::Alarm decoded_alarm{};
+    bool has_alarm = false;
+    firefly::SystemSettings next = system_settings;
+    if(!prepare_companion_settings_snapshot(
+           snapshot, next, has_alarm, alarm_slot, decoded_alarm)) {
+        return false;
+    }
+
+    constexpr uint8_t theme_index =
+        static_cast<uint8_t>(firefly::CompanionSettingKind::Theme) - 1;
+    const bool has_theme = snapshot.valid[theme_index] == 1;
+    uint32_t theme_palette[5]{};
+    if(has_theme &&
+       !resolve_remote_theme_palette(next.theme_id, theme_palette)) {
+        return false;
+    }
+
+    if(!storage_service.saveCompanionSettingsSnapshot(
+           &snapshot, sizeof(snapshot))) {
+        return false;
+    }
+    system_settings = next;
+    screen_brightness = next.brightness;
+    volume_level = next.volume;
+    if(has_alarm) {
+        alarm_service.set(alarm_slot, decoded_alarm);
+        copy_service_alarm_to_legacy(alarm_slot, decoded_alarm);
+        clear_alarm_trigger_history();
+    }
+    set_screen_brightness_level(screen_brightness);
+    audio_service.setVolume(volume_level);
+    if(has_theme) apply_runtime_theme_palette(theme_palette);
+    refresh_sound_alarm_ui();
+    return true;
+}
+
+bool FireflyCompanionSettingsPersistence::restoreSnapshot(
+    const firefly::CompanionSettingsSnapshot & snapshot) {
+    uint8_t alarm_slot = 0;
+    firefly::Alarm decoded_alarm{};
+    bool has_alarm = false;
+    firefly::SystemSettings next = system_settings;
+    if(!prepare_companion_settings_snapshot(
+           snapshot, next, has_alarm, alarm_slot, decoded_alarm)) {
+        return false;
+    }
+    constexpr uint8_t theme_index =
+        static_cast<uint8_t>(firefly::CompanionSettingKind::Theme) - 1;
+    const bool has_theme = snapshot.valid[theme_index] == 1;
+    uint32_t theme_palette[5]{};
+    if(has_theme &&
+       !resolve_remote_theme_palette(next.theme_id, theme_palette)) {
+        return false;
+    }
+    system_settings = next;
+    screen_brightness = next.brightness;
+    volume_level = next.volume;
+    if(has_alarm) {
+        if(!alarm_service.set(alarm_slot, decoded_alarm)) return false;
+        copy_service_alarm_to_legacy(alarm_slot, decoded_alarm);
+    }
+    if(has_theme) apply_runtime_theme_palette(theme_palette);
+    return true;
+}
+
+bool firefly_send_phone_media_command(
+    firefly::RemoteMediaCommand command,
+    uint8_t volume_percent) {
+    if(!connectivity_service.connected() || !connectivity_service.paired()) {
+        return false;
+    }
+    firefly::protocol::Frame frame{};
+    if(!firefly::CompanionSyncService::buildMediaCommand(
+           command,
+           volume_percent,
+           connectivity_service.allocateOutgoingSequence(),
+           frame)) {
+        return false;
+    }
+    return connectivity_service.send(frame, millis());
+}
+
+bool firefly_send_find_phone_command() {
+    if(!connectivity_service.connected() || !connectivity_service.paired()) {
+        return false;
+    }
+    firefly::protocol::Frame frame{};
+    if(!firefly::CompanionSyncService::buildFindPhone(
+           connectivity_service.allocateOutgoingSequence(), frame)) {
+        return false;
+    }
+    return connectivity_service.send(frame, millis());
+}
 
 void configure_power_sleep_hooks() {
     power_service.setSleepHooks({prepare_verified_light_sleep,
@@ -701,6 +1084,13 @@ void start_firefly_background_task() {
 #endif
 }
 
+void firefly_process_connectivity() {
+    if(!firefly_background_task_running) {
+        const uint32_t now = millis();
+        connectivity_service.service(now);
+    }
+}
+
 void sync_time_to_system_from_epoch(int64_t epoch_seconds) {
     if(epoch_seconds < 0) {
         return;
@@ -733,6 +1123,18 @@ void load_sound_alarm_preferences() {
 
     sync_alarm_service_from_legacy();
     clear_alarm_trigger_history();
+}
+
+void load_companion_settings_preferences() {
+    firefly::CompanionSettingsSnapshot snapshot{};
+    size_t length = 0;
+    bool present = false;
+    if(storage_service.loadCompanionSettingsSnapshot(
+           &snapshot, sizeof(snapshot), length, present) &&
+       present && length == sizeof(snapshot) &&
+       companion_sync_service.restoreSnapshot(snapshot)) {
+        companion_settings_persistence.restoreSnapshot(snapshot);
+    }
 }
 
 void save_volume_preference() {
@@ -1116,6 +1518,7 @@ void exit_sleep_screen_mode() {
 }
 
 void firefly_process_system_events() {
+    service_find_watch_feedback(millis());
     if(!firefly_background_task_running) {
         const unsigned long now = millis();
         const firefly::ButtonAction boot_action = poll_boot_button(now);
@@ -1184,6 +1587,103 @@ void firefly_process_system_events() {
             }
             case firefly::EventType::FilesPageReady:
                 files_app.onPageReady();
+                break;
+            case firefly::EventType::BleMessageReceived: {
+                firefly::protocol::Frame frame{};
+                if(!connectivity_service.takeReceivedFrame(frame)) break;
+                if(frame.type == firefly::protocol::MessageType::Error) {
+                    firefly::CompanionRemoteError error{};
+                    const char * status = "PHONE ERROR";
+                    if(firefly::CompanionSyncService::decodeError(
+                           frame, error)) {
+                        status =
+                            firefly::CompanionSyncService::remoteErrorText(
+                                error);
+                    }
+                    strlcpy(companion_error_status, status,
+                            sizeof(companion_error_status));
+                    companion_error_status_until = millis() + 5000UL;
+                    break;
+                }
+                const firefly::SystemState state = ui_state_store.snapshot();
+                const firefly::CompanionDispatchResult result =
+                    companion_frame_dispatcher.dispatch(
+                        frame, millis(), state.battery.percent
+                    );
+                if(result ==
+                   firefly::CompanionDispatchResult::Notification) {
+                    refresh_notification_center_from_service();
+                } else if(result ==
+                          firefly::CompanionDispatchResult::Companion &&
+                          frame.type ==
+                              firefly::protocol::MessageType::SettingsGet) {
+                    firefly::protocol::Frame response{};
+                    if(firefly::CompanionSyncService::buildSettingsSnapshot(
+                           companion_sync_service.settingsSnapshot(),
+                           connectivity_service.allocateOutgoingSequence(),
+                           response)) {
+                        connectivity_service.send(response, millis());
+                    }
+                } else if(result ==
+                          firefly::CompanionDispatchResult::Companion &&
+                          frame.type ==
+                              firefly::protocol::MessageType::CalendarUpdate) {
+                    update_companion_calendar_ui();
+                } else if(result ==
+                          firefly::CompanionDispatchResult::Invalid) {
+                    firefly::protocol::Frame error{};
+                    error.type = firefly::protocol::MessageType::Error;
+                    error.sequence = frame.sequence;
+                    error.payload[0] = 1;
+                    error.payload[1] = static_cast<uint8_t>(frame.type);
+                    error.payload[2] = static_cast<uint8_t>(
+                        firefly::protocol::WireErrorCode::InvalidPayload);
+                    error.payload_length = 3;
+                    connectivity_service.send(error, millis());
+                }
+                break;
+            }
+            case firefly::EventType::PhoneConnectionChanged:
+                notification_service.setPhoneConnected(event.value != 0);
+                break;
+            case firefly::EventType::PairingRequested: {
+                const firefly::PairingSnapshot snapshot =
+                    connectivity_service.pairingSnapshot();
+                pairing_overlay.showRequest(snapshot.phone_name,
+                                            snapshot.passkey);
+                ui_shell.showOverlay(
+                    firefly::SystemOverlayHost::kPairingPriority,
+                    pairing_overlay.root()
+                );
+                break;
+            }
+            case firefly::EventType::PairingResult: {
+                const firefly::PairingSnapshot snapshot =
+                    connectivity_service.pairingSnapshot();
+                pairing_overlay.showResult(event.value == 1,
+                                           snapshot.phone_name);
+                ui_shell.showOverlay(
+                    firefly::SystemOverlayHost::kPairingPriority,
+                    pairing_overlay.root()
+                );
+                break;
+            }
+            case firefly::EventType::UnpairConfirmationRequested: {
+                const firefly::PairingSnapshot snapshot =
+                    connectivity_service.pairingSnapshot();
+                pairing_overlay.showUnpairConfirmation(snapshot.phone_name);
+                ui_shell.showOverlay(
+                    firefly::SystemOverlayHost::kPairingPriority,
+                    pairing_overlay.root()
+                );
+                break;
+            }
+            case firefly::EventType::PairingUnbound:
+                if(event.value == 1) {
+                    notification_service.clearLocal();
+                    refresh_notification_center_from_service();
+                }
+                ui_shell.closeOverlay(pairing_overlay.root());
                 break;
             case firefly::EventType::SdRemoved:
                 if(audio_service.activeUse() == firefly::AudioUse::Music ||
@@ -1263,20 +1763,27 @@ void firefly_process_settings_commands() {
     while(settings_app.takeCommand(command)) {
         switch(command.type) {
             case firefly::SettingsCommandType::SetBrightness:
-                set_screen_brightness_level(static_cast<uint8_t>(
+            {
+                const uint8_t brightness = static_cast<uint8_t>(
                     command.value < 0 ? 0 :
-                    (command.value > 255 ? 255 : command.value)));
-                system_settings.brightness = screen_brightness;
-                storage_service.saveSettings(system_settings);
+                    (command.value > 255 ? 255 : command.value));
+                if(!record_local_brightness(brightness) ||
+                   !storage_service.saveSettings(system_settings)) {
+                    ++settings_command_failures;
+                }
                 break;
+            }
             case firefly::SettingsCommandType::SetVolume:
-                volume_level = static_cast<uint8_t>(
+            {
+                const uint8_t volume = static_cast<uint8_t>(
                     command.value < 0 ? 0 :
                     (command.value > 100 ? 100 : command.value));
-                save_volume_preference();
-                audio_service.setVolume(volume_level);
-                refresh_sound_alarm_ui();
+                if(!record_local_volume(volume) ||
+                   !storage_service.saveSettings(system_settings)) {
+                    ++settings_command_failures;
+                }
                 break;
+            }
             case firefly::SettingsCommandType::SetLocalTime:
                 if(command.value >= 0 &&
                    time_service.setLocalTime(command.value)) {
@@ -1302,12 +1809,10 @@ void firefly_process_settings_commands() {
                 storage_service.saveSettings(system_settings);
                 break;
             case firefly::SettingsCommandType::SaveAlarm:
-                if(command.slot < FIREFLY_ALARM_SLOT_COUNT &&
-                   alarm_service.set(command.slot, command.alarm)) {
-                    copy_service_alarm_to_legacy(command.slot, command.alarm);
-                    save_alarm_preferences();
-                    clear_alarm_trigger_history();
-                    refresh_sound_alarm_ui();
+                if(command.slot >= FIREFLY_ALARM_SLOT_COUNT ||
+                   !record_local_alarm(command.slot, command.alarm) ||
+                   !storage_service.saveAlarm(command.slot, command.alarm)) {
+                    ++settings_command_failures;
                 }
                 break;
             default:
@@ -1317,6 +1822,7 @@ void firefly_process_settings_commands() {
 }
 
 void firefly_process_power_policy() {
+    if(companion_sync_service.findWatchAt(millis()).active) return;
     static uint8_t last_applied_brightness = UINT8_MAX;
     uint8_t effective_brightness = screen_brightness;
     const firefly::PowerMode mode = runtime_power_mode;
@@ -1376,17 +1882,12 @@ void firefly_process_media_apps() {
 
     uint32_t applied_palette[5]{};
     if(themes_app.takeAppliedPalette(applied_palette)) {
-        const firefly::UiTokens previous_tokens = firefly::UiTheme::fireflyDefault();
-        const firefly::UiTokens next_tokens = firefly::UiTheme::fromPalette(
-            applied_palette);
-        firefly::UiComponents::applyThemeTree(scr_firefly, previous_tokens,
-                                               next_tokens);
-        firefly::UiTheme::setRuntime(next_tokens);
-        settings_theme_surface = lv_color_hex(applied_palette[1]);
-        settings_theme_accent = lv_color_hex(applied_palette[2]);
-        settings_theme_action = lv_color_hex(applied_palette[3]);
+        if(!record_local_theme(themes_app.appliedThemeId())) {
+            ++settings_command_failures;
+            return;
+        }
+        apply_runtime_theme_palette(applied_palette);
         storage_service.loadSettings(system_settings);
-        if(scr_firefly) lv_obj_invalidate(scr_firefly);
     }
 
     const char * media_status = "";
@@ -1394,13 +1895,45 @@ void firefly_process_media_apps() {
     if(recorder_app.recording()) {
         media_status = "REC";
         glance_status = "RECORDING";
+    } else if(companion_error_status[0] != '\0' &&
+              static_cast<int32_t>(
+                  companion_error_status_until - now) > 0) {
+        media_status = companion_error_status;
     } else if(music_app.playing()) {
         media_status = "PLAY";
+    } else {
+        companion_error_status[0] = '\0';
     }
     if(media_status_label) lv_label_set_text(media_status_label, media_status);
     if(sleep_media_status_label) {
         lv_label_set_text(sleep_media_status_label, glance_status);
     }
+}
+
+void firefly_refresh_companion_weather_ui() {
+    const bool weather_active =
+        ui_shell.navigation().current() == firefly::Route::Weather;
+    if(!weather_active) return;
+    static uint32_t last_refresh_at = 0;
+    const uint32_t now_ms = millis();
+    if(last_refresh_at != 0 &&
+       static_cast<uint32_t>(now_ms - last_refresh_at) < 1000UL) {
+        return;
+    }
+    last_refresh_at = now_ms;
+    firefly::CompanionWeather weather{};
+    const bool connected = connectivity_service.connected();
+    const firefly::WeatherFreshness freshness =
+        companion_sync_service.weatherAt(
+            static_cast<int64_t>(time(nullptr)),
+            connected,
+            weather
+        );
+    app_shell_screen.showWeather(
+        firefly::CompanionWeatherPresenter::build(
+            weather, freshness, connected
+        )
+    );
 }
 
 void firefly_report_gate_a_diagnostics() {

@@ -31,6 +31,9 @@ bool writeSchema(Preferences & preferences) {
            sizeof(uint16_t);
 }
 
+constexpr uint8_t kPairPhaseProvisional = 1;
+constexpr uint8_t kPairPhaseConfirmed = 2;
+
 }  // namespace
 
 bool StorageService::begin() {
@@ -222,6 +225,96 @@ bool StorageService::saveActivityStats(const ActivityStats & stats) {
     return ok;
 }
 
+bool StorageService::saveCompanionSettingRecord(uint8_t kind,
+                                                const void * data,
+                                                size_t length) {
+    if(kind < 1 || kind > 4 || !data || length == 0 || length > 320) {
+        return false;
+    }
+    Preferences preferences;
+    if(!openNamespace(preferences, kSystemNamespace, false)) {
+        recordFailure(StorageDiagnosticCode::NamespaceOpenFailed);
+        return false;
+    }
+    char key[8];
+    snprintf(key, sizeof(key), "sync_%u", static_cast<unsigned>(kind));
+    const bool ok = writeSchema(preferences) &&
+        preferences.putBytes(key, data, length) == length;
+    preferences.end();
+    if(!ok) recordFailure(StorageDiagnosticCode::WriteFailed);
+    return ok;
+}
+
+bool StorageService::loadCompanionSettingRecord(uint8_t kind,
+                                                void * data,
+                                                size_t capacity,
+                                                size_t & length,
+                                                bool & present) {
+    length = 0;
+    present = false;
+    if(kind < 1 || kind > 4 || !data || capacity == 0 || capacity > 320) {
+        return false;
+    }
+    Preferences preferences;
+    if(!openNamespace(preferences, kSystemNamespace, true)) {
+        recordFailure(StorageDiagnosticCode::NamespaceOpenFailed);
+        return false;
+    }
+    char key[8];
+    snprintf(key, sizeof(key), "sync_%u", static_cast<unsigned>(kind));
+    const size_t stored = preferences.getBytesLength(key);
+    present = stored > 0;
+    const bool ok = !present || (stored <= capacity &&
+        preferences.getBytes(key, data, stored) == stored);
+    preferences.end();
+    if(!ok) {
+        recordFailure(StorageDiagnosticCode::ReadFailed);
+        return false;
+    }
+    length = stored;
+    return true;
+}
+
+bool StorageService::saveCompanionSettingsSnapshot(const void * data,
+                                                   size_t length) {
+    if(!data || length == 0 || length > 1200) return false;
+    Preferences preferences;
+    if(!openNamespace(preferences, kSystemNamespace, false)) {
+        recordFailure(StorageDiagnosticCode::NamespaceOpenFailed);
+        return false;
+    }
+    const bool ok = writeSchema(preferences) &&
+        preferences.putBytes("sync_all", data, length) == length;
+    preferences.end();
+    if(!ok) recordFailure(StorageDiagnosticCode::WriteFailed);
+    return ok;
+}
+
+bool StorageService::loadCompanionSettingsSnapshot(void * data,
+                                                   size_t capacity,
+                                                   size_t & length,
+                                                   bool & present) {
+    length = 0;
+    present = false;
+    if(!data || capacity == 0 || capacity > 1200) return false;
+    Preferences preferences;
+    if(!openNamespace(preferences, kSystemNamespace, true)) {
+        recordFailure(StorageDiagnosticCode::NamespaceOpenFailed);
+        return false;
+    }
+    const size_t stored = preferences.getBytesLength("sync_all");
+    present = stored > 0;
+    const bool ok = !present || (stored <= capacity &&
+        preferences.getBytes("sync_all", data, stored) == stored);
+    preferences.end();
+    if(!ok) {
+        recordFailure(StorageDiagnosticCode::ReadFailed);
+        return false;
+    }
+    length = stored;
+    return true;
+}
+
 bool StorageService::loadThemeTokens(void * data, size_t length) {
     if(!data || length == 0 || length > 256) return false;
     Preferences preferences;
@@ -314,6 +407,97 @@ bool StorageService::clearThemeCache() {
     for(const char * key : keys) {
         if(preferences.isKey(key) && !preferences.remove(key)) ok = false;
     }
+    preferences.end();
+    if(!ok) recordFailure(StorageDiagnosticCode::WriteFailed);
+    return ok;
+}
+
+bool StorageService::loadPairing(PairingRecord & record) {
+    record = PairingRecord{};
+    Preferences preferences;
+    if(!openNamespace(preferences, kPairNamespace, true)) {
+        recordFailure(StorageDiagnosticCode::NamespaceOpenFailed);
+        return false;
+    }
+    if(preferences.getUShort("schema", 0) != kSchemaVersion) {
+        preferences.end();
+        recordFailure(StorageDiagnosticCode::SchemaMismatch);
+        return false;
+    }
+    const size_t token_length = preferences.getBytesLength("token");
+    const size_t phone_length = preferences.getBytesLength("phone");
+    const bool has_phase = preferences.isKey("phase");
+    const uint8_t phase = preferences.getUChar(
+        "phase", kPairPhaseConfirmed
+    );
+    if(token_length == 0 && phone_length == 0) {
+        preferences.end();
+        return true;
+    }
+    const bool lengths_valid = token_length == sizeof(record.app_token) &&
+        phone_length > 1 && phone_length <= sizeof(record.phone_name);
+    const bool phase_valid = !has_phase ||
+        phase == kPairPhaseProvisional ||
+        phase == kPairPhaseConfirmed;
+    const bool read_ok = lengths_valid &&
+        phase_valid &&
+        preferences.getBytes("token", record.app_token,
+                             sizeof(record.app_token)) == sizeof(record.app_token) &&
+        preferences.getBytes("phone", record.phone_name, phone_length) == phone_length;
+    preferences.end();
+    if(!read_ok || record.phone_name[phone_length - 1] != '\0') {
+        record = PairingRecord{};
+        recordFailure(StorageDiagnosticCode::ReadFailed);
+        return false;
+    }
+    record.phone_name[sizeof(record.phone_name) - 1] = '\0';
+    record.valid = true;
+    record.confirmed = !has_phase || phase == kPairPhaseConfirmed;
+    return true;
+}
+
+bool StorageService::savePairing(const PairingRecord & record) {
+    const size_t phone_length = strnlen(record.phone_name,
+                                        sizeof(record.phone_name));
+    if(!record.valid || phone_length == 0 ||
+       phone_length >= sizeof(record.phone_name)) {
+        return false;
+    }
+    Preferences preferences;
+    if(!openNamespace(preferences, kPairNamespace, false)) {
+        recordFailure(StorageDiagnosticCode::NamespaceOpenFailed);
+        return false;
+    }
+    const bool ok = writeSchema(preferences) &&
+        preferences.putUChar("phase", kPairPhaseProvisional) ==
+            sizeof(uint8_t) &&
+        preferences.putBytes("token", record.app_token,
+                             sizeof(record.app_token)) == sizeof(record.app_token) &&
+        preferences.putBytes("phone", record.phone_name,
+                             phone_length + 1) == phone_length + 1 &&
+        (!record.confirmed ||
+         preferences.putUChar("phase", kPairPhaseConfirmed) ==
+            sizeof(uint8_t));
+    if(!ok) {
+        preferences.remove("phase");
+        preferences.remove("token");
+        preferences.remove("phone");
+    }
+    preferences.end();
+    if(!ok) recordFailure(StorageDiagnosticCode::WriteFailed);
+    return ok;
+}
+
+bool StorageService::clearPairing() {
+    Preferences preferences;
+    if(!openNamespace(preferences, kPairNamespace, false)) {
+        recordFailure(StorageDiagnosticCode::NamespaceOpenFailed);
+        return false;
+    }
+    bool ok = writeSchema(preferences);
+    if(preferences.isKey("phase")) ok = preferences.remove("phase") && ok;
+    if(preferences.isKey("token")) ok = preferences.remove("token") && ok;
+    if(preferences.isKey("phone")) ok = preferences.remove("phone") && ok;
     preferences.end();
     if(!ok) recordFailure(StorageDiagnosticCode::WriteFailed);
     return ok;

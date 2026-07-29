@@ -52,8 +52,9 @@ void ControlCenter::refresh(const SystemState & state, uint8_t volume,
     rendered_revision_ = revision;
     volume_ = volume;
     brightness_ = brightness;
-    char text[96];
-    snprintf(text, sizeof(text), "Battery %d%%%s\nVolume %u%%  Brightness %u%%",
+    char text[128];
+    snprintf(text, sizeof(text),
+             "Battery %d%%%s\nVolume %u%%  Brightness %u%%\nHold BLE to find phone",
              state.battery.valid ? state.battery.percent : 0,
              state.battery.charging ? "  Charging" : "",
              static_cast<unsigned>(volume_),

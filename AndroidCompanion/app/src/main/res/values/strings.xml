@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FireflyOS Companion</string>
+    <string name="scan_pair">Scan and pair FireflyOS — 扫描只用于用户明确的配对流程</string>
+    <string name="repair_pairing">Repair pairing / 重新配对</string>
+    <string name="request_unpair">Unpair / 解除绑定（需在手表确认）</string>
+    <string name="status_disconnected">Offline</string>
+    <string name="offline_remote_reason">Remote actions are disabled while offline. Watch-local alarms, calendar browsing, settings, and SD music remain available.</string>
+    <string name="bluetooth_unavailable">Bluetooth LE is unavailable on this device.</string>
+    <string name="bluetooth_permission_required">Nearby Devices permission is required before scanning.</string>
+    <string name="bluetooth_scanning">Scanning for FireflyOS for up to 15 seconds…</string>
+    <string name="bluetooth_start_failed">Unable to start Bluetooth scanning.</string>
+    <string name="bluetooth_repairing">Old phone token cleared; scanning for an explicit repair pairing…</string>
+    <string name="notification_permission">Allow find-phone notifications</string>
+    <string name="notification_listener_access">Enable notification and media access</string>
+    <string name="settings_sync_title">Settings sync</string>
+    <string name="brightness_hint">Brightness (20–255)</string>
+    <string name="volume_hint">Volume (0–100)</string>
+    <string name="alarm_hint">Alarm HH:mm</string>
+    <string name="theme_hint">Theme ID</string>
+    <string name="sync_brightness">Send brightness</string>
+    <string name="sync_volume">Send volume</string>
+    <string name="sync_alarm">Send alarm</string>
+    <string name="sync_theme">Send theme</string>
+    <string name="weather_title">Weather</string>
+    <string name="city_hint">City</string>
+    <string name="temperature_hint">Temperature °C</string>
+    <string name="weather_code_hint">Weather code</string>
+    <string name="high_hint">High °C</string>
+    <string name="low_hint">Low °C</string>
+    <string name="sync_weather">Send weather</string>
+    <string name="calendar_title">Optional calendar summary</string>
+    <string name="calendar_opt_in">Enable seven-day calendar summary</string>
+    <string name="sync_calendar_now">Sync calendar now</string>
+    <string name="calendar_permission_note">READ_CALENDAR is requested only after you enable this option. Only title, start, end, and all-day are read; at most eight events are sent.</string>
+    <string name="media_title">Active phone media session</string>
+    <string name="media_previous">Previous</string>
+    <string name="media_play_pause">Play / pause</string>
+    <string name="media_next">Next</string>
+    <string name="media_volume_hint">Media volume (0–100)</string>
+    <string name="media_set_volume">Set media volume</string>
+    <string name="find_devices_title">Find devices</string>
+    <string name="find_phone">Find this phone</string>
+    <string name="find_watch">Find watch</string>
+    <string name="cancel_find_watch">Cancel watch alert</string>
+</resources>

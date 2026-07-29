@@ -1,6 +1,9 @@
 #include <Arduino.h>
 #include <FireflyOS.h>
 #include <string.h>
+
+static_assert(firefly::ConnectivityService::kDispatchQueueCapacity >= 2,
+              "BLE dispatch queue must preserve consecutive business frames");
 #include <firefly/apps/clock/ClockApp.h>
 #include <firefly/apps/calendar/CalendarApp.h>
 #include <firefly/apps/settings/SettingsApp.h>
@@ -14,7 +17,9 @@
 #include <firefly/services/ThemePackageService.h>
 #include <firefly/services/AudioService.h>
 #include <firefly/services/FileScanService.h>
+#include <firefly/services/NotificationService.h>
 #include <firefly/hal/SdCardDevice.h>
+#include <firefly/protocol/FrameCodec.h>
 #include <firefly/apps/files/FilesApp.h>
 #include <firefly/apps/music/MusicApp.h>
 #include <firefly/apps/recorder/RecorderApp.h>
@@ -26,6 +31,1303 @@ static void expect_true(bool value, const char * name) {
     if(!value) {
         ++failures;
         Serial.printf("FAIL %s\n", name);
+    }
+}
+
+static firefly::NotificationSummary notification_summary(
+    const char * key,
+    const char * title,
+    int64_t posted_epoch,
+    bool pinned = false) {
+    firefly::NotificationSummary summary{};
+    strlcpy(summary.key, key, sizeof(summary.key));
+    strlcpy(summary.app_name, "Messages", sizeof(summary.app_name));
+    strlcpy(summary.title, title, sizeof(summary.title));
+    strlcpy(summary.body, "body", sizeof(summary.body));
+    summary.posted_epoch = posted_epoch;
+    summary.pinned = pinned;
+    return summary;
+}
+
+static void test_notification_service_is_bounded_and_local_only() {
+    firefly::NotificationService service;
+    firefly::NotificationSummary visible{};
+
+    expect_true(service.push(notification_summary("same", "first", 1)),
+                "notification inserts first key");
+    expect_true(service.push(notification_summary("same", "updated", 2)),
+                "notification updates same key");
+    expect_true(service.count() == 1 &&
+                    service.copyForDisplay(0, false, visible) &&
+                    strcmp(visible.title, "updated") == 0,
+                "notification same key updates in place");
+
+    service.clearLocal();
+    expect_true(service.count() == 0,
+                "notification local clear only clears watch summaries");
+
+    service.push(notification_summary("key-0", "pinned", 0, true));
+    for(uint8_t index = 1; index < firefly::NotificationService::kCapacity;
+        ++index) {
+        char key[16]{};
+        snprintf(key, sizeof(key), "key-%u", index);
+        service.push(notification_summary(key, key, index));
+    }
+    expect_true(service.push(notification_summary("key-20", "new", 20)),
+                "notification accepts item past capacity");
+    expect_true(service.count() == firefly::NotificationService::kCapacity &&
+                    service.contains("key-0") && !service.contains("key-1") &&
+                    service.contains("key-20"),
+                "notification evicts oldest unpinned summary");
+
+    expect_true(service.dismiss("key-20") && !service.contains("key-20"),
+                "notification dismiss removes matching key");
+
+    const uint8_t before_disconnect = service.count();
+    service.setPhoneConnected(false);
+    service.setPhoneConnected(true);
+    expect_true(service.count() == before_disconnect,
+                "notification disconnect keeps local summaries");
+
+    service.setLockScreenBodyHidden(true);
+    expect_true(service.copyForDisplay(0, true, visible) &&
+                    visible.body[0] == '\0',
+                "notification lock screen body follows local privacy");
+}
+
+class FakeCompanionSettingsPersistence
+    : public firefly::CompanionSettingsPersistence {
+public:
+    bool saveSnapshot(
+        const firefly::CompanionSettingsSnapshot & snapshot) override {
+        ++calls;
+        last_snapshot = snapshot;
+        return save_result;
+    }
+
+    bool save_result = true;
+    uint8_t calls = 0;
+    firefly::CompanionSettingsSnapshot last_snapshot{};
+};
+
+static firefly::VersionedCompanionSetting companion_setting(
+    uint32_t revision,
+    int64_t changed_at,
+    uint8_t value) {
+    firefly::VersionedCompanionSetting setting{};
+    setting.revision = revision;
+    setting.changed_at = changed_at;
+    setting.value_length = 1;
+    setting.value[0] = value;
+    return setting;
+}
+
+static firefly::VersionedCompanionSetting companion_alarm_setting(
+    uint32_t revision,
+    int64_t changed_at,
+    uint8_t slot,
+    uint8_t hour,
+    const char * name) {
+    firefly::VersionedCompanionSetting setting{};
+    setting.revision = revision;
+    setting.changed_at = changed_at;
+    const uint8_t name_length = static_cast<uint8_t>(strlen(name));
+    setting.value[0] = slot;
+    setting.value[1] = 1;
+    setting.value[2] = 1;
+    setting.value[3] = hour;
+    setting.value[4] = 30;
+    setting.value[5] = 0x7F;
+    setting.value[6] = 0;
+    setting.value[7] = name_length;
+    memcpy(setting.value + 8, name, name_length);
+    setting.value_length = static_cast<uint16_t>(8 + name_length);
+    return setting;
+}
+
+static void test_companion_settings_resolve_independently_and_persist_first() {
+    FakeCompanionSettingsPersistence persistence;
+    firefly::CompanionSyncService service(&persistence);
+
+    expect_true(service.applySetting(
+                    firefly::CompanionSettingKind::Brightness,
+                    companion_setting(7, 700, 70)),
+                "companion accepts brightness setting");
+    expect_true(service.applySetting(
+                    firefly::CompanionSettingKind::Volume,
+                    companion_setting(2, 200, 20)),
+                "companion accepts volume setting independently");
+    expect_true(!service.applySetting(
+                    firefly::CompanionSettingKind::Brightness,
+                    companion_setting(8, 699, 80)),
+                "older explicit operation cannot replace brightness");
+
+    firefly::VersionedCompanionSetting output{};
+    expect_true(service.setting(firefly::CompanionSettingKind::Brightness,
+                                output) &&
+                    output.value[0] == 70,
+                "brightness retains latest explicit operation");
+    expect_true(service.setting(firefly::CompanionSettingKind::Volume,
+                                output) &&
+                    output.value[0] == 20,
+                "volume revision remains independent");
+    expect_true(!service.applySetting(
+                    firefly::CompanionSettingKind::Brightness,
+                    companion_setting(9, 1000, 19)),
+                "brightness below hardware minimum is rejected");
+
+    expect_true(firefly::CompanionSettingsResolver::isNewerRevision(
+                    0, UINT32_MAX),
+                "uint32 revision wrap follows serial order");
+    expect_true(service.applySetting(
+                    firefly::CompanionSettingKind::Theme,
+                    companion_setting(UINT32_MAX, 900, 1)),
+                "theme accepts pre-wrap revision");
+    expect_true(service.applySetting(
+                    firefly::CompanionSettingKind::Theme,
+                    companion_setting(0, 900, 2)),
+                "theme accepts wrapped revision at equal timestamp");
+
+    persistence.save_result = false;
+    expect_true(!service.applySetting(
+                    firefly::CompanionSettingKind::Alarm,
+                    companion_setting(1, 1000, 1)),
+                "failed persistence reports setting failure");
+    expect_true(!service.setting(firefly::CompanionSettingKind::Alarm, output),
+                "failed persistence never commits setting state");
+}
+
+static uint16_t append_companion_setting_entry(
+    firefly::protocol::Frame & frame,
+    uint16_t offset,
+    firefly::CompanionSettingKind kind,
+    const firefly::VersionedCompanionSetting & setting) {
+    frame.payload[offset++] = static_cast<uint8_t>(kind);
+    frame.payload[offset++] = static_cast<uint8_t>(setting.revision);
+    frame.payload[offset++] = static_cast<uint8_t>(setting.revision >> 8);
+    frame.payload[offset++] = static_cast<uint8_t>(setting.revision >> 16);
+    frame.payload[offset++] = static_cast<uint8_t>(setting.revision >> 24);
+    for(uint8_t index = 0; index < 8; ++index) {
+        frame.payload[offset++] =
+            static_cast<uint8_t>(setting.changed_at >> (index * 8));
+    }
+    frame.payload[offset++] = static_cast<uint8_t>(setting.value_length);
+    frame.payload[offset++] = static_cast<uint8_t>(setting.value_length >> 8);
+    memcpy(frame.payload + offset, setting.value, setting.value_length);
+    return static_cast<uint16_t>(offset + setting.value_length);
+}
+
+static firefly::protocol::Frame companion_settings_frame(
+    const firefly::VersionedCompanionSetting & first,
+    firefly::CompanionSettingKind first_kind,
+    const firefly::VersionedCompanionSetting * second = nullptr,
+    firefly::CompanionSettingKind second_kind =
+        firefly::CompanionSettingKind::Volume) {
+    firefly::protocol::Frame frame{};
+    frame.type = firefly::protocol::MessageType::SettingsSet;
+    frame.payload[0] = 1;
+    frame.payload[1] = second ? 2 : 1;
+    uint16_t offset = append_companion_setting_entry(
+        frame, 2, first_kind, first
+    );
+    if(second) {
+        offset = append_companion_setting_entry(
+            frame, offset, second_kind, *second
+        );
+    }
+    frame.payload_length = offset;
+    return frame;
+}
+
+static void test_companion_settings_frame_is_atomic() {
+    FakeCompanionSettingsPersistence persistence;
+    firefly::CompanionSyncService service(&persistence);
+    const firefly::VersionedCompanionSetting volume =
+        companion_setting(1, 100, 30);
+    const firefly::VersionedCompanionSetting invalid_brightness =
+        companion_setting(1, 100, 19);
+    firefly::protocol::Frame frame = companion_settings_frame(
+        volume, firefly::CompanionSettingKind::Volume,
+        &invalid_brightness, firefly::CompanionSettingKind::Brightness
+    );
+    expect_true(!service.applyFrame(frame, 0, 50) &&
+                    persistence.calls == 0,
+                "later invalid setting rejects frame before persistence");
+    firefly::VersionedCompanionSetting output{};
+    expect_true(!service.setting(firefly::CompanionSettingKind::Volume,
+                                 output),
+                "later invalid setting leaves earlier setting unapplied");
+
+    frame = companion_settings_frame(
+        volume, firefly::CompanionSettingKind::Volume
+    );
+    frame.payload[frame.payload_length++] = 0xEE;
+    expect_true(!service.applyFrame(frame, 0, 50) &&
+                    persistence.calls == 0 &&
+                    !service.setting(firefly::CompanionSettingKind::Volume,
+                                     output),
+                "trailing byte rejects frame with zero partial application");
+
+    persistence.save_result = false;
+    frame = companion_settings_frame(
+        volume, firefly::CompanionSettingKind::Volume
+    );
+    expect_true(!service.applyFrame(frame, 0, 50) &&
+                    persistence.calls == 1 &&
+                    !service.setting(firefly::CompanionSettingKind::Volume,
+                                     output),
+                "snapshot persistence failure leaves memory unchanged");
+
+    persistence.save_result = true;
+    const firefly::VersionedCompanionSetting brightness =
+        companion_setting(2, 200, 80);
+    frame = companion_settings_frame(
+        volume, firefly::CompanionSettingKind::Volume,
+        &brightness, firefly::CompanionSettingKind::Brightness
+    );
+    expect_true(service.applyFrame(frame, 0, 50) &&
+                    persistence.calls == 2,
+                "valid multi-setting frame persists one atomic snapshot");
+    expect_true(service.setting(firefly::CompanionSettingKind::Volume,
+                                output) && output.value[0] == 30,
+                "atomic frame commits volume");
+    expect_true(service.setting(firefly::CompanionSettingKind::Brightness,
+                                output) && output.value[0] == 80,
+                "atomic frame commits brightness");
+}
+
+static void test_companion_local_settings_and_round_trip() {
+    FakeCompanionSettingsPersistence persistence;
+    firefly::CompanionSyncService service(&persistence);
+    const uint8_t brightness_70[] = {70};
+    const uint8_t brightness_90[] = {90};
+    const uint8_t volume_40[] = {40};
+    const char theme_id[] = "firefly-default";
+    const firefly::VersionedCompanionSetting alarm =
+        companion_alarm_setting(0, 0, 1, 8, "Slot one");
+    expect_true(service.recordLocalSetting(
+                    firefly::CompanionSettingKind::Brightness,
+                    brightness_70, sizeof(brightness_70), 1000),
+                "local brightness enters versioned snapshot");
+    expect_true(service.recordLocalSetting(
+                    firefly::CompanionSettingKind::Volume,
+                    volume_40, sizeof(volume_40), 1001),
+                "local volume has independent version");
+    expect_true(service.recordLocalSetting(
+                    firefly::CompanionSettingKind::Brightness,
+                    brightness_90, sizeof(brightness_90), 1002),
+                "second local brightness increments only brightness");
+    expect_true(service.recordLocalSetting(
+                    firefly::CompanionSettingKind::Alarm,
+                    alarm.value, alarm.value_length, 1003),
+                "local alarm records the most recently changed slot");
+    expect_true(service.recordLocalSetting(
+                    firefly::CompanionSettingKind::Theme,
+                    reinterpret_cast<const uint8_t *>(theme_id),
+                    strlen(theme_id), 1004),
+                "local theme has independent version");
+
+    firefly::VersionedCompanionSetting setting{};
+    expect_true(service.setting(firefly::CompanionSettingKind::Brightness,
+                                setting) &&
+                    setting.revision == 2 && setting.changed_at == 1002 &&
+                    setting.value[0] == 90,
+                "brightness local revision advances independently");
+    expect_true(service.setting(firefly::CompanionSettingKind::Volume,
+                                setting) &&
+                    setting.revision == 1 && setting.changed_at == 1001 &&
+                    setting.value[0] == 40,
+                "volume local revision remains independent");
+    expect_true(service.setting(firefly::CompanionSettingKind::Alarm,
+                                setting) &&
+                    setting.revision == 1 && setting.value[0] == 1,
+                "alarm local revision remains independent");
+    expect_true(service.setting(firefly::CompanionSettingKind::Theme,
+                                setting) &&
+                    setting.revision == 1 &&
+                    strcmp(reinterpret_cast<const char *>(setting.value),
+                           theme_id) == 0,
+                "theme local revision remains independent");
+
+    persistence.save_result = false;
+    const uint8_t volume_50[] = {50};
+    expect_true(!service.recordLocalSetting(
+                    firefly::CompanionSettingKind::Volume,
+                    volume_50, sizeof(volume_50), 1005) &&
+                    service.setting(
+                        firefly::CompanionSettingKind::Volume, setting) &&
+                    setting.revision == 1 && setting.value[0] == 40,
+                "failed local snapshot persistence applies nothing");
+    persistence.save_result = true;
+
+    firefly::CompanionSyncService rebooted(&persistence);
+    expect_true(rebooted.restoreSnapshot(service.settingsSnapshot()) &&
+                    rebooted.setting(
+                        firefly::CompanionSettingKind::Brightness, setting) &&
+                    setting.value[0] == 90,
+                "restart restores newest local snapshot");
+
+    firefly::protocol::Frame older = companion_settings_frame(
+        companion_setting(99, 999, 20),
+        firefly::CompanionSettingKind::Brightness
+    );
+    expect_true(service.applyFrame(older, 0, 50) &&
+                    service.setting(
+                        firefly::CompanionSettingKind::Brightness, setting) &&
+                    setting.value[0] == 90,
+                "newer local operation wins against older remote timestamp");
+
+    firefly::protocol::Frame newer = companion_settings_frame(
+        companion_setting(1, 1003, 100),
+        firefly::CompanionSettingKind::Brightness
+    );
+    expect_true(service.applyFrame(newer, 0, 50) &&
+                    service.setting(
+                        firefly::CompanionSettingKind::Brightness, setting) &&
+                    setting.value[0] == 100,
+                "newer remote operation wins against local value");
+
+    firefly::protocol::Frame request{};
+    request.type = firefly::protocol::MessageType::SettingsGet;
+    request.payload[0] = 1;
+    request.payload_length = 1;
+    expect_true(service.applyFrame(request, 0, 50),
+                "settings get schema request is accepted");
+    firefly::protocol::Frame response{};
+    expect_true(firefly::CompanionSyncService::buildSettingsSnapshot(
+                    service.settingsSnapshot(), 77, response) &&
+                    response.type ==
+                        firefly::protocol::MessageType::SettingsSet &&
+                    response.sequence == 77,
+                "settings get builds full settings set response");
+    firefly::CompanionSyncService round_trip;
+    expect_true(round_trip.applyFrame(response, 0, 50) &&
+                    round_trip.setting(
+                        firefly::CompanionSettingKind::Brightness, setting) &&
+                    setting.value[0] == 100 &&
+                    round_trip.setting(
+                        firefly::CompanionSettingKind::Volume, setting) &&
+                    setting.value[0] == 40,
+                "settings get response round trips all independent kinds");
+}
+
+static void test_companion_alarm_latest_slot_preserves_other_slot() {
+    firefly::AlarmService alarms;
+    firefly::Alarm slot_zero{};
+    slot_zero.configured = true;
+    slot_zero.enabled = true;
+    slot_zero.hour = 6;
+    slot_zero.minute = 15;
+    strlcpy(slot_zero.name, "Slot zero", sizeof(slot_zero.name));
+    expect_true(alarms.set(0, slot_zero), "alarm slot zero seeded");
+
+    const firefly::VersionedCompanionSetting latest =
+        companion_alarm_setting(1, 2000, 1, 8, "Slot one");
+    uint8_t decoded_slot = 0;
+    firefly::Alarm decoded{};
+    expect_true(firefly::CompanionSyncService::decodeAlarm(
+                    latest, decoded_slot, decoded) &&
+                    decoded_slot == 1 && alarms.set(decoded_slot, decoded),
+                "latest alarm setting decodes its explicit slot");
+    expect_true(alarms.get(0).hour == 6 &&
+                    strcmp(alarms.get(0).name, "Slot zero") == 0,
+                "applying slot one never destroys slot zero");
+    expect_true(alarms.get(1).hour == 8 &&
+                    strcmp(alarms.get(1).name, "Slot one") == 0,
+                "latest alarm operation applies only named slot");
+}
+
+static void test_music_target_is_explicit_and_local_first() {
+    firefly::MusicControlSelector selector;
+    expect_true(selector.target() ==
+                    firefly::MusicControlTarget::LocalLibrary,
+                "music target defaults to local library");
+    selector.toggle();
+    expect_true(selector.target() ==
+                    firefly::MusicControlTarget::PhoneRemote,
+                "long refresh explicitly selects phone remote");
+    selector.noteScanCompleted(0);
+    expect_true(selector.target() ==
+                    firefly::MusicControlTarget::PhoneRemote,
+                "empty scan never changes explicit phone target");
+    selector.noteScanCompleted(12);
+    expect_true(selector.target() ==
+                    firefly::MusicControlTarget::PhoneRemote,
+                "nonempty scan never changes explicit phone target");
+    selector.noteLocalTrackSelected();
+    expect_true(selector.target() ==
+                    firefly::MusicControlTarget::LocalLibrary,
+                "selecting local track forces local target");
+}
+
+static bool music_local_volume_save_result = false;
+static uint8_t music_local_volume_requested = 0;
+
+static bool save_music_local_volume(uint8_t volume) {
+    music_local_volume_requested = volume;
+    return music_local_volume_save_result;
+}
+
+static void test_music_empty_local_transport_and_volume_commit() {
+    uint16_t target = 99;
+    expect_true(
+        !firefly::MusicQueueNavigator::play(0, 0, target) && target == 99,
+        "empty local queue play is a safe no-op"
+    );
+    expect_true(
+        !firefly::MusicQueueNavigator::previous(0, 0, target) && target == 99,
+        "empty local queue previous avoids underflow"
+    );
+    expect_true(
+        !firefly::MusicQueueNavigator::next(0, 0, target) && target == 99,
+        "empty local queue next avoids modulo zero"
+    );
+    expect_true(
+        firefly::MusicQueueNavigator::previous(0, 3, target) && target == 2 &&
+        firefly::MusicQueueNavigator::next(2, 3, target) && target == 0,
+        "nonempty local queue navigation still wraps"
+    );
+
+    firefly::MusicApp app;
+    app.setLocalVolumeCallback(save_music_local_volume, 50);
+    music_local_volume_save_result = false;
+    expect_true(!app.applyLocalVolume(75) &&
+                    music_local_volume_requested == 75 &&
+                    app.localVolume() == 50,
+                "failed local volume persistence never advances music state");
+    music_local_volume_save_result = true;
+    expect_true(app.applyLocalVolume(75) && app.localVolume() == 75,
+                "persisted local volume advances music state");
+}
+
+static void write_companion_i16(uint8_t * output, int16_t value) {
+    output[0] = static_cast<uint8_t>(value & 0xFF);
+    output[1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+}
+
+static void write_companion_i64(uint8_t * output, int64_t value) {
+    const uint64_t raw = static_cast<uint64_t>(value);
+    for(uint8_t i = 0; i < 8; ++i) {
+        output[i] = static_cast<uint8_t>((raw >> (i * 8)) & 0xFF);
+    }
+}
+
+static firefly::protocol::Frame companion_weather_frame(int64_t updated_at) {
+    firefly::protocol::Frame frame{};
+    frame.type = firefly::protocol::MessageType::WeatherUpdate;
+    frame.payload[0] = 1;
+    frame.payload[1] = 6;
+    frame.payload[2] = 61;
+    frame.payload[3] = 0;
+    write_companion_i16(frame.payload + 4, 267);
+    write_companion_i16(frame.payload + 6, 301);
+    write_companion_i16(frame.payload + 8, 224);
+    write_companion_i64(frame.payload + 10, updated_at);
+    memcpy(frame.payload + 18, "Paris!", 6);
+    frame.payload_length = 24;
+    return frame;
+}
+
+static void test_companion_weather_cache_boundaries_and_disconnect() {
+    firefly::CompanionSyncService service;
+    const int64_t updated = 1000000;
+    firefly::protocol::Frame frame = companion_weather_frame(updated);
+    expect_true(service.applyFrame(frame, 100, 50),
+                "companion accepts bounded weather payload");
+
+    firefly::CompanionWeather weather{};
+    expect_true(service.weatherAt(updated + 3 * 60 * 60, false, weather) ==
+                    firefly::WeatherFreshness::Fresh,
+                "weather is fresh at exactly three hours while disconnected");
+    expect_true(service.weatherAt(updated + 3 * 60 * 60 + 1, false, weather) ==
+                    firefly::WeatherFreshness::Stale,
+                "weather is stale after three hours");
+    expect_true(service.weatherAt(updated + 24 * 60 * 60, false, weather) ==
+                    firefly::WeatherFreshness::Stale,
+                "weather remains readable at exactly twenty four hours");
+    expect_true(service.weatherAt(updated + 24 * 60 * 60 + 1, false, weather) ==
+                    firefly::WeatherFreshness::Expired &&
+                    !weather.valid,
+                "weather expires only after twenty four hours");
+
+    frame = companion_weather_frame(updated);
+    frame.payload[18] = 0xC0;
+    expect_true(!service.applyFrame(frame, 100, 50),
+                "weather validates UTF-8 before fixed-buffer copy");
+}
+
+static void test_companion_weather_presenter_states() {
+    firefly::CompanionWeather weather{};
+    weather.valid = true;
+    strlcpy(weather.city, "Paris", sizeof(weather.city));
+    weather.temperature_tenths_c = 267;
+    weather.high_tenths_c = 301;
+    weather.low_tenths_c = 224;
+    weather.weather_code = 61;
+    weather.updated_at_epoch = 1000;
+
+    firefly::CompanionWeatherView view =
+        firefly::CompanionWeatherPresenter::build(
+            weather, firefly::WeatherFreshness::Fresh, true
+        );
+    expect_true(strcmp(view.city, "Paris") == 0 &&
+                    strstr(view.current, "26.7") != nullptr &&
+                    strstr(view.range, "30.1") != nullptr &&
+                    strstr(view.range, "22.4") != nullptr &&
+                    strstr(view.code, "61") != nullptr &&
+                    strstr(view.status, "fresh") != nullptr,
+                "fresh weather view exposes all synced fields");
+
+    view = firefly::CompanionWeatherPresenter::build(
+        weather, firefly::WeatherFreshness::Stale, false
+    );
+    expect_true(strstr(view.status, "stale") != nullptr &&
+                    strstr(view.status, "offline") != nullptr &&
+                    strcmp(view.city, "Paris") == 0,
+                "stale offline view keeps cached weather");
+
+    view = firefly::CompanionWeatherPresenter::build(
+        firefly::CompanionWeather{},
+        firefly::WeatherFreshness::Expired,
+        false
+    );
+    expect_true(strstr(view.status, "expired") != nullptr &&
+                    strstr(view.status, "unavailable") != nullptr,
+                "expired weather is explicitly unavailable");
+}
+
+static firefly::protocol::Frame companion_calendar_frame(uint8_t count) {
+    firefly::protocol::Frame frame{};
+    frame.type = firefly::protocol::MessageType::CalendarUpdate;
+    frame.payload[0] = 1;
+    frame.payload[1] = 1;
+    frame.payload[2] = count;
+    write_companion_i64(frame.payload + 3, 2000000);
+    uint16_t offset = 11;
+    for(uint8_t i = 0; i < count && i < 8; ++i) {
+        frame.payload[offset++] = 1;
+        write_companion_i64(frame.payload + offset, 2100000 + i * 1000);
+        offset += 8;
+        write_companion_i64(frame.payload + offset, 2100500 + i * 1000);
+        offset += 8;
+        frame.payload[offset++] = i == 0 ? 1 : 0;
+        frame.payload[offset++] = static_cast<uint8_t>('A' + i);
+    }
+    frame.payload_length = offset;
+    return frame;
+}
+
+static void test_companion_calendar_is_bounded_and_disable_preserves_local_date() {
+    firefly::CompanionSyncService service;
+    firefly::protocol::Frame frame = companion_calendar_frame(8);
+    expect_true(service.applyFrame(frame, 100, 50) &&
+                    service.calendar().enabled &&
+                    service.calendar().count == 8,
+                "calendar accepts at most eight whitelisted summaries");
+    frame = companion_calendar_frame(9);
+    expect_true(!service.applyFrame(frame, 100, 50),
+                "calendar rejects over-bound entry count");
+
+    frame = companion_calendar_frame(0);
+    frame.payload[1] = 0;
+    expect_true(service.applyFrame(frame, 100, 50) &&
+                    !service.calendar().enabled &&
+                    service.calendar().count == 0,
+                "permission denial disables only synced agenda");
+}
+
+static void test_find_watch_policy_duration_low_battery_and_cancel() {
+    const firefly::FindWatchPlan normal =
+        firefly::FindDevicePolicy::watchPlan(50);
+    expect_true(normal.duration_ms == 30000 && normal.play_audio &&
+                    normal.flash_screen,
+                "normal find watch runs sound and light for thirty seconds");
+    const firefly::FindWatchPlan low =
+        firefly::FindDevicePolicy::watchPlan(5);
+    expect_true(low.duration_ms == 5000 && !low.play_audio &&
+                    low.flash_screen,
+                "extremely low battery uses five second silent flash");
+
+    firefly::CompanionSyncService service;
+    firefly::protocol::Frame frame{};
+    frame.type = firefly::protocol::MessageType::FindWatch;
+    frame.payload[0] = 1;
+    frame.payload[1] = 1;
+    frame.payload_length = 2;
+    expect_true(service.applyFrame(frame, 100, 50) &&
+                    service.findWatchAt(30099).active,
+                "find watch remains active before deadline");
+    expect_true(!service.findWatchAt(30100).active,
+                "find watch expires at thirty second deadline");
+    expect_true(service.applyFrame(frame, 40000, 50) &&
+                    service.cancelFindWatch() &&
+                    !service.findWatchAt(40001).active,
+                "find watch supports physical-path cancellation");
+}
+
+static void test_companion_dispatcher_routes_notifications_and_business_frames() {
+    firefly::NotificationService notifications;
+    firefly::CompanionSyncService companion;
+    firefly::CompanionFrameDispatcher dispatcher(notifications, companion);
+
+    firefly::protocol::Frame dismiss{};
+    dismiss.type = firefly::protocol::MessageType::NotificationDismiss;
+    dismiss.payload[0] = 1;
+    dismiss.payload[1] = 0;
+    dismiss.payload[2] = 0;
+    dismiss.payload_length = 3;
+    expect_true(dispatcher.dispatch(dismiss, 100, 50) ==
+                    firefly::CompanionDispatchResult::Notification,
+                "main-loop dispatcher routes notification frames");
+
+    firefly::protocol::Frame weather = companion_weather_frame(1000);
+    expect_true(dispatcher.dispatch(weather, 100, 50) ==
+                    firefly::CompanionDispatchResult::Companion,
+                "main-loop dispatcher also routes companion frames");
+}
+
+static void test_companion_remote_error_decode_and_text() {
+    firefly::protocol::Frame frame{};
+    frame.type = firefly::protocol::MessageType::Error;
+    frame.payload[0] = 1;
+    frame.payload[1] = static_cast<uint8_t>(
+        firefly::protocol::MessageType::MediaCommand
+    );
+    frame.payload[2] = 2;
+    frame.payload_length = 3;
+    firefly::CompanionRemoteError error{};
+    expect_true(firefly::CompanionSyncService::decodeError(frame, error) &&
+                    error.failed_type ==
+                        firefly::protocol::MessageType::MediaCommand &&
+                    error.code ==
+                        firefly::protocol::WireErrorCode::NoActiveMediaSession,
+                "watch decodes explicit phone media error");
+    expect_true(strcmp(
+                    firefly::CompanionSyncService::remoteErrorText(error),
+                    "NO MEDIA") == 0,
+                "watch maps phone media error to bounded status text");
+}
+
+static void test_ble_frame_codec_golden_frames() {
+    using namespace firefly::protocol;
+    static const uint8_t hello_golden[] = {
+        0x46, 0x46, 0x01, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x4D, 0xE0
+    };
+    Frame hello{};
+    hello.type = MessageType::Hello;
+    hello.sequence = 1;
+    uint8_t encoded[kMaxEncodedFrame]{};
+    const size_t hello_length = FrameCodec::encode(hello, encoded, sizeof(encoded));
+    expect_true(hello_length == sizeof(hello_golden), "BLE Hello encoded length");
+    expect_true(memcmp(encoded, hello_golden, sizeof(hello_golden)) == 0,
+                "BLE Hello golden bytes");
+
+    static const uint8_t notification_golden[] = {
+        0x46, 0x46, 0x01, 0x20, 0x01, 0x34, 0x12, 0x06, 0x00,
+        0xE5, 0x25, 0xE6, 0x9D, 0xA5, 0xE7, 0x94, 0xB5
+    };
+    Frame notification{};
+    notification.type = MessageType::NotificationPush;
+    notification.flags = FrameFlag::AckRequired;
+    notification.sequence = 0x1234;
+    notification.payload_length = 6;
+    memcpy(notification.payload, notification_golden + kHeaderSize,
+           notification.payload_length);
+    const size_t notification_length =
+        FrameCodec::encode(notification, encoded, sizeof(encoded));
+    expect_true(notification_length == sizeof(notification_golden),
+                "BLE notification encoded length");
+    expect_true(memcmp(encoded, notification_golden, sizeof(notification_golden)) == 0,
+                "BLE notification golden bytes");
+
+    Frame decoded{};
+    expect_true(FrameCodec::decode(notification_golden,
+                                   sizeof(notification_golden), decoded) ==
+                    DecodeError::None,
+                "BLE notification decodes");
+    expect_true(decoded.type == MessageType::NotificationPush &&
+                    decoded.flags == FrameFlag::AckRequired &&
+                    decoded.sequence == 0x1234 && decoded.payload_length == 6 &&
+                    memcmp(decoded.payload, notification.payload, 6) == 0,
+                "BLE notification fields round trip");
+
+    uint8_t corrupted[sizeof(notification_golden)]{};
+    memcpy(corrupted, notification_golden, sizeof(corrupted));
+    corrupted[sizeof(corrupted) - 1] ^= 0x01;
+    expect_true(FrameCodec::decode(corrupted, sizeof(corrupted), decoded) ==
+                    DecodeError::CrcMismatch,
+                "BLE corrupt CRC rejected");
+
+    notification.payload_length = kMaxPayload + 1;
+    expect_true(FrameCodec::encode(notification, encoded, sizeof(encoded)) == 0,
+                "BLE oversized payload rejected before copy");
+}
+
+class FakeBlePeripheral final : public firefly::BlePeripheralTransport {
+public:
+    bool begin(const char *, ReceiveCallback callback) override {
+        callback_ = callback;
+        return true;
+    }
+
+    void advertise(uint16_t interval_ms) override {
+        last_advertising_interval_ms = interval_ms;
+        ++advertise_count;
+    }
+
+    void stopAdvertising() override { ++stop_advertising_count; }
+
+    bool notify(const uint8_t * data, size_t length) override {
+        if(!connected_value || !data || length > sizeof(last_notification) ||
+           length > firefly::protocol::attChunkLimit(mtu)) {
+            return false;
+        }
+        memcpy(last_notification, data, length);
+        last_notification_length = length;
+        ++notify_count;
+        return true;
+    }
+
+    bool connected() const override { return connected_value; }
+    uint16_t negotiatedMtu() const override { return mtu; }
+    void disconnect() override { connected_value = false; }
+    void setThroughputMode(bool enabled) override {
+        throughput_mode = enabled;
+        ++throughput_change_count;
+    }
+
+    void setSecurityCallback(SecurityCallback callback) override {
+        security_callback = callback;
+    }
+
+    void authorizePairing(bool authorized) override {
+        pairing_authorized = authorized;
+    }
+
+    bool requestSecureBond(uint32_t passkey) override {
+        requested_passkey = passkey;
+        ++secure_bond_requests;
+        return connected_value && pairing_authorized;
+    }
+
+    bool requestEncryptedLink() override {
+        ++encrypted_link_requests;
+        return connected_value;
+    }
+
+    bool encrypted() const override { return encrypted_value; }
+
+    bool clearBonds() override {
+        ++clear_bond_count;
+        encrypted_value = false;
+        return true;
+    }
+
+    void triggerSecurityResult(bool success) {
+        encrypted_value = success;
+        if(security_callback) security_callback(success);
+    }
+
+    ReceiveCallback callback_ = nullptr;
+    uint8_t last_notification[firefly::protocol::kMaxAttChunk]{};
+    size_t last_notification_length = 0;
+    uint16_t mtu = 185;
+    uint16_t last_advertising_interval_ms = 0;
+    uint8_t advertise_count = 0;
+    uint8_t stop_advertising_count = 0;
+    uint8_t notify_count = 0;
+    uint8_t throughput_change_count = 0;
+    bool connected_value = false;
+    bool throughput_mode = false;
+    bool pairing_authorized = false;
+    bool encrypted_value = false;
+    SecurityCallback security_callback = nullptr;
+    uint32_t requested_passkey = 0;
+    uint8_t secure_bond_requests = 0;
+    uint8_t encrypted_link_requests = 0;
+    uint8_t clear_bond_count = 0;
+};
+
+class FakePairingStore final : public firefly::PairingStore {
+public:
+    bool loadPairing(firefly::PairingRecord & output) override {
+        output = record;
+        return true;
+    }
+
+    bool savePairing(const firefly::PairingRecord & value) override {
+        ++save_count;
+        if(save_result) record = value;
+        return save_result;
+    }
+
+    bool clearPairing() override {
+        ++clear_count;
+        if(clear_result) record = {};
+        return clear_result;
+    }
+
+    firefly::PairingRecord record{};
+    uint8_t save_count = 0;
+    uint8_t clear_count = 0;
+    bool save_result = true;
+    bool clear_result = true;
+};
+
+static void fill_test_random(uint8_t * output, size_t length) {
+    for(size_t i = 0; i < length; ++i) output[i] = static_cast<uint8_t>(i + 1U);
+}
+
+static void drain_events(firefly::EventBus & events) {
+    firefly::SystemEvent event{};
+    while(events.take(event)) {}
+}
+
+static void test_connectivity_service_bounded_flow() {
+    using namespace firefly;
+    using namespace firefly::protocol;
+    FakeBlePeripheral transport;
+    EventBus events;
+    StateStore state;
+    FakePairingStore pairing_store;
+    ConnectivityService connectivity(transport, events, state, pairing_store);
+
+    expect_true(connectivity.begin("FireflyOS Test", false, 0),
+                "BLE connectivity begins");
+    expect_true(transport.last_advertising_interval_ms ==
+                    ConnectivityService::kFastAdvertisingIntervalMs,
+                "BLE begins fast advertising");
+    connectivity.service(ConnectivityService::kUnpairedFastAdvertisingMs);
+    expect_true(transport.last_advertising_interval_ms ==
+                    ConnectivityService::kSlowAdvertisingIntervalMs,
+                "BLE unpaired advertising slows after sixty seconds");
+    BatteryState battery{};
+    battery.percent = 61;
+    battery.valid = true;
+    state.setBattery(battery);
+    transport.connected_value = true;
+    connectivity.service(91000);
+    expect_true(state.snapshot().phone_connected,
+                "BLE connection updates phone state");
+    expect_true(transport.throughput_mode,
+                "BLE connection starts in throughput mode");
+    drain_events(events);
+
+    Frame hello{};
+    hello.type = MessageType::Hello;
+    hello.sequence = 1;
+    uint8_t encoded[kMaxEncodedFrame]{};
+    size_t encoded_length = FrameCodec::encode(hello, encoded, sizeof(encoded));
+    expect_true(connectivity.enqueueReceived(encoded, encoded_length),
+                "BLE queues encoded Hello");
+    connectivity.service(91001);
+    Frame received{};
+    expect_true(connectivity.takeReceivedFrame(received) &&
+                    received.type == MessageType::Hello && received.sequence == 1,
+                "BLE publishes decoded Hello through event boundary");
+    drain_events(events);
+
+    expect_true(connectivity.enqueueReceived(encoded, encoded_length),
+                "BLE queues duplicate Hello");
+    connectivity.service(91002);
+    expect_true(!connectivity.takeReceivedFrame(received),
+                "BLE duplicate sequence is not dispatched twice");
+    bool duplicate_error = false;
+    SystemEvent event{};
+    while(events.take(event)) {
+        duplicate_error = duplicate_error ||
+            (event.type == EventType::BleProtocolError &&
+             event.value == static_cast<uint32_t>(ConnectivityError::DuplicateSequence));
+    }
+    expect_true(duplicate_error, "BLE duplicate sequence reports protocol error");
+
+    static const uint8_t logical_payload[] = {
+        0xE8, 0x90, 0xA4, 0xE7, 0x81, 0xAB, 0xE8, 0x99, 0xAB
+    };
+    for(uint8_t index = 0; index < 3; ++index) {
+        Frame fragment{};
+        fragment.type = MessageType::Hello;
+        fragment.flags = static_cast<uint8_t>(
+            FrameFlag::Fragment |
+            (index == 2 ? FrameFlag::LastFragment : 0)
+        );
+        fragment.sequence = 2;
+        fragment.payload_length = 5;
+        fragment.payload[0] = index;
+        fragment.payload[1] = 3;
+        memcpy(fragment.payload + 2, logical_payload + index * 3, 3);
+        encoded_length = FrameCodec::encode(fragment, encoded, sizeof(encoded));
+        expect_true(connectivity.enqueueReceived(encoded, encoded_length),
+                    "BLE queues ordered fragment");
+    }
+    connectivity.service(91003);
+    expect_true(connectivity.takeReceivedFrame(received) &&
+                    received.type == MessageType::Hello &&
+                    received.sequence == 2 && received.payload_length == 9 &&
+                    memcmp(received.payload, logical_payload, 9) == 0,
+                "BLE reassembles three fragments before dispatch");
+    drain_events(events);
+
+    Frame queued_first{};
+    queued_first.type = MessageType::Hello;
+    queued_first.sequence = 3;
+    encoded_length = FrameCodec::encode(queued_first, encoded, sizeof(encoded));
+    expect_true(connectivity.enqueueReceived(encoded, encoded_length),
+                "BLE queues first business frame");
+    Frame queued_second = queued_first;
+    queued_second.sequence = 4;
+    encoded_length = FrameCodec::encode(queued_second, encoded, sizeof(encoded));
+    expect_true(connectivity.enqueueReceived(encoded, encoded_length),
+                "BLE queues second business frame");
+    connectivity.service(91004);
+    Frame first_received{};
+    Frame second_received{};
+    expect_true(connectivity.takeReceivedFrame(first_received) &&
+                    connectivity.takeReceivedFrame(second_received) &&
+                    first_received.sequence == 3 &&
+                    second_received.sequence == 4,
+                "BLE main-loop mailbox preserves consecutive business frames");
+    drain_events(events);
+
+    for(uint16_t sequence = 10;
+        sequence < 10 + ConnectivityService::kDispatchQueueCapacity;
+        ++sequence) {
+        Frame fill{};
+        fill.type = MessageType::Hello;
+        fill.sequence = sequence;
+        encoded_length = FrameCodec::encode(fill, encoded, sizeof(encoded));
+        expect_true(connectivity.enqueueReceived(encoded, encoded_length),
+                    "BLE accepts frame used to fill dispatch queue");
+        connectivity.service(91100 + sequence);
+    }
+    const uint8_t acknowledgements_before_full = transport.notify_count;
+    Frame rejected{};
+    rejected.type = MessageType::Hello;
+    rejected.sequence = 14;
+    encoded_length = FrameCodec::encode(rejected, encoded, sizeof(encoded));
+    expect_true(connectivity.enqueueReceived(encoded, encoded_length),
+                "BLE accepts retry candidate into receive queue");
+    connectivity.service(91114);
+    expect_true(transport.notify_count == acknowledgements_before_full,
+                "dispatch rejection is not acknowledged");
+    expect_true(connectivity.takeReceivedFrame(received),
+                "main loop frees one dispatch slot");
+    expect_true(connectivity.enqueueReceived(encoded, encoded_length),
+                "same sequence can retry after failed publish");
+    connectivity.service(91115);
+    expect_true(transport.notify_count == acknowledgements_before_full + 1,
+                "successful retry advances sequence and receives ACK");
+    while(connectivity.takeReceivedFrame(received)) {}
+    drain_events(events);
+
+    Frame outbound{};
+    outbound.type = MessageType::Hello;
+    outbound.flags = FrameFlag::AckRequired;
+    outbound.sequence = 9;
+    outbound.payload_length = 16;
+    for(uint8_t index = 0; index < outbound.payload_length; ++index) {
+        outbound.payload[index] = index;
+    }
+    transport.mtu = 23;
+    const uint8_t notify_count_before_retry = transport.notify_count;
+    expect_true(connectivity.send(outbound, 92000),
+                "BLE fragments ACK-required frame to negotiated MTU");
+    expect_true(transport.notify_count == notify_count_before_retry + 3 &&
+                    transport.last_notification_length <=
+                        protocol::attChunkLimit(transport.mtu),
+                "BLE sends every outbound fragment within ATT limit");
+    connectivity.service(94000);
+    connectivity.service(96000);
+    connectivity.service(98000);
+    expect_true(transport.notify_count == notify_count_before_retry + 12,
+                "BLE retries complete ACK-required fragment batch three times");
+    connectivity.service(100000);
+    expect_true(transport.notify_count == notify_count_before_retry + 12,
+                "BLE stops fragment batches after retry budget");
+    bool timeout_error = false;
+    while(events.take(event)) {
+        timeout_error = timeout_error ||
+            (event.type == EventType::BleProtocolError &&
+             event.value == static_cast<uint32_t>(ConnectivityError::AckTimeout));
+    }
+    expect_true(timeout_error, "BLE ACK timeout is observable");
+
+    transport.connected_value = false;
+    connectivity.service(100001);
+    const SystemState disconnected = state.snapshot();
+    expect_true(!disconnected.phone_connected,
+                "BLE disconnect clears only phone connection state");
+    expect_true(disconnected.battery.valid && disconnected.battery.percent == 61,
+                "BLE disconnect preserves unrelated cached state");
+}
+
+static void test_ble_message_authenticator() {
+    using namespace firefly::protocol;
+    using firefly::MessageAuthenticator;
+    uint8_t token[MessageAuthenticator::kAppTokenSize]{};
+    for(uint8_t i = 0; i < sizeof(token); ++i) token[i] = i;
+
+    Frame frame{};
+    frame.type = MessageType::SettingsSet;
+    frame.flags = FrameFlag::AckRequired;
+    frame.sequence = 0x1234;
+    frame.payload_length = 3;
+    frame.payload[0] = 0x10;
+    frame.payload[1] = 0x20;
+    frame.payload[2] = 0x30;
+    expect_true(MessageAuthenticator::appendTag(frame, token),
+                "BLE HMAC tag appends to sensitive frame");
+    expect_true(frame.payload_length == 3 + MessageAuthenticator::kAuthTagSize,
+                "BLE HMAC tag is truncated to eight bytes");
+    static const uint8_t hmac_golden[MessageAuthenticator::kAuthTagSize] = {
+        0x20, 0xD1, 0x8D, 0x97, 0x0E, 0xF3, 0x13, 0x36
+    };
+    expect_true(memcmp(frame.payload + 3, hmac_golden,
+                       sizeof(hmac_golden)) == 0,
+                "BLE HMAC matches SHA256 golden tag");
+
+    Frame verified = frame;
+    expect_true(MessageAuthenticator::verifyAndStrip(verified, token),
+                "BLE correct token authenticates");
+    expect_true(verified.payload_length == 3 &&
+                    verified.payload[0] == 0x10 &&
+                    verified.payload[2] == 0x30,
+                "BLE authentication strips only tag");
+
+    frame.payload[frame.payload_length - 1] ^= 0x01;
+    expect_true(!MessageAuthenticator::verifyAndStrip(frame, token),
+                "BLE wrong authentication tag is rejected");
+}
+
+static void test_connectivity_pairing_and_security() {
+    using namespace firefly;
+    using namespace firefly::protocol;
+
+    {
+        FakeBlePeripheral transport;
+        EventBus events;
+        StateStore state;
+        FakePairingStore store;
+        ConnectivityService connectivity(transport, events, state, store);
+        connectivity.setRandomBytesCallback(&fill_test_random);
+        expect_true(connectivity.begin("FireflyOS Test", false, 0),
+                    "BLE unpaired service begins");
+        transport.connected_value = true;
+        connectivity.service(1);
+        drain_events(events);
+
+        Frame request{};
+        request.type = MessageType::PairRequest;
+        request.sequence = 1;
+        const char phone_name[] = "Pixel 9";
+        request.payload_length = sizeof(phone_name) - 1;
+        memcpy(request.payload, phone_name, request.payload_length);
+        uint8_t encoded[kMaxEncodedFrame]{};
+        const size_t length = FrameCodec::encode(request, encoded, sizeof(encoded));
+        expect_true(connectivity.enqueueReceived(encoded, length),
+                    "BLE pair request queues");
+        connectivity.service(2);
+        const PairingSnapshot pending = connectivity.pairingSnapshot();
+        expect_true(pending.state == PairingState::AwaitingUser &&
+                        pending.passkey >= 100000 && pending.passkey <= 999999 &&
+                        strcmp(pending.phone_name, phone_name) == 0,
+                    "BLE pair request exposes bounded user confirmation");
+        expect_true(connectivity.confirmPairing(true, 3) &&
+                        transport.secure_bond_requests == 1 &&
+                        transport.requested_passkey == pending.passkey,
+                    "BLE user approval starts secure bond");
+
+        transport.triggerSecurityResult(true);
+        connectivity.service(4);
+        expect_true(store.record.valid && !store.record.confirmed &&
+                        store.save_count == 1,
+                    "BLE successful bond persists provisional app token");
+        expect_true(strcmp(store.record.phone_name, phone_name) == 0,
+                    "BLE successful bond persists phone name");
+        expect_true(!connectivity.paired() &&
+                        connectivity.pairingSnapshot().state ==
+                            PairingState::AwaitingPairConfirmAck,
+                    "BLE waits for PairConfirm ACK before marking paired");
+        Frame pair_confirmation{};
+        expect_true(FrameCodec::decode(
+                        transport.last_notification,
+                        transport.last_notification_length,
+                        pair_confirmation) == DecodeError::None &&
+                        pair_confirmation.type == MessageType::PairConfirm,
+                    "BLE publishes PairConfirm transaction");
+        Frame pair_ack{};
+        pair_ack.type = MessageType::Ack;
+        pair_ack.flags = FrameFlag::IsAck;
+        pair_ack.sequence = pair_confirmation.sequence;
+        const size_t pair_ack_length =
+            FrameCodec::encode(pair_ack, encoded, sizeof(encoded));
+        connectivity.enqueueReceived(encoded, pair_ack_length);
+        connectivity.service(5);
+        expect_true(connectivity.paired() && store.record.confirmed &&
+                        store.save_count == 2 &&
+                        connectivity.pairingSnapshot().state ==
+                            PairingState::Paired,
+                    "BLE commits pairing record only after PairConfirm ACK");
+    }
+
+    {
+        FakeBlePeripheral transport;
+        EventBus events;
+        StateStore state;
+        FakePairingStore store;
+        store.record.valid = true;
+        store.record.confirmed = false;
+        strlcpy(store.record.phone_name, "Interrupted",
+                sizeof(store.record.phone_name));
+        ConnectivityService connectivity(transport, events, state, store);
+        expect_true(connectivity.begin("FireflyOS Test", true, 0) &&
+                        !connectivity.paired() &&
+                        store.clear_count == 1 &&
+                        transport.clear_bond_count == 1 &&
+                        !store.record.valid,
+                    "BLE boot rolls back provisional pairing record");
+    }
+
+    {
+        FakeBlePeripheral transport;
+        EventBus events;
+        StateStore state;
+        FakePairingStore store;
+        store.record.valid = true;
+        store.record.confirmed = true;
+        strlcpy(store.record.phone_name, "Pixel 9", sizeof(store.record.phone_name));
+        for(uint8_t i = 0; i < sizeof(store.record.app_token); ++i) {
+            store.record.app_token[i] = static_cast<uint8_t>(0xA0 + i);
+        }
+        ConnectivityService connectivity(transport, events, state, store);
+        expect_true(connectivity.begin("FireflyOS Test", true, 0),
+                    "BLE paired service begins");
+        connectivity.service(ConnectivityService::kPairedFastAdvertisingMs);
+        expect_true(transport.last_advertising_interval_ms ==
+                        ConnectivityService::kSlowAdvertisingIntervalMs,
+                    "BLE paired reconnect window lasts twenty seconds");
+        transport.connected_value = true;
+        transport.encrypted_value = true;
+        connectivity.service(1);
+        drain_events(events);
+
+        Frame command{};
+        command.type = MessageType::SettingsSet;
+        command.sequence = 10;
+        command.payload_length = 1;
+        command.payload[0] = 0x42;
+        expect_true(MessageAuthenticator::appendTag(command, store.record.app_token),
+                    "BLE signed settings command builds");
+        uint8_t encoded[kMaxEncodedFrame]{};
+        const size_t length = FrameCodec::encode(command, encoded, sizeof(encoded));
+        connectivity.enqueueReceived(encoded, length);
+        connectivity.service(2);
+        Frame received{};
+        expect_true(connectivity.takeReceivedFrame(received) &&
+                        received.type == MessageType::SettingsSet &&
+                        received.payload_length == 1,
+                    "BLE authenticated settings command dispatches");
+        drain_events(events);
+
+        connectivity.enqueueReceived(encoded, length);
+        connectivity.service(3);
+        expect_true(!connectivity.takeReceivedFrame(received),
+                    "BLE replayed authenticated sequence is rejected");
+        drain_events(events);
+
+        const uint8_t acknowledgements_before_bad_duplicate =
+            transport.notify_count;
+        Frame bad_duplicate = command;
+        bad_duplicate.payload[bad_duplicate.payload_length - 1] ^= 0x01;
+        const size_t bad_duplicate_length =
+            FrameCodec::encode(bad_duplicate, encoded, sizeof(encoded));
+        connectivity.enqueueReceived(encoded, bad_duplicate_length);
+        connectivity.service(4);
+        Frame unauthorized_response{};
+        expect_true(
+            transport.notify_count ==
+                acknowledgements_before_bad_duplicate + 1 &&
+                FrameCodec::decode(
+                    transport.last_notification,
+                    transport.last_notification_length,
+                    unauthorized_response) == DecodeError::None &&
+                unauthorized_response.type == MessageType::Error &&
+                unauthorized_response.payload_length == 3 &&
+                unauthorized_response.payload[2] ==
+                    static_cast<uint8_t>(
+                        protocol::WireErrorCode::Unauthorized) &&
+                !connectivity.takeReceivedFrame(received),
+            "BLE bad-HMAC duplicate returns Unauthorized without dispatch"
+        );
+        bool bad_duplicate_unauthorized = false;
+        SystemEvent bad_duplicate_event{};
+        while(events.take(bad_duplicate_event)) {
+            bad_duplicate_unauthorized = bad_duplicate_unauthorized ||
+                (bad_duplicate_event.type == EventType::BleProtocolError &&
+                 bad_duplicate_event.value ==
+                    static_cast<uint32_t>(ConnectivityError::Unauthorized));
+        }
+        expect_true(bad_duplicate_unauthorized,
+                    "BLE bad-HMAC duplicate counts as authentication failure");
+
+        Frame wrong = command;
+        wrong.sequence = 11;
+        wrong.payload[wrong.payload_length - 1] ^= 0x01;
+        const size_t wrong_length = FrameCodec::encode(wrong, encoded, sizeof(encoded));
+        for(uint8_t attempt = 0; attempt < ConnectivityService::kMaxAuthenticationFailures;
+            ++attempt) {
+            connectivity.enqueueReceived(encoded, wrong_length);
+            connectivity.service(10 + attempt);
+        }
+        expect_true(!transport.connected_value,
+                    "BLE five authentication failures disconnect peer");
+    }
+
+    {
+        FakeBlePeripheral transport;
+        EventBus events;
+        StateStore state;
+        FakePairingStore store;
+        store.record.valid = true;
+        store.record.confirmed = true;
+        strlcpy(store.record.phone_name, "Pixel 9", sizeof(store.record.phone_name));
+        ConnectivityService connectivity(transport, events, state, store);
+        connectivity.begin("FireflyOS Test", true, 0);
+        transport.connected_value = true;
+        transport.encrypted_value = true;
+        connectivity.service(1);
+        drain_events(events);
+        expect_true(connectivity.requestUnpairConfirmation(2),
+                    "BLE watch can request unpair confirmation");
+        expect_true(connectivity.confirmUnpair(true, 3),
+                    "BLE confirmed unpair sends confirmation transaction");
+        expect_true(store.clear_count == 0 && store.record.valid &&
+                        transport.clear_bond_count == 0 &&
+                        transport.connected_value &&
+                        connectivity.pairingSnapshot().state ==
+                            PairingState::AwaitingUnpairAck,
+                    "BLE keeps binding until UnpairConfirm ACK");
+        Frame unpair_confirmation{};
+        expect_true(FrameCodec::decode(
+                        transport.last_notification,
+                        transport.last_notification_length,
+                        unpair_confirmation) == DecodeError::None &&
+                        unpair_confirmation.type == MessageType::UnpairConfirm,
+                    "BLE publishes UnpairConfirm transaction");
+        Frame unpair_ack{};
+        unpair_ack.type = MessageType::Ack;
+        unpair_ack.flags = FrameFlag::IsAck;
+        unpair_ack.sequence = unpair_confirmation.sequence;
+        uint8_t unpair_ack_bytes[kMaxEncodedFrame]{};
+        const size_t unpair_ack_length = FrameCodec::encode(
+            unpair_ack, unpair_ack_bytes, sizeof(unpair_ack_bytes)
+        );
+        connectivity.enqueueReceived(unpair_ack_bytes, unpair_ack_length);
+        connectivity.service(4);
+        expect_true(store.clear_count == 1 && !store.record.valid &&
+                        transport.clear_bond_count == 1 &&
+                        !transport.connected_value,
+                    "BLE unpair commits token bond and disconnect after ACK");
     }
 }
 
@@ -1317,6 +2619,23 @@ void setup() {
     delay(200);
     expect_true(FIREFLYOS_VERSION_MAJOR == 0, "version major");
     expect_true(FIREFLYOS_VERSION_MINOR == 1, "version minor");
+    test_ble_frame_codec_golden_frames();
+    test_notification_service_is_bounded_and_local_only();
+    test_companion_settings_resolve_independently_and_persist_first();
+    test_companion_settings_frame_is_atomic();
+    test_companion_local_settings_and_round_trip();
+    test_companion_alarm_latest_slot_preserves_other_slot();
+    test_music_target_is_explicit_and_local_first();
+    test_music_empty_local_transport_and_volume_commit();
+    test_companion_weather_cache_boundaries_and_disconnect();
+    test_companion_weather_presenter_states();
+    test_companion_calendar_is_bounded_and_disable_preserves_local_date();
+    test_find_watch_policy_duration_low_battery_and_cancel();
+    test_companion_dispatcher_routes_notifications_and_business_frames();
+    test_companion_remote_error_decode_and_text();
+    test_connectivity_service_bounded_flow();
+    test_ble_message_authenticator();
+    test_connectivity_pairing_and_security();
     test_event_bus_fifo();
     test_event_bus_full_policy();
     test_event_bus_preserves_full_critical_queue();

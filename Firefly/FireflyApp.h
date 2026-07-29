@@ -55,7 +55,13 @@ extern firefly::AppShellScreen app_shell_screen;
 extern firefly::AppRegistry ui_app_registry;
 extern firefly::ControlCenter control_center;
 extern firefly::NotificationCenter notification_center;
+extern firefly::NotificationService notification_service;
+extern firefly::CompanionSyncService companion_sync_service;
+extern firefly::CompanionFrameDispatcher companion_frame_dispatcher;
 extern firefly::StateStore ui_state_store;
+extern firefly::PairingOverlay pairing_overlay;
+extern firefly::BlePeripheralDevice ble_peripheral_device;
+extern firefly::ConnectivityService connectivity_service;
 
 extern lv_obj_t * lock_date_label;
 extern lv_obj_t * lock_time_label;
@@ -166,7 +172,9 @@ void sync_time_to_system_from_epoch(int64_t epoch_seconds);
 void refresh_battery_ui();
 void refresh_runtime_status_ui();
 void load_sound_alarm_preferences();
+void load_companion_settings_preferences();
 void save_volume_preference();
+bool firefly_apply_local_music_volume(uint8_t volume);
 void save_alarm_preferences();
 void load_motion_summary_preference();
 void persist_motion_summary(bool force);
@@ -183,11 +191,17 @@ void firefly_process_settings_commands();
 void firefly_process_power_policy();
 void firefly_process_tools_commands();
 void firefly_process_media_apps();
+void firefly_refresh_companion_weather_ui();
+void firefly_process_connectivity();
 void firefly_report_gate_a_diagnostics();
 void start_firefly_background_task();
 void configure_power_sleep_hooks();
 void init_default_settings_theme();
 void init_settings_theme_from_wallpaper(const lv_img_dsc_t * wallpaper);
+bool firefly_send_phone_media_command(
+    firefly::RemoteMediaCommand command,
+    uint8_t volume_percent);
+bool firefly_send_find_phone_command();
 
 void my_disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t * color_p);
 void my_rounder_cb(lv_disp_drv_t * disp_drv, lv_area_t * area);

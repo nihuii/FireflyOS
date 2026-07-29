@@ -61,4 +61,13 @@ void StateStore::setSleepState(bool sleeping, bool screen_off) {
     portEXIT_CRITICAL(&mux_);
 }
 
+void StateStore::setPhoneConnected(bool connected) {
+    portENTER_CRITICAL(&mux_);
+    if(state_.phone_connected != connected) {
+        state_.phone_connected = connected;
+        ++revision_;
+    }
+    portEXIT_CRITICAL(&mux_);
+}
+
 }  // namespace firefly

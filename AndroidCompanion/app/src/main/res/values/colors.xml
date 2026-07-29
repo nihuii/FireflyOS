@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="firefly_background">#11151F</color>
+    <color name="firefly_text">#F3F6FF</color>
+    <color name="firefly_muted">#A8B3C7</color>
+    <color name="firefly_accent">#76E4C2</color>
+</resources>

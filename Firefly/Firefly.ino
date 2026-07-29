@@ -107,6 +107,13 @@ void handle_shell_route(firefly::Route previous, firefly::Route current) {
         ui_shell.bringAppToFront(themes_app.root());
         return;
     }
+    if(current == firefly::Route::Weather) {
+        app_shell_screen.setTitle("Weather");
+        firefly_refresh_companion_weather_ui();
+        app_shell_screen.show();
+        ui_shell.bringAppToFront(app_shell_screen.root());
+        return;
+    }
 
     app_shell_screen.setTitle(title_for_route(current));
     app_shell_screen.show();
@@ -132,7 +139,58 @@ void show_controls_cb(lv_event_t * e) {
 
 void clear_notifications_cb(lv_event_t * e) {
     LV_UNUSED(e);
+    notification_service.clearLocal();
     notification_center.clear();
+}
+
+void pairing_decision_cb(firefly::PairingDecision decision) {
+    const uint32_t now = millis();
+    switch(decision) {
+        case firefly::PairingDecision::Allow: {
+            const firefly::PairingSnapshot snapshot =
+                connectivity_service.pairingSnapshot();
+            if(connectivity_service.confirmPairing(true, now)) {
+                pairing_overlay.showSecuring(snapshot.phone_name);
+            }
+            break;
+        }
+        case firefly::PairingDecision::Deny:
+            connectivity_service.confirmPairing(false, now);
+            break;
+        case firefly::PairingDecision::ConfirmUnpair:
+            connectivity_service.confirmUnpair(true, now);
+            break;
+        case firefly::PairingDecision::CancelUnpair:
+            connectivity_service.confirmUnpair(false, now);
+            ui_shell.closeOverlay(pairing_overlay.root());
+            break;
+        case firefly::PairingDecision::DismissResult:
+            ui_shell.closeOverlay(pairing_overlay.root());
+            break;
+    }
+}
+
+void ble_quick_action_cb(lv_event_t * event) {
+    lv_obj_t * button = lv_event_get_target(event);
+    if(connectivity_service.paired()) {
+        connectivity_service.requestUnpairConfirmation(millis());
+        lv_obj_add_state(button, LV_STATE_CHECKED);
+    } else {
+        lv_obj_clear_state(button, LV_STATE_CHECKED);
+    }
+}
+
+void ble_find_phone_action_cb(lv_event_t * event) {
+    LV_UNUSED(event);
+    const bool sent = firefly_send_find_phone_command();
+    if(notif_detail_label) {
+        lv_label_set_text(
+            notif_detail_label,
+            sent
+                ? "Find phone sent\nWaiting for phone response"
+                : "Find phone unavailable\nConnect and pair the phone"
+        );
+    }
 }
 
 void power_save_toggle_cb(lv_event_t * e) {
@@ -537,6 +595,8 @@ void build_firefly_os() {
     lv_obj_set_style_bg_opa(scr_firefly, LV_OPA_COVER, 0);
 
     ui_shell.create(scr_firefly, firefly::UiTheme::fireflyDefault());
+    pairing_overlay.create(ui_shell.overlayHost());
+    pairing_overlay.setDecisionCallback(pairing_decision_cb);
 
     tv_main = lv_tileview_create(ui_shell.appHost());
     lv_obj_set_size(tv_main, LCD_WIDTH, LCD_HEIGHT);
@@ -622,6 +682,10 @@ void build_firefly_os() {
     activity_app.create(ui_shell.appHost(), app_components);
     files_app.create(ui_shell.appHost(), app_components);
     music_app.create(ui_shell.appHost(), app_components, audio_service);
+    music_app.setPhoneMediaCallback(firefly_send_phone_media_command);
+    music_app.setLocalVolumeCallback(
+        firefly_apply_local_music_volume, volume_level
+    );
     recorder_app.create(ui_shell.appHost(), app_components, audio_service);
     themes_app.create(ui_shell.appHost(), app_components,
                       theme_package_service, storage_service);
@@ -738,7 +802,24 @@ void build_firefly_os() {
         lv_obj_align(text, LV_ALIGN_BOTTOM_MID, 0, 2);
         return button;
     };
-    create_quick_button(24, LV_SYMBOL_BLUETOOTH, "BLE", true, NULL);
+    lv_obj_t * ble_quick_button = create_quick_button(
+        24, LV_SYMBOL_BLUETOOTH, "BLE", false, NULL
+    );
+    lv_obj_add_event_cb(
+        ble_quick_button,
+        ble_quick_action_cb,
+        LV_EVENT_SHORT_CLICKED,
+        NULL
+    );
+    lv_obj_add_event_cb(
+        ble_quick_button,
+        ble_find_phone_action_cb,
+        LV_EVENT_LONG_PRESSED,
+        NULL
+    );
+    if(connectivity_service.paired()) {
+        lv_obj_add_state(ble_quick_button, LV_STATE_CHECKED);
+    }
     create_quick_button(116, LV_SYMBOL_WIFI, "Wi-Fi", true, NULL);
     create_quick_button(208, LV_SYMBOL_POWER, "Eco", true, power_save_toggle_cb);
     create_quick_button(300, LV_SYMBOL_HOME, "Lock", false, lock_now_cb);
@@ -1285,6 +1366,13 @@ void setup(void) {
         Serial.println("Versioned storage unavailable; using safe defaults.");
     }
     load_sound_alarm_preferences();
+    load_companion_settings_preferences();
+
+    const bool ble_ready = connectivity_service.begin("FireflyOS", false, millis());
+    system_capabilities.set(firefly::Capability::Ble, ble_ready);
+    if(!ble_ready) {
+        Serial.println("BLE peripheral unavailable; local features remain active.");
+    }
 
 #ifdef GFX_EXTRA_PRE_INIT
     GFX_EXTRA_PRE_INIT();
@@ -1436,6 +1524,7 @@ void setup(void) {
 
 void loop() {
     audio_service.service();
+    firefly_process_connectivity();
     firefly_process_sd_card();
     firefly_process_system_events();
     firefly_process_clock_sessions();
@@ -1443,6 +1532,7 @@ void loop() {
     firefly_process_power_policy();
     firefly_process_tools_commands();
     firefly_process_media_apps();
+    firefly_refresh_companion_weather_ui();
     update_charging_overlay();
     firefly_report_gate_a_diagnostics();
 

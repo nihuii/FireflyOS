@@ -29,6 +29,21 @@ struct ActivityStats {
     uint16_t active_minutes = 0;
 };
 
+struct PairingRecord {
+    uint8_t app_token[16]{};
+    char phone_name[33]{};
+    bool valid = false;
+    bool confirmed = false;
+};
+
+class PairingStore {
+public:
+    virtual ~PairingStore() = default;
+    virtual bool loadPairing(PairingRecord & record) = 0;
+    virtual bool savePairing(const PairingRecord & record) = 0;
+    virtual bool clearPairing() = 0;
+};
+
 struct LegacyStorageSnapshot {
     bool has_volume = false;
     uint8_t volume = 50;
@@ -51,7 +66,7 @@ struct StorageDiagnostics {
     StorageDiagnosticCode last = StorageDiagnosticCode::None;
 };
 
-class StorageService {
+class StorageService : public PairingStore {
 public:
     static constexpr uint16_t kSchemaVersion = 1;
     static constexpr const char * kSystemNamespace = "ff_sys";
@@ -67,12 +82,28 @@ public:
     bool saveAlarm(uint8_t slot, const Alarm & alarm);
     bool loadActivityStats(ActivityStats & stats);
     bool saveActivityStats(const ActivityStats & stats);
+    bool saveCompanionSettingRecord(uint8_t kind,
+                                    const void * data,
+                                    size_t length);
+    bool loadCompanionSettingRecord(uint8_t kind,
+                                    void * data,
+                                    size_t capacity,
+                                    size_t & length,
+                                    bool & present);
+    bool saveCompanionSettingsSnapshot(const void * data, size_t length);
+    bool loadCompanionSettingsSnapshot(void * data,
+                                       size_t capacity,
+                                       size_t & length,
+                                       bool & present);
     bool loadThemeTokens(void * data, size_t length);
     bool saveThemeTokens(const void * data, size_t length);
     bool saveThemeCache(const char * theme_id, const uint32_t palette[5]);
     bool loadThemeCache(char * theme_id, size_t id_size,
                         uint32_t palette[5], bool & present);
     bool clearThemeCache();
+    bool loadPairing(PairingRecord & record) override;
+    bool savePairing(const PairingRecord & record) override;
+    bool clearPairing() override;
 
     void attachSd(fs::FS & filesystem, SdCardDevice & device);
     void detachSd();

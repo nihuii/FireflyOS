@@ -13,6 +13,12 @@ $sketch = switch($Target) {
 }
 $buildPath = Join-Path $root ".build\$Target"
 New-Item -ItemType Directory -Path $buildPath -Force | Out-Null
+$partitionSource = Join-Path $PSScriptRoot 'partitions\app5M_fat24M_32MB.csv'
+$partitionTarget = Join-Path $buildPath 'partitions.csv'
+if(-not (Test-Path -LiteralPath $partitionSource -PathType Leaf)) {
+    throw "Custom partition layout was not found: $partitionSource"
+}
+Copy-Item -LiteralPath $partitionSource -Destination $partitionTarget -Force
 
 function Resolve-ArduinoCli {
     $candidates = @()

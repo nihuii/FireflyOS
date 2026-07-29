@@ -113,6 +113,8 @@ bool ThemesApp::importSelected() {
     if(packages_->importPackage(*storage_, themes_[selected_].root, &issue)) {
         memcpy(applied_palette_, themes_[selected_].manifest.palette,
                sizeof(applied_palette_));
+        strlcpy(applied_theme_id_, themes_[selected_].manifest.id,
+                sizeof(applied_theme_id_));
         applied_palette_pending_ = true;
         lv_label_set_text(status_, "Theme applied without restart");
         return true;

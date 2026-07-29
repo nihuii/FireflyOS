@@ -134,6 +134,8 @@ firefly::AppShellScreen app_shell_screen;
 firefly::AppRegistry ui_app_registry;
 firefly::ControlCenter control_center;
 firefly::NotificationCenter notification_center;
+firefly::NotificationService notification_service;
 firefly::StateStore ui_state_store;
+firefly::PairingOverlay pairing_overlay;
 
 lv_disp_draw_buf_t draw_buf;

@@ -10,6 +10,23 @@
 
 ---
 
+## 当前执行状态（2026-07-29）
+
+本节是对下方原始任务步骤的执行标注，不改写原始需求：
+
+| 范围 | 状态 | 说明 |
+| --- | --- | --- |
+| Task 1～4 | `IMPLEMENTED-AUTO` | BLE v1、固定容量 FrameCodec/连接服务、Secure Connections、HMAC、配对与双方确认后解绑的软件链路已实现。 |
+| Task 5 | `APPROVED` | Android 伴侣与手表配对预览均有用户批准记录。 |
+| Task 6～9 | `IMPLEMENTED-AUTO` | Android 工程、GATT、通知、设置/主题、天气、日程、媒体与找设备软件链路已实现。 |
+| Task 10 Step 1 | `PASS-AUTO` | Python 124 项通过；Android 17 个套件共 88 项通过并生成 Debug APK；三项 Arduino 草图编译成功；文档检查通过。 |
+| Task 10 Step 2 | `PENDING` | Gate D 的 D-01～D-12 尚未执行真机矩阵，不能标记为真机通过。 |
+| 计划内分步骤 Commit | `SUPERSEDED` | 用户授权将 Task 1～10 Step 1 的软件实现与自动证据收束为一次提交；原始复选框保持未勾选，避免把“自动验证”和“真机通过”混为一谈。 |
+
+计划原定 AGP 9.2.0 与当前 Android Studio 兼容上限不符，实际工程固定为 AGP 9.1.0、Gradle 9.3.1，并使用 AGP 9 内建 Kotlin。该工具链偏差及完整自动证据、真机矩阵见 `docs/模块说明/08-Android伴侣验收.md`。
+
+---
+
 ## 1. 依据与文件结构
 
 Android 依据：
