@@ -14,6 +14,47 @@ volatile uint32_t event_post_failures = 0;
 uint32_t desktop_transition_released_at = 0;
 uint32_t desktop_transition_max_ms = 0;
 
+struct PanelDismissGestureState {
+    firefly::PanelGestureArbiter arbiter;
+    lv_obj_t * origin_target = NULL;
+    uint8_t volume_snapshot = 0;
+    uint8_t brightness_snapshot = 0;
+};
+
+PanelDismissGestureState panel_dismiss_gesture;
+
+void reset_panel_dismiss_gesture() {
+    panel_dismiss_gesture.arbiter.reset();
+    panel_dismiss_gesture.origin_target = NULL;
+    panel_dismiss_gesture.volume_snapshot = 0;
+    panel_dismiss_gesture.brightness_snapshot = 0;
+}
+
+void restore_panel_control_snapshots() {
+    if(volume_level != panel_dismiss_gesture.volume_snapshot) {
+        volume_level = panel_dismiss_gesture.volume_snapshot;
+        save_volume_preference();
+        refresh_sound_alarm_ui();
+    }
+    if(screen_brightness != panel_dismiss_gesture.brightness_snapshot) {
+        set_screen_brightness_level(panel_dismiss_gesture.brightness_snapshot);
+    }
+}
+
+void start_notif_panel_animation(lv_coord_t target_y) {
+    if(!notif_panel) return;
+
+    lv_anim_del(notif_panel, anim_notif_panel_cb);
+    lv_anim_t anim;
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, notif_panel);
+    lv_anim_set_values(&anim, lv_obj_get_y(notif_panel), target_y);
+    lv_anim_set_time(&anim, 180);
+    lv_anim_set_exec_cb(&anim, anim_notif_panel_cb);
+    lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
+    lv_anim_start(&anim);
+}
+
 void post_background_system_event(const firefly::SystemEvent & event) {
     if(!system_event_bus.post(event)) {
         ++event_post_failures;
@@ -85,7 +126,7 @@ void run_short_press_action() {
     } else {
         ui_shell.back();
         if(notif_panel) {
-            anim_notif_panel_cb(notif_panel, -502);
+            anim_notif_panel_cb(notif_panel, -LCD_HEIGHT);
         }
     }
 }
@@ -614,8 +655,8 @@ void anim_notif_panel_cb(void * var, int32_t v) {
 
     lv_obj_set_y(notif_panel, v);
 
-    const int32_t dy = v + 502;
-    const int32_t percent = (dy * 256) / 502;
+    const int32_t dy = v + LCD_HEIGHT;
+    const int32_t percent = (dy * 256) / LCD_HEIGHT;
     int32_t small_opa = 255 - percent;
     int32_t large_opa = percent;
 
@@ -634,16 +675,26 @@ void anim_notif_panel_cb(void * var, int32_t v) {
         lv_obj_set_style_text_opa(notif_time_label, large_opa, 0);
         lv_obj_align(notif_time_label, LV_ALIGN_TOP_LEFT, 50 + (10 * percent / 256), 20 + (10 * percent / 256));
     }
+
+    if(v <= -LCD_HEIGHT) {
+        reset_panel_dismiss_gesture();
+    }
 }
 
-void status_drag_cb(lv_event_t * e) {
+void status_open_drag_cb(lv_event_t * e) {
     const lv_event_code_t code = lv_event_get_code(e);
     lv_indev_t * indev = lv_indev_get_act();
     if(!indev || !notif_panel) {
+        is_dragging_notif = false;
         return;
     }
 
     if(code == LV_EVENT_PRESSED) {
+        if(lv_obj_get_y(notif_panel) >= 0) {
+            is_dragging_notif = false;
+            return;
+        }
+        lv_anim_del(notif_panel, anim_notif_panel_cb);
         lv_point_t point;
         lv_indev_get_point(indev, &point);
         drag_start_y = point.y - lv_obj_get_y(notif_panel);
@@ -652,21 +703,59 @@ void status_drag_cb(lv_event_t * e) {
         lv_point_t point;
         lv_indev_get_point(indev, &point);
         lv_coord_t new_y = point.y - drag_start_y;
-        if(new_y < -502) new_y = -502;
+        if(new_y < -LCD_HEIGHT) new_y = -LCD_HEIGHT;
         if(new_y > 0) new_y = 0;
         anim_notif_panel_cb(notif_panel, new_y);
     } else if((code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) && is_dragging_notif) {
         is_dragging_notif = false;
         const lv_coord_t y = lv_obj_get_y(notif_panel);
+        start_notif_panel_animation(y > -250 ? 0 : -LCD_HEIGHT);
+    }
+}
 
-        lv_anim_t anim;
-        lv_anim_init(&anim);
-        lv_anim_set_var(&anim, notif_panel);
-        lv_anim_set_values(&anim, y, y > -250 ? 0 : -502);
-        lv_anim_set_time(&anim, 180);
-        lv_anim_set_exec_cb(&anim, anim_notif_panel_cb);
-        lv_anim_set_path_cb(&anim, lv_anim_path_ease_out);
-        lv_anim_start(&anim);
+void system_panel_drag_cb(lv_event_t * e) {
+    const lv_event_code_t code = lv_event_get_code(e);
+    lv_indev_t * indev = lv_indev_get_act();
+    if(!indev || !notif_panel || lv_event_get_current_target(e) != notif_panel) {
+        reset_panel_dismiss_gesture();
+        return;
+    }
+
+    if(code == LV_EVENT_PRESSED) {
+        reset_panel_dismiss_gesture();
+        if(lv_obj_get_y(notif_panel) != 0) {
+            return;
+        }
+
+        lv_point_t point;
+        lv_indev_get_point(indev, &point);
+        panel_dismiss_gesture.arbiter.begin(point.x, point.y);
+        panel_dismiss_gesture.origin_target = lv_event_get_target(e);
+        panel_dismiss_gesture.volume_snapshot = volume_level;
+        panel_dismiss_gesture.brightness_snapshot = screen_brightness;
+        return;
+    }
+
+    if(code == LV_EVENT_PRESSING && panel_dismiss_gesture.arbiter.active()) {
+        lv_point_t point;
+        lv_indev_get_point(indev, &point);
+        const firefly::PanelGestureDecision decision =
+            panel_dismiss_gesture.arbiter.update(point.x, point.y);
+        if(decision == firefly::PanelGestureDecision::Ignore) {
+            reset_panel_dismiss_gesture();
+            return;
+        }
+        if(decision == firefly::PanelGestureDecision::Dismiss) {
+            lv_indev_wait_release(indev);
+            restore_panel_control_snapshots();
+            start_notif_panel_animation(-LCD_HEIGHT);
+            reset_panel_dismiss_gesture();
+        }
+        return;
+    }
+
+    if(code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        reset_panel_dismiss_gesture();
     }
 }
 
@@ -746,7 +835,7 @@ void enter_sleep_screen_mode() {
     ui_state_store.setSleepState(true, false);
     close_settings_panel();
     if(notif_panel) {
-        anim_notif_panel_cb(notif_panel, -502);
+        anim_notif_panel_cb(notif_panel, -LCD_HEIGHT);
     }
     refresh_sleep_icon(true);
     firefly_board.setDisplayBrightness(screen_brightness);

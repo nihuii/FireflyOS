@@ -262,6 +262,27 @@ static void test_overlay_priority_policy() {
                 "priority zero is invalid");
 }
 
+static void test_panel_gesture_arbiter() {
+    firefly::PanelGestureArbiter arbiter;
+    expect_true(arbiter.update(0, -20) == firefly::PanelGestureDecision::Ignore,
+                "inactive panel gesture is ignored");
+    arbiter.begin(100, 100);
+    expect_true(arbiter.update(100, 85) == firefly::PanelGestureDecision::Pending,
+                "panel gesture waits below threshold");
+    expect_true(arbiter.update(102, 80) == firefly::PanelGestureDecision::Dismiss,
+                "vertical upward panel gesture dismisses");
+    expect_true(arbiter.update(140, 105) == firefly::PanelGestureDecision::Dismiss,
+                "panel gesture decision stays locked");
+    arbiter.begin(100, 100);
+    expect_true(arbiter.update(120, 95) == firefly::PanelGestureDecision::Ignore,
+                "horizontal panel gesture stays with control");
+    arbiter.begin(100, 100);
+    expect_true(arbiter.update(100, 120) == firefly::PanelGestureDecision::Ignore,
+                "downward panel gesture does not dismiss");
+    arbiter.reset();
+    expect_true(!arbiter.active(), "panel gesture reset clears activity");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -279,6 +300,7 @@ void setup() {
     test_default_theme_tokens();
     test_navigation_stack();
     test_overlay_priority_policy();
+    test_panel_gesture_arbiter();
     Serial.printf("FIREFLY_TEST_RESULT failures=%u\n", failures);
 }
 

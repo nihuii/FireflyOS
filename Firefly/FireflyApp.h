@@ -168,7 +168,8 @@ void my_touchpad_read(lv_indev_drv_t * indev_drv, lv_indev_data_t * data);
 
 void tv_event_cb(lv_event_t * e);
 void anim_notif_panel_cb(void * var, int32_t v);
-void status_drag_cb(lv_event_t * e);
+void status_open_drag_cb(lv_event_t * e);
+void system_panel_drag_cb(lv_event_t * e);
 void update_time_cb(lv_timer_t * timer);
 void enter_sleep_screen_mode();
 void exit_sleep_screen_mode();

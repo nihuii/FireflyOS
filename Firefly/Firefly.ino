@@ -368,6 +368,17 @@ void auto_sleep_cb(lv_event_t * e) {
     auto_sleep_ms = timeouts[selected];
 }
 
+void configure_panel_event_bubbling(lv_obj_t * parent) {
+    if(!parent) return;
+
+    const uint32_t child_count = lv_obj_get_child_cnt(parent);
+    for(uint32_t index = 0; index < child_count; ++index) {
+        lv_obj_t * child = lv_obj_get_child(parent, index);
+        lv_obj_add_flag(child, LV_OBJ_FLAG_EVENT_BUBBLE);
+        configure_panel_event_bubbling(child);
+    }
+}
+
 } // namespace
 
 void build_firefly_os() {
@@ -540,7 +551,10 @@ void build_firefly_os() {
     lv_obj_set_y(notif_panel, -LCD_HEIGHT);
     lv_obj_add_flag(notif_panel, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(notif_panel, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(notif_panel, status_drag_cb, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(notif_panel, system_panel_drag_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(notif_panel, system_panel_drag_cb, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(notif_panel, system_panel_drag_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(notif_panel, system_panel_drag_cb, LV_EVENT_PRESS_LOST, NULL);
 
     control_center.create(notif_panel, ui_tokens);
     lv_obj_t * control_root = control_center.root();
@@ -549,7 +563,6 @@ void build_firefly_os() {
     lv_obj_set_size(notif_handle, 84, 6);
     lv_obj_align(notif_handle, LV_ALIGN_TOP_MID, 0, 12);
     firefly::UiComponents::styleCard(notif_handle, lv_color_hex(0x97DDE9), 8);
-    lv_obj_add_event_cb(notif_handle, status_drag_cb, LV_EVENT_ALL, NULL);
 
     lv_obj_t * notification_button = lv_btn_create(control_root);
     lv_obj_set_size(notification_button, 112, 48);
@@ -655,6 +668,7 @@ void build_firefly_os() {
     ui_shell.bindPanelPages(control_center.root(), notification_center.root());
     ui_shell.showControlCenter(true);
     lv_obj_move_foreground(notif_handle);
+    configure_panel_event_bubbling(notif_panel);
 
     top_status_bar = lv_obj_create(ui_shell.statusBarHost());
     lv_obj_set_size(top_status_bar, LCD_WIDTH, 60);
@@ -665,7 +679,10 @@ void build_firefly_os() {
     lv_obj_add_flag(top_status_bar, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(top_status_bar, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(top_status_bar, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(top_status_bar, status_drag_cb, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(top_status_bar, status_open_drag_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(top_status_bar, status_open_drag_cb, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(top_status_bar, status_open_drag_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(top_status_bar, status_open_drag_cb, LV_EVENT_PRESS_LOST, NULL);
 
     status_battery_icon = lv_label_create(top_status_bar);
     lv_obj_set_style_text_color(status_battery_icon, lv_color_hex(0xFFFFFF), 0);

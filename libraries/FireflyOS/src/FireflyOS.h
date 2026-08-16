@@ -19,6 +19,7 @@
 #include "firefly/hal/LockedRegisterDevice.h"
 #include "firefly/ui/UiTokens.h"
 #include "firefly/ui/UiTheme.h"
+#include "firefly/ui/PanelGestureArbiter.h"
 #include "firefly/ui/NavigationController.h"
 #include "firefly/ui/UiShell.h"
 #include "firefly/ui/Screen.h"

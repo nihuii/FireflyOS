@@ -179,6 +179,41 @@ class RepositoryContracts(unittest.TestCase):
         self.assertIn("lv_obj_set_ext_click_area(notif_volume_slider, 12)", sketch)
         self.assertIn("lv_obj_set_ext_click_area(notif_brightness_slider, 12)", sketch)
 
+    def test_system_panel_descendants_bubble_pointer_events(self):
+        sketch = (ROOT / "Firefly" / "Firefly.ino").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        self.assertIn("configure_panel_event_bubbling", sketch)
+        self.assertIn("lv_obj_get_child_cnt", sketch)
+        self.assertIn("LV_OBJ_FLAG_EVENT_BUBBLE", sketch)
+        self.assertIn("configure_panel_event_bubbling(notif_panel);", sketch)
+
+    def test_system_panel_has_parent_owned_swipe_dismiss(self):
+        sketch = (ROOT / "Firefly" / "Firefly.ino").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        interaction = (ROOT / "Firefly" / "FireflyInteraction.cpp").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        for event in (
+            "LV_EVENT_PRESSED",
+            "LV_EVENT_PRESSING",
+            "LV_EVENT_RELEASED",
+            "LV_EVENT_PRESS_LOST",
+        ):
+            self.assertIn(
+                f"lv_obj_add_event_cb(notif_panel, system_panel_drag_cb, {event}",
+                sketch,
+            )
+        self.assertIn("status_open_drag_cb", sketch)
+        self.assertNotIn(
+            "lv_obj_add_event_cb(notif_panel, status_drag_cb, LV_EVENT_ALL",
+            sketch,
+        )
+        self.assertIn("lv_indev_wait_release(indev)", interaction)
+        self.assertIn("PanelGestureArbiter", interaction)
+        self.assertIn("-LCD_HEIGHT", interaction)
+
     def test_lock_screen_is_bound_to_next_alarm(self):
         interaction = (ROOT / "Firefly" / "FireflyInteraction.cpp").read_text(
             encoding="utf-8", errors="ignore"
