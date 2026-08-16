@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$fqbn = 'esp32:esp32:esp32s3:CPUFreq=240,FlashMode=qio,FlashSize=32M,PartitionScheme=app5M_fat24M_32MB,PSRAM=opi,LoopCore=0,EventsCore=0'
+$fqbn = 'esp32:esp32:esp32s3:CPUFreq=240,FlashMode=qio,PartitionScheme=app5M_fat24M_32MB,FlashSize=32M,PSRAM=opi,LoopCore=0,EventsCore=0'
 $sketch = if($Target -eq 'Firefly') {
     Join-Path $root 'Firefly'
 } else {
