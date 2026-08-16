@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FireflyOS Android Companion Preview</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #11151f;
+      --phone: #161b28;
+      --card: #20283a;
+      --card-soft: #263047;
+      --text: #f3f6ff;
+      --muted: #a8b3c7;
+      --line: #33405b;
+      --accent: #76e4c2;
+      --accent-2: #ffd166;
+      --danger: #ff7b8a;
+      --disabled: #6f7b91;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(118, 228, 194, 0.18), transparent 32rem),
+        radial-gradient(circle at bottom right, rgba(255, 209, 102, 0.14), transparent 28rem),
+        var(--bg);
+      color: var(--text);
+    }
+
+    header {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 40px 24px 20px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(28px, 4vw, 46px);
+      letter-spacing: -0.04em;
+    }
+
+    .subtitle {
+      max-width: 760px;
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.7;
+      font-size: 16px;
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 20px 24px 56px;
+      display: grid;
+      grid-template-columns: minmax(320px, 390px) 1fr;
+      gap: 28px;
+      align-items: start;
+    }
+
+    .phone {
+      position: sticky;
+      top: 20px;
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 42px;
+      padding: 16px;
+      background: linear-gradient(150deg, #0c1019, #232b3e);
+      box-shadow: 0 28px 70px rgba(0,0,0,0.38);
+    }
+
+    .screen {
+      min-height: 760px;
+      border-radius: 30px;
+      overflow: hidden;
+      background: var(--phone);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .status {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 18px 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .screen-content {
+      padding: 12px 18px 22px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .hero {
+      padding: 18px;
+      border-radius: 24px;
+      background: linear-gradient(135deg, rgba(118,228,194,0.24), rgba(118,228,194,0.06));
+      border: 1px solid rgba(118,228,194,0.25);
+    }
+
+    .hero h2 {
+      margin: 0 0 8px;
+      font-size: 24px;
+    }
+
+    .hero p, .card p, .note p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .chip {
+      min-height: 32px;
+      padding: 7px 11px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      color: var(--text);
+      font-size: 12px;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .card, .note, .panel {
+      border: 1px solid var(--line);
+      background: var(--card);
+      border-radius: 20px;
+      padding: 14px;
+    }
+
+    .card h3, .panel h2 {
+      margin: 0 0 8px;
+      font-size: 16px;
+    }
+
+    .card small {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .offline {
+      border-color: rgba(255,209,102,0.4);
+      background: rgba(255,209,102,0.08);
+    }
+
+    .offline strong { color: var(--accent-2); }
+
+    .danger { color: var(--danger); }
+
+    button, .button {
+      min-height: 48px;
+      border: 0;
+      border-radius: 16px;
+      padding: 12px 14px;
+      background: var(--accent);
+      color: #08221a;
+      font-weight: 700;
+      font-size: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+    }
+
+    button.secondary {
+      background: var(--card-soft);
+      color: var(--text);
+      border: 1px solid var(--line);
+    }
+
+    button.danger {
+      background: rgba(255,123,138,0.16);
+      color: #ffdfe4;
+      border: 1px solid rgba(255,123,138,0.45);
+    }
+
+    button:disabled,
+    button[aria-disabled="true"] {
+      background: #30384b;
+      color: var(--disabled);
+      border: 1px dashed #566178;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .sections {
+      display: grid;
+      gap: 18px;
+    }
+
+    .panel {
+      background: rgba(32,40,58,0.84);
+    }
+
+    .panel h2 {
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .badge {
+      padding: 5px 9px;
+      border-radius: 999px;
+      color: #08221a;
+      background: var(--accent);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .disabled-badge {
+      color: #241900;
+      background: var(--accent-2);
+    }
+
+    ul {
+      margin: 10px 0 0;
+      padding-left: 18px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .mini {
+      padding: 12px;
+      border-radius: 16px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .mini strong {
+      display: block;
+      margin-bottom: 5px;
+    }
+
+    .mini span {
+      color: var(--muted);
+      line-height: 1.5;
+      font-size: 13px;
+    }
+
+    footer {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 0 24px 40px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    @media (max-width: 880px) {
+      main { grid-template-columns: 1fr; }
+      .phone { position: static; max-width: 390px; }
+      .screen { min-height: auto; }
+      .two-col { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>FireflyOS Android Companion Preview</h1>
+    <p class="subtitle">
+      Task 5 审批稿：展示 Android 伴侣应用的首版信息架构、离线状态和危险操作边界。此文件只用于正式 UI 前预览，不代表 Android 工程已经实现。
+    </p>
+  </header>
+
+  <main>
+    <aside class="phone" aria-label="Android companion phone mock">
+      <div class="screen">
+        <div class="status"><span>09:41</span><span>BLE · Nearby</span></div>
+        <div class="screen-content">
+          <section class="hero" id="device-home">
+            <h2>Firefly Watch</h2>
+            <p>上次同步：今天 09:18 · 电量 82% · 表盘：萤火绿</p>
+            <div class="chip-row">
+              <span class="chip">已配对</span>
+              <span class="chip">等待 BLE 连接后可用</span>
+              <span class="chip">本地功能独立</span>
+            </div>
+          </section>
+
+          <section class="note offline">
+            <p><strong>离线可浏览最近设备信息。</strong>远程操作已禁用，原因：手机当前未与手表建立 BLE 连接。手表本地时间、闹钟、媒体和活动继续独立运行。</p>
+          </section>
+
+          <section class="card-grid" aria-label="quick actions">
+            <article class="card" id="scan-pair">
+              <small>扫描/配对</small>
+              <h3>查找 FireflyOS</h3>
+              <p>15 秒限时扫描，仅匹配 FireflyOS Service UUID。</p>
+            </article>
+            <article class="card" id="notification-permission">
+              <small>授权</small>
+              <h3>通知同步</h3>
+              <p>跳转系统通知访问设置；拒绝后其他功能继续可用。</p>
+            </article>
+            <article class="card" id="settings-sync">
+              <small>设置</small>
+              <h3>亮度/音量/闹钟</h3>
+              <p>连接后按独立 revision 同步，避免覆盖全部设置。</p>
+            </article>
+            <article class="card" id="theme-manager">
+              <small>主题</small>
+              <h3>主题管理</h3>
+              <p>预览本地主题，连接后发送选中主题摘要。</p>
+            </article>
+          </section>
+
+          <div class="actions">
+            <button disabled aria-disabled="true">远程同步已禁用</button>
+            <button class="secondary" id="find-device">查看找设备</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <section class="sections" aria-label="preview pages">
+      <section class="panel">
+        <h2>首版导航 <span class="badge">10 个核心页面</span></h2>
+        <div class="two-col">
+          <div class="mini"><strong>设备扫描/配对</strong><span>引导开启 Nearby Devices 权限；15 秒扫描；发现 FireflyOS 后进入六位码确认流程。</span></div>
+          <div class="mini"><strong>设备主页</strong><span>显示最近状态、电量、连接态和安全提示；离线时不暗示手表核心功能失效。</span></div>
+          <div class="mini"><strong>通知授权</strong><span>解释 NotificationListenerService 权限用途，只同步摘要，不传图片、RemoteViews 或操作 token。</span></div>
+          <div class="mini"><strong>设置同步</strong><span>亮度、音量、闹钟、主题分组同步；冲突由最近明确操作获胜。</span></div>
+          <div class="mini"><strong>主题管理</strong><span>主题列表、当前主题和连接后应用按钮；离线只能浏览。</span></div>
+          <div class="mini" id="weather-city"><strong>天气城市</strong><span>维护城市、温度和天气码摘要；缓存过期时清楚标注“数据较旧”。</span></div>
+          <div class="mini" id="media-control"><strong>媒体控制</strong><span>播放、暂停、上下曲和音量；无可用媒体会话时返回明确错误。</span></div>
+          <div class="mini"><strong>找设备</strong><span>找手机/找手表都有超时与取消入口；极低电量时只短时提示。</span></div>
+          <div class="mini" id="firmware-update"><strong>固件更新</strong><span>首版仅展示状态和风险说明；OTA 控制必须连接且通过认证。</span></div>
+          <div class="mini" id="unbind"><strong>解除绑定</strong><span>危险操作双重确认；清除 bonding、app token、通知缓存和手机名，不删除本地闹钟、媒体与活动数据。</span></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>离线状态 <span class="badge disabled-badge">远程操作已禁用</span></h2>
+        <ul>
+          <li>离线可浏览最近设备信息，包括设备名、电量、上次同步时间、主题和最近天气摘要。</li>
+          <li>设置写入、天气刷新、媒体控制、找手机、固件更新和解除绑定等远程操作显示禁用态，并说明“等待 BLE 连接后可用”。</li>
+          <li>页面文案明确：手机伴侣是增强能力；手表本地时间、闹钟、媒体和活动继续独立运行。</li>
+          <li>所有危险或远程按钮保持至少 48px 高度；禁用按钮同时设置 `disabled` 与 `aria-disabled="true"`。</li>
+        </ul>
+        <div class="actions">
+          <button disabled aria-disabled="true">等待 BLE 连接后可用</button>
+          <button class="danger" disabled aria-disabled="true">解除绑定不可用</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>权限边界 <span class="badge">最小化</span></h2>
+        <ul>
+          <li>BLE 扫描只用于用户明确发起的配对流程，不申请后台位置。</li>
+          <li>Android 12+ 使用 Nearby Devices；旧系统兼容权限限制到 maxSdkVersion=30。</li>
+          <li>READ_CALENDAR 仅在用户主动启用“同步日程摘要”时请求，拒绝后通知、设置、媒体和找设备仍可使用。</li>
+          <li>通知授权页面解释同步字段上限，避免让用户误以为会上传完整通知历史。</li>
+        </ul>
+      </section>
+
+      <section class="panel">
+        <h2>审批 Gate <span class="badge disabled-badge">待批准</span></h2>
+        <p class="subtitle">
+          只有用户确认此预览后，才进入 Task 6 的 Android 工程界面骨架与 Task 7 的 BLE/GATT 客户端实现。未批准前，本预览不写入任何正式 Android UI 代码。
+        </p>
+      </section>
+    </section>
+  </main>
+
+  <footer>
+    本预览对应 `docs/执行计划/05-BLE与Android伴侣应用.md` 的 Task 5。提交、合并、真机通过和 Task 8 均不在本审批稿授权范围内。
+  </footer>
+</body>
+</html>

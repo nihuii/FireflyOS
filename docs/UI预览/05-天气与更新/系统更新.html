@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FireflyOS 系统更新 · 状态聚焦</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#080c14;color:#f4f8fc;font:14px system-ui,"Microsoft YaHei",sans-serif;display:grid;place-items:center;min-height:100vh}.stage{display:flex;gap:28px;align-items:center;flex-wrap:wrap;justify-content:center;padding:28px}.watch{width:410px;height:502px;border-radius:54px;background:radial-gradient(circle at 50% 0,#1d2840,#071018 58%);border:1px solid #34435c;position:relative;overflow:hidden;box-shadow:0 24px 80px #0009,inset 0 0 36px #6ec4d61a}.safe{position:absolute;inset:24px 30px;border:1px dashed #8de3f033;border-radius:30px;pointer-events:none}.page-title{position:absolute;left:28px;top:42px;font-size:24px;font-weight:700}.icon{position:absolute;left:177px;top:92px;width:56px;height:56px;border:2px solid #8de3f0;border-radius:50%;display:grid;place-items:center;color:#8de3f0;font-size:24px}.state{position:absolute;left:30px;top:164px;width:350px;text-align:center;font-size:24px;font-weight:700}.detail{position:absolute;left:30px;top:204px;width:350px;text-align:center;line-height:1.5;color:#a8b8cc}.bar{position:absolute;left:30px;top:258px;width:350px;height:10px;border-radius:10px;background:#1c2738;overflow:hidden}.bar i{display:block;width:64%;height:100%;background:linear-gradient(90deg,#6ec4d6,#8de3f0)}.percent{position:absolute;left:30px;top:278px;width:350px;text-align:center;color:#8de3f0;font-weight:700}.steps{position:absolute;left:31px;top:314px;width:348px;display:grid;grid-template-columns:repeat(4,1fr);font-size:11px;color:#a8b8cc;text-align:center}.guard{position:absolute;left:30px;top:370px;width:350px;height:52px;border-radius:18px;background:#6ec4d6;color:#071018;display:grid;place-items:center;font-weight:700}.caption{max-width:360px;line-height:1.7;color:#a8b8cc}.caption h1{color:#f4f8fc;margin:0 0 10px}.caption b{color:#8de3f0}</style>
+</head>
+<body>
+<main class="stage">
+  <section class="watch" aria-label="410×502 FireflyOS 系统更新预览">
+    <div class="safe"></div><div class="page-title">系统更新</div>
+    <div class="icon">↥</div><div class="state">正在写入系统</div>
+    <div class="detail">SAM 守护已启用。请勿关机，此阶段不可取消。</div>
+    <div class="bar"><i></i></div><div class="percent">64%</div>
+    <div class="steps"><span>下载</span><span>校验</span><span>写入</span><span>自检</span></div>
+    <div class="guard">请保持设备供电</div>
+  </section>
+  <aside class="caption"><h1>A · 状态聚焦（已审批）</h1><p>正式基线固定为 <b>410×502</b>，左右安全边距 30px、底部 24px；所有可操作按钮至少 48px。页面一次只突出当前状态和允许的动作，进入 Writing 后不显示取消入口。</p><p>覆盖 Available、Blocked、Downloading、Verifying、Writing、RebootPending、BootChecking、Completed、Failed、RollbackRequested 与 RolledBack。</p></aside>
+</main>
+</body>
+</html>
