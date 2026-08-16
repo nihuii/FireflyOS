@@ -5,9 +5,13 @@ import android.app.Activity
 import android.bluetooth.BluetoothManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.database.Cursor
+import android.net.Network
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.provider.OpenableColumns
 import android.view.View
 import com.fireflyos.companion.ble.ConnectionRepository
 import com.fireflyos.companion.ble.Frame
@@ -33,9 +37,36 @@ import com.fireflyos.companion.sync.CalendarSyncPlanner
 import com.fireflyos.companion.sync.CompanionController
 import com.fireflyos.companion.sync.CompanionErrorCodec
 import com.fireflyos.companion.sync.PhoneWeather
+import com.fireflyos.companion.wifi.WifiProvisioningRequest
+import com.fireflyos.companion.wifi.WifiProvisioningResult
+import com.fireflyos.companion.transfer.BulkTransferMode
+import com.fireflyos.companion.transfer.BulkTransferLaunchGuard
+import com.fireflyos.companion.transfer.BulkTransferRequest
+import com.fireflyos.companion.transfer.BulkTransferSession
+import com.fireflyos.companion.transfer.BulkTransferStatus
+import com.fireflyos.companion.transfer.BulkUploadResult
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.security.MessageDigest
+import java.security.SecureRandom
 import kotlin.math.roundToInt
 
 class MainActivity : Activity() {
+    private data class PendingBulkFile(
+        val uri: Uri,
+        val size: Long,
+        val sha256: String,
+        val managedPath: String,
+    )
+
     private lateinit var binding: ActivityMainBinding
     private var connectionRepository: ConnectionRepository? = null
     private var companionController: CompanionController? = null
@@ -47,6 +78,14 @@ class MainActivity : Activity() {
     private var pendingRepairPairing = false
     private var connectionStatus = ConnectionStatus.Idle
     private lateinit var settingsStore: SettingsStateStore
+    private val activityScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var pendingBulkFile: PendingBulkFile? = null
+    private var pendingBulkSession: BulkTransferSession? = null
+    private var bulkTransferJob: Job? = null
+    private var activeBulkRequestId = 0
+    private var bulkOperationGeneration = 0
+    private val bulkLaunchGuard = BulkTransferLaunchGuard()
+    private var nextBulkRequestId = 1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,10 +106,12 @@ class MainActivity : Activity() {
         }
         initializeConnection()
         wireConnectionActions()
+        wireWifiProvisioningActions()
         wireNotificationPermissionAction()
         wireNotificationListenerAccessAction()
         wireSettingsActions()
         wireWeatherAction()
+        wireBulkTransferAction()
         wireCalendarActions()
         wireMediaActions()
         wireFindActions()
@@ -87,6 +128,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        cancelBulkTransfer("Transfer stopped because the companion screen closed.", false)
+        activityScope.cancel()
         findPhoneController.stop()
         connectionRepository?.setStateListener(null)
         connectionRepository?.setBusinessFrameListener(null)
@@ -130,7 +173,29 @@ class MainActivity : Activity() {
                         "Notification permission denied. Other companion features remain available."
                     }
             }
+            REQUEST_WIFI_PERMISSION -> {
+                val session = pendingBulkSession
+                if (hasNearbyWifiPermission() && session != null) {
+                    beginBulkUpload(session)
+                } else {
+                    cancelBulkTransfer(
+                        "Nearby Wi-Fi permission was denied; SoftAP transfer was cancelled.",
+                    )
+                }
+            }
         }
+    }
+
+    @Deprecated("Android activity result callback API")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_BULK_FILE || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        if (bulkTransferJob?.isActive == true || activeBulkRequestId != 0) {
+            cancelBulkTransfer("Previous transfer cancelled; preparing the new file.")
+        }
+        val generation = ++bulkOperationGeneration
+        bulkTransferJob = activityScope.launch { prepareBulkFile(uri, generation) }
     }
 
     private fun initializeConnection() {
@@ -154,6 +219,9 @@ class MainActivity : Activity() {
             triggerFindPhone = findPhoneController::trigger,
             settingsStore = settingsStore,
             onSettingsResolved = ::applyResolvedSettings,
+            onWifiProvisioningResult = ::renderWifiProvisioningResult,
+            onBulkTransferReady = ::handleBulkTransferReady,
+            onBulkTransferStatus = ::renderBulkTransferStatus,
         )
         repository.setStateListener { state ->
             runOnUiThread { renderConnection(state) }
@@ -206,6 +274,50 @@ class MainActivity : Activity() {
                     REQUEST_NOTIFICATION_PERMISSION,
                 )
             }
+        }
+    }
+
+    private fun wireWifiProvisioningActions() {
+        binding.provisionWifiButton.setOnClickListener {
+            val ssid = binding.wifiSsidInput.text.toString().trim()
+            val password = binding.wifiPasswordInput.text.toString()
+            val nonce = ByteArray(8).also(SecureRandom()::nextBytes)
+            val request = WifiProvisioningRequest(
+                ssid = ssid,
+                password = password,
+                ttlSeconds = 60,
+                nonce = nonce,
+            )
+            val queued = companionController?.provisionWifi(request) == true
+            binding.wifiProvisionStatusText.text = if (queued) {
+                "已发送网络名称，请在手表上核对并确认。"
+            } else {
+                "配网消息未发送：请检查连接状态、SSID 或密码长度。"
+            }
+        }
+        binding.forgetWifiButton.setOnClickListener {
+            binding.wifiProvisionStatusText.text =
+                if (companionController?.forgetWifi() == true) {
+                    "忘记网络请求已发送，请在手表上确认。"
+                } else {
+                    "忘记网络请求未发送，请先连接手表。"
+                }
+        }
+    }
+
+    private fun renderWifiProvisioningResult(result: WifiProvisioningResult) {
+        binding.wifiProvisionStatusText.text = when (result) {
+            WifiProvisioningResult.Connecting -> "正在连接 Wi-Fi…"
+            WifiProvisioningResult.Success -> "连接成功，凭据已安全保存。"
+            WifiProvisioningResult.AuthFailed -> "认证失败，请核对密码后重新发送。"
+            WifiProvisioningResult.NotFound -> "未找到该网络，请确认网络名称和覆盖范围。"
+            WifiProvisioningResult.Timeout -> "连接超时；不会自动无限重试。"
+            WifiProvisioningResult.Forgotten -> "手表已忘记该网络。"
+            WifiProvisioningResult.Denied -> "手表端已取消本次操作。"
+            WifiProvisioningResult.PersistenceFailed ->
+                "凭据存储更新失败；已保存的网络可能未改变，请重试。"
+            WifiProvisioningResult.Busy ->
+                "手表正在使用 Wi-Fi；请等待当前网络任务结束后重新发送。"
         }
     }
 
@@ -272,13 +384,17 @@ class MainActivity : Activity() {
     private fun wireWeatherAction() {
         binding.syncWeatherButton.setOnClickListener {
             val city = binding.weatherCityInput.text.toString().trim()
+            val latitude = binding.weatherLatitudeInput.text.toString().toDoubleOrNull()
+            val longitude = binding.weatherLongitudeInput.text.toString().toDoubleOrNull()
             val temperature = parseTenths(binding.weatherTemperatureInput.text.toString())
             val code = binding.weatherCodeInput.text.toString().toIntOrNull()
             val high = parseTenths(binding.weatherHighInput.text.toString())
             val low = parseTenths(binding.weatherLowInput.text.toString())
-            if (city.isEmpty() || city.toByteArray(Charsets.UTF_8).size > 47 ||
+            if (city.isEmpty() || city.toByteArray(Charsets.UTF_8).size > 31 ||
                 temperature == null || high == null || low == null ||
-                code !in 0..0xFFFF
+                code !in 0..0xFFFF || latitude == null || longitude == null ||
+                !latitude.isFinite() || !longitude.isFinite() ||
+                latitude !in -90.0..90.0 || longitude !in -180.0..180.0
             ) {
                 binding.statusText.text =
                     "Enter a city, valid temperatures, and a weather code from 0 to 65535."
@@ -292,10 +408,268 @@ class MainActivity : Activity() {
                     highTenthsC = high,
                     lowTenthsC = low,
                     updatedAtEpochSeconds = System.currentTimeMillis() / 1000L,
+                    latitude = latitude,
+                    longitude = longitude,
                 ),
             ) == true
             showQueueResult(queued, "Weather")
         }
+    }
+
+    private fun wireBulkTransferAction() {
+        binding.bulkSelectFileButton.setOnClickListener {
+            if (bulkTransferJob?.isActive == true || activeBulkRequestId != 0) {
+                cancelBulkTransfer("Previous transfer cancelled; select a new file.")
+            }
+            startActivityForResult(
+                Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "*/*"
+                },
+                REQUEST_BULK_FILE,
+            )
+        }
+        binding.bulkCancelButton.setOnClickListener {
+            cancelBulkTransfer("Transfer cancelled by the user.")
+        }
+    }
+
+    private suspend fun prepareBulkFile(uri: Uri, generation: Int) {
+        binding.bulkTransferStatusText.text = "Reading file metadata and SHA-256..."
+        val requestedPath = binding.bulkPathInput.text.toString().trim()
+        val prepared = withContext(Dispatchers.IO) {
+            val metadata = queryBulkMetadata(uri) ?: return@withContext null
+            if (metadata.second !in 1..MAX_BULK_FILE_BYTES) return@withContext null
+            val digest = MessageDigest.getInstance("SHA-256")
+            val buffer = ByteArray(64 * 1024)
+            var hashedBytes = 0L
+            contentResolver.openInputStream(uri)?.use { input ->
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    if (count > 0) {
+                        hashedBytes += count
+                        if (hashedBytes > MAX_BULK_FILE_BYTES) {
+                            return@withContext null
+                        }
+                        digest.update(buffer, 0, count)
+                    }
+                }
+            } ?: return@withContext null
+            if (hashedBytes != metadata.second) return@withContext null
+            val safeName = metadata.first.replace(Regex("[^A-Za-z0-9._ -]"), "_")
+            val path = requestedPath.ifEmpty { "/FireflyOS/Pictures/$safeName" }
+            PendingBulkFile(uri, metadata.second,
+                digest.digest().joinToString("") { "%02x".format(it) }, path)
+        }
+        if (generation != bulkOperationGeneration) return
+        if (prepared == null) {
+            binding.bulkTransferStatusText.text =
+                "The selected file is unavailable or outside the 1 byte to 64 MB limit."
+            return
+        }
+        pendingBulkFile = prepared
+        binding.bulkPathInput.setText(prepared.managedPath)
+        val requestId = allocateBulkRequestId()
+        activeBulkRequestId = requestId
+        bulkLaunchGuard.reset(requestId)
+        val queued = companionController?.requestBulkTransfer(BulkTransferRequest(
+            requestId = requestId,
+            preferSharedLan = binding.bulkPreferLanCheck.isChecked,
+            declaredSize = prepared.size,
+            sha256Hex = prepared.sha256,
+            managedPath = prepared.managedPath,
+        )) == true
+        binding.bulkTransferStatusText.text = if (queued) {
+            "Transfer session requested; waiting for the watch endpoint."
+        } else {
+            activeBulkRequestId = 0
+            bulkLaunchGuard.clear()
+            pendingBulkFile = null
+            "Transfer request was not queued; reconnect the authenticated watch."
+        }
+    }
+
+    private fun queryBulkMetadata(uri: Uri): Pair<String, Long>? {
+        var cursor: Cursor? = null
+        return try {
+            cursor = contentResolver.query(uri, arrayOf(
+                OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE,
+            ), null, null, null)
+            if (cursor == null || !cursor.moveToFirst()) return null
+            val name = cursor.getString(0) ?: return null
+            val size = if (cursor.isNull(1)) -1L else cursor.getLong(1)
+            name to size
+        } finally {
+            cursor?.close()
+        }
+    }
+
+    private fun handleBulkTransferReady(session: BulkTransferSession) {
+        if (session.requestId != activeBulkRequestId) return
+        if (pendingBulkSession?.requestId == session.requestId) return
+        if (pendingBulkFile == null) {
+            cancelBulkTransfer(
+                "The watch offered a transfer endpoint, but no local file is pending.",
+            )
+            return
+        }
+        pendingBulkSession = session
+        if (session.mode == BulkTransferMode.SoftAp && !hasNearbyWifiPermission()) {
+            requestPermissions(requiredWifiPermissions(), REQUEST_WIFI_PERMISSION)
+            return
+        }
+        beginBulkUpload(session)
+    }
+
+    private fun renderBulkTransferStatus(status: BulkTransferStatus) {
+        if (status.requestId != activeBulkRequestId) return
+        val reason = when (status.failure) {
+            1 -> "another transfer is active"
+            2 -> "battery level is too low"
+            3 -> "the SD card is unavailable"
+            4 -> "free space is insufficient"
+            5 -> "audio is using the resource"
+            6 -> "OTA is using the resource"
+            7 -> "no local network endpoint was available"
+            8 -> "authorization failed"
+            9 -> "the managed path was invalid"
+            10 -> "the file exceeded the size limit"
+            11 -> "the SD write failed"
+            12 -> "the received size differed"
+            13 -> "SHA-256 verification failed"
+            14 -> "the transfer session expired"
+            15 -> "the authenticated watch disconnected"
+            16 -> "the operation was cancelled"
+            else -> "no additional reason"
+        }
+        val message = when (status.state) {
+            4 -> "Transfer complete; the watch committed the verified file."
+            5 -> "Transfer cancelled: $reason."
+            6 -> "Transfer failed: $reason."
+            else -> "Watch transfer state ${status.state}: $reason."
+        }
+        binding.bulkTransferStatusText.text = message
+        if (status.state in 4..6) cancelBulkTransfer(message, false)
+    }
+
+    private fun beginBulkUpload(session: BulkTransferSession) {
+        if (session.requestId != activeBulkRequestId ||
+            pendingBulkSession?.requestId != session.requestId
+        ) return
+        val file = pendingBulkFile ?: return
+        val repository = connectionRepository ?: return
+        pendingBulkSession = session
+        if (session.mode == BulkTransferMode.SoftAp) {
+            if (!bulkLaunchGuard.claimNetworkRequest(session.requestId)) return
+            binding.bulkTransferStatusText.text = "Connecting to the watch SoftAP..."
+            val requested = repository.requestBulkSoftApNetwork(
+                session,
+                onAvailable = { network -> runOnUiThread {
+                    if (activeBulkRequestId == session.requestId &&
+                        pendingBulkSession?.requestId == session.requestId &&
+                        bulkLaunchGuard.claimNetworkAvailable(session.requestId)
+                    ) uploadBulkFile(file, session, network)
+                } },
+                onUnavailable = { runOnUiThread {
+                    if (activeBulkRequestId == session.requestId &&
+                        pendingBulkSession?.requestId == session.requestId &&
+                        bulkLaunchGuard.claimNetworkUnavailable(session.requestId)
+                    ) {
+                        cancelBulkTransfer(
+                            "The temporary watch Wi-Fi network was unavailable.",
+                        )
+                    }
+                } },
+            )
+            if (!requested) {
+                cancelBulkTransfer(
+                    "Android could not request the temporary watch Wi-Fi network.",
+                )
+            }
+        } else {
+            if (bulkLaunchGuard.claimDirectUpload(session.requestId)) {
+                uploadBulkFile(file, session, null)
+            }
+        }
+    }
+
+    private fun uploadBulkFile(
+        file: PendingBulkFile,
+        session: BulkTransferSession,
+        network: Network?,
+    ) {
+        if (session.requestId != activeBulkRequestId ||
+            pendingBulkSession?.requestId != session.requestId
+        ) return
+        val repository = connectionRepository ?: return
+        val requestId = session.requestId
+        bulkTransferJob = activityScope.launch {
+            binding.bulkTransferStatusText.text = "Uploading 0%"
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    contentResolver.openInputStream(file.uri)?.use { input ->
+                        repository.uploadBulkFile(
+                            session, file.managedPath, file.size, file.sha256, input,
+                            network,
+                        ) { sent, total ->
+                            runOnUiThread {
+                                if (activeBulkRequestId == requestId) {
+                                    binding.bulkTransferStatusText.text =
+                                        "Uploading ${(sent * 100L / total).coerceIn(0, 100)}%"
+                                }
+                            }
+                        }
+                    } ?: BulkUploadResult.NetworkError(
+                        "The selected file can no longer be read")
+                }
+                if (activeBulkRequestId != requestId) return@launch
+                repository.releaseBulkNetwork()
+                when (result) {
+                    BulkUploadResult.Success -> {
+                        binding.bulkTransferStatusText.text =
+                            "Upload accepted; waiting for the watch verification result."
+                        pendingBulkFile = null
+                        pendingBulkSession = null
+                    }
+                    is BulkUploadResult.Rejected -> cancelBulkTransfer(
+                        "The watch rejected the transfer (HTTP ${result.httpStatus}).",
+                    )
+                    is BulkUploadResult.NetworkError -> cancelBulkTransfer(
+                        "Transfer failed: ${result.message}",
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } finally {
+                if (bulkTransferJob === currentCoroutineContext()[Job]) {
+                    bulkTransferJob = null
+                }
+            }
+        }
+    }
+
+    private fun allocateBulkRequestId(): Int {
+        val allocated = nextBulkRequestId
+        nextBulkRequestId = if (allocated == 0xFFFF) 1 else allocated + 1
+        return allocated
+    }
+
+    private fun cancelBulkTransfer(message: String, notifyWatch: Boolean = true) {
+        val requestId = activeBulkRequestId
+        bulkTransferJob?.cancel()
+        bulkTransferJob = null
+        connectionRepository?.releaseBulkNetwork()
+        pendingBulkFile = null
+        pendingBulkSession = null
+        activeBulkRequestId = 0
+        ++bulkOperationGeneration
+        bulkLaunchGuard.clear()
+        if (notifyWatch && requestId != 0) {
+            companionController?.cancelBulkTransfer(requestId)
+        }
+        binding.bulkTransferStatusText.text = message
     }
 
     private fun wireCalendarActions() {
@@ -503,8 +877,15 @@ class MainActivity : Activity() {
     }
 
     private fun renderConnection(state: DeviceState) {
+        val wasConnected = connectionStatus == ConnectionStatus.Connected
         connectionStatus = state.status
         val remoteActionsEnabled = state.status == ConnectionStatus.Connected
+        if (wasConnected && !remoteActionsEnabled && activeBulkRequestId != 0) {
+            cancelBulkTransfer(
+                "Transfer cancelled because the authenticated watch disconnected.",
+                false,
+            )
+        }
         setRemoteActionsEnabled(remoteActionsEnabled)
         binding.connectionStatusText.text = when (state.status) {
             ConnectionStatus.Idle,
@@ -541,6 +922,9 @@ class MainActivity : Activity() {
         binding.syncAlarmButton,
         binding.syncThemeButton,
         binding.syncWeatherButton,
+        binding.bulkSelectFileButton,
+        binding.provisionWifiButton,
+        binding.forgetWifiButton,
         binding.calendarSyncSwitch,
         binding.syncCalendarButton,
         binding.mediaPreviousButton,
@@ -598,11 +982,27 @@ class MainActivity : Activity() {
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
 
+    private fun hasNearbyWifiPermission(): Boolean =
+        requiredWifiPermissions().all {
+            checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+        }
+
+    private fun requiredWifiPermissions(): Array<String> = when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
+            arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES)
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ->
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        else -> emptyArray()
+    }
+
     companion object {
         private const val REQUEST_BLE_PERMISSION = 100
         private const val REQUEST_CALENDAR_PERMISSION = 101
         private const val REQUEST_NOTIFICATION_PERMISSION = 102
+        private const val REQUEST_WIFI_PERMISSION = 103
+        private const val REQUEST_BULK_FILE = 104
         private const val MAX_THEME_BYTES = 23
+        private const val MAX_BULK_FILE_BYTES = 64L * 1024L * 1024L
         private val ALARM_PATTERN = Regex("""(\d{1,2}):(\d{2})""")
     }
 }

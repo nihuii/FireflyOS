@@ -146,6 +146,7 @@ object FrameAuthenticator {
         MessageType.FindPhone,
         MessageType.FindWatch,
         MessageType.WifiProvision,
+        MessageType.BulkTransfer,
         MessageType.OtaControl,
         MessageType.UnpairRequest,
         MessageType.UnpairConfirm,

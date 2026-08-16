@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <Arduino.h>
 #include <lvgl.h>
 #include "Arduino_GFX_Library.h"
@@ -31,18 +32,40 @@ extern firefly::Es8311Device es8311_device;
 extern firefly::AudioService audio_service;
 extern firefly::AlarmService alarm_service;
 extern firefly::PowerService power_service;
+extern firefly::WifiService wifi_service;
 extern firefly::StorageService storage_service;
+extern firefly::LittleFsWeatherCacheStore weather_cache_store;
+extern firefly::WeatherService weather_service;
+extern firefly::SdBulkTransferStorage bulk_transfer_storage;
+extern firefly::EspHttpBulkTransferTransport bulk_transfer_transport;
+extern firefly::BulkTransferService bulk_transfer_service;
 extern firefly::FileScanService file_scan_service;
 extern firefly::ThemePackageService theme_package_service;
 extern firefly::SystemSettings system_settings;
 extern firefly::TimeService time_service;
 extern firefly::MotionService motion_service;
 extern firefly::CapabilityRegistry system_capabilities;
+extern firefly::HardwareCapabilities hardware_capabilities;
+extern firefly::ResourceGovernor system_resources;
+extern firefly::SystemLifecycle system_lifecycle;
+extern firefly::UpdateService update_service;
+extern firefly::SdManifestSource sd_manifest_source;
+extern firefly::SdUpdateSource sd_update_source;
+extern firefly::HttpsManifestSource https_manifest_source;
+extern firefly::HttpsUpdateSource https_update_source;
+extern firefly::UpdateCoordinator update_coordinator;
+extern firefly::BootValidationService boot_validation_service;
+extern firefly::DiagnosticService diagnostic_service;
+extern firefly::FactoryResetService factory_reset_service;
+extern firefly::SerialDiagnosticExport serial_diagnostic_export;
+extern firefly::SdDiagnosticExport sd_diagnostic_export;
 extern firefly::UiShell ui_shell;
 extern firefly::GlanceScreen glance_screen;
 extern firefly::LockScreen lock_screen;
 extern firefly::HomeScreen home_screen;
 extern firefly::ActivityApp activity_app;
+extern firefly::WeatherApp weather_app;
+extern firefly::UpdateApp update_app;
 extern firefly::CalendarApp calendar_app;
 extern firefly::ClockApp clock_app;
 extern firefly::SettingsApp settings_app;
@@ -60,6 +83,7 @@ extern firefly::CompanionSyncService companion_sync_service;
 extern firefly::CompanionFrameDispatcher companion_frame_dispatcher;
 extern firefly::StateStore ui_state_store;
 extern firefly::PairingOverlay pairing_overlay;
+extern firefly::WifiProvisionOverlay wifi_provision_overlay;
 extern firefly::BlePeripheralDevice ble_peripheral_device;
 extern firefly::ConnectivityService connectivity_service;
 
@@ -90,6 +114,13 @@ extern lv_obj_t * settings_time_container;
 extern lv_obj_t * settings_sound_container;
 extern lv_obj_t * settings_alarm_container;
 extern lv_obj_t * settings_display_container;
+extern lv_obj_t * settings_reset_container;
+extern lv_obj_t * settings_reset_title;
+extern lv_obj_t * settings_reset_detail;
+extern lv_obj_t * settings_reset_notice;
+extern lv_obj_t * settings_reset_keep_button;
+extern lv_obj_t * settings_reset_sd_button;
+extern lv_obj_t * settings_reset_cancel_button;
 extern lv_obj_t * settings_volume_slider;
 extern lv_obj_t * settings_volume_value_label;
 extern lv_obj_t * settings_brightness_slider;
@@ -143,7 +174,9 @@ extern volatile unsigned long last_activity_time;
 extern volatile unsigned long sleep_entered_at;
 extern volatile unsigned long charge_overlay_started_at;
 extern volatile uint32_t settings_command_failures;
-extern bool alarm_ringing;
+extern std::atomic<bool> alarm_ringing;
+extern std::atomic<int8_t> factory_reset_execute_request;
+extern std::atomic<bool> factory_reset_reboot_pending;
 extern volatile bool charging_overlay_visible;
 extern bool charging_last_state;
 
@@ -163,6 +196,7 @@ extern int16_t touch_last_x;
 extern int16_t touch_last_y;
 void touch_init(int16_t w, int16_t h, uint8_t r);
 bool touch_touched();
+bool touch_ready();
 void translate_touch_raw();
 
 void open_settings_panel();
@@ -191,10 +225,16 @@ void firefly_process_settings_commands();
 void firefly_process_power_policy();
 void firefly_process_tools_commands();
 void firefly_process_media_apps();
+void firefly_process_factory_reset();
+bool firefly_factory_reset_active();
 void firefly_refresh_companion_weather_ui();
 void firefly_process_connectivity();
 void firefly_report_gate_a_diagnostics();
+void firefly_sample_diagnostics();
+void firefly_export_diagnostics();
 void start_firefly_background_task();
+firefly::UpdateRuntimeGate firefly_current_update_gate();
+bool firefly_audio_start_allowed(firefly::AudioUse use, void * context);
 void configure_power_sleep_hooks();
 void init_default_settings_theme();
 void init_settings_theme_from_wallpaper(const lv_img_dsc_t * wallpaper);

@@ -43,7 +43,7 @@ class AndroidCompanionScaffoldContractTests(unittest.TestCase):
         self.assertIn("maven.aliyun.com/repository/gradle-plugin", settings)
         self.assertLess(settings.index("maven.aliyun.com/repository/google"), settings.index("google()"))
 
-    def test_manifest_declares_minimal_ble_calendar_permissions(self):
+    def test_manifest_declares_ble_calendar_and_local_transfer_permissions(self):
         manifest = read_required(ANDROID / "app" / "src" / "main" / "AndroidManifest.xml")
         for token in (
             'android.hardware.bluetooth_le',
@@ -56,12 +56,18 @@ class AndroidCompanionScaffoldContractTests(unittest.TestCase):
             'android.permission.BLUETOOTH_ADMIN',
             'android.permission.ACCESS_FINE_LOCATION',
             'android.permission.READ_CALENDAR',
+            'android.permission.INTERNET',
+            'android.permission.ACCESS_NETWORK_STATE',
+            'android.permission.CHANGE_NETWORK_STATE',
+            'android.permission.NEARBY_WIFI_DEVICES',
             'android:theme="@style/Theme.FireflyCompanion"',
         ):
             self.assertIn(token, manifest)
 
         self.assertNotIn("ACCESS_BACKGROUND_LOCATION", manifest)
-        self.assertNotIn("INTERNET", manifest)
+        fine_location = manifest[manifest.index("ACCESS_FINE_LOCATION"):]
+        fine_location = fine_location[:fine_location.index("/>")]
+        self.assertIn('android:maxSdkVersion="30"', fine_location)
 
     def test_empty_views_activity_and_layout_explain_permission_boundaries(self):
         activity = read_required(
@@ -89,6 +95,54 @@ class AndroidCompanionScaffoldContractTests(unittest.TestCase):
 
         package_hits = re.findall(r"package com\.fireflyos\.companion", activity)
         self.assertEqual(1, len(package_hits))
+
+    def test_bulk_transfer_has_one_idempotent_user_cancel_path(self):
+        activity = read_required(
+            ANDROID / "app" / "src" / "main" / "java" / "com" /
+            "fireflyos" / "companion" / "MainActivity.kt"
+        )
+        controller = read_required(
+            ANDROID / "app" / "src" / "main" / "java" / "com" /
+            "fireflyos" / "companion" / "sync" / "CompanionController.kt"
+        )
+        layout = read_required(
+            ANDROID / "app" / "src" / "main" / "res" / "layout" /
+            "activity_main.xml"
+        )
+        cancel_id = 'android:id="@+id/bulkCancelButton"'
+        self.assertIn(cancel_id, layout)
+        cancel_start = layout.index(cancel_id)
+        cancel_end = layout.index("</Button>", cancel_start)
+        self.assertIn('android:minHeight="48dp"', layout[cancel_start:cancel_end])
+        for token in (
+            "private var bulkTransferJob: Job?",
+            "private var activeBulkRequestId",
+            "private fun cancelBulkTransfer(",
+            "bulkTransferJob?.cancel()",
+            "releaseBulkNetwork()",
+            "companionController?.cancelBulkTransfer",
+        ):
+            self.assertIn(token, activity)
+        self.assertGreaterEqual(activity.count("cancelBulkTransfer("), 4)
+        self.assertIn("fun cancelBulkTransfer(requestId: Int)", controller)
+        self.assertIn("hashedBytes > MAX_BULK_FILE_BYTES", activity)
+        self.assertIn("hashedBytes != metadata.second", activity)
+        self.assertIn("private var bulkOperationGeneration", activity)
+        self.assertIn("generation != bulkOperationGeneration", activity)
+        activity_result = activity[activity.index("override fun onActivityResult"):]
+        self.assertIn("bulkTransferJob?.isActive == true", activity_result)
+        self.assertIn("cancelBulkTransfer(", activity_result)
+        self.assertGreaterEqual(
+            activity.count("pendingBulkSession?.requestId == session.requestId"),
+            3,
+        )
+        uploader = read_required(
+            ANDROID / "app" / "src" / "main" / "java" / "com" /
+            "fireflyos" / "companion" / "transfer" / "BulkTransfer.kt"
+        )
+        self.assertIn("onCancelling = true", uploader)
+        self.assertIn("connection.disconnect()", uploader)
+        self.assertIn('managedPath.endsWith(".part")', uploader)
 
 
 if __name__ == "__main__":

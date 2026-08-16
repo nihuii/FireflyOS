@@ -204,6 +204,142 @@ void PairingOverlay::emitSecondary() {
     else if(view_ == View::Unpair) callback_(PairingDecision::CancelUnpair);
 }
 
+bool WifiProvisionOverlay::create(lv_obj_t * parent) {
+    if(!parent || root_) return false;
+    root_ = lv_obj_create(parent);
+    lv_obj_set_size(root_, 410, 502);
+    lv_obj_set_style_bg_color(root_, lv_color_hex(0x020607), 0);
+    lv_obj_set_style_bg_opa(root_, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(root_, 0, 0);
+    lv_obj_set_style_radius(root_, 0, 0);
+    lv_obj_set_style_pad_all(root_, 0, 0);
+    lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
+
+    status_label_ = lv_label_create(root_);
+    lv_obj_set_style_text_color(status_label_, lv_color_hex(0x62E8CA), 0);
+    lv_label_set_text(status_label_, "SECURE BLE");
+    lv_obj_align(status_label_, LV_ALIGN_TOP_RIGHT, -28, 24);
+
+    title_label_ = lv_label_create(root_);
+    lv_obj_set_width(title_label_, 354);
+    lv_obj_set_style_text_font(title_label_, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(title_label_, lv_color_hex(0xEFFFFB), 0);
+    lv_obj_align(title_label_, LV_ALIGN_TOP_MID, 0, 62);
+
+    network_label_ = lv_label_create(root_);
+    lv_obj_set_width(network_label_, 354);
+    lv_label_set_long_mode(network_label_, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_bg_color(network_label_, lv_color_hex(0x0D171D), 0);
+    lv_obj_set_style_bg_opa(network_label_, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(network_label_, 1, 0);
+    lv_obj_set_style_border_color(network_label_, lv_color_hex(0x25454B), 0);
+    lv_obj_set_style_radius(network_label_, 18, 0);
+    lv_obj_set_style_pad_all(network_label_, 18, 0);
+    lv_obj_set_style_text_color(network_label_, lv_color_hex(0xEFFFFB), 0);
+    lv_obj_align(network_label_, LV_ALIGN_TOP_MID, 0, 132);
+
+    detail_label_ = lv_label_create(root_);
+    lv_obj_set_width(detail_label_, 340);
+    lv_label_set_long_mode(detail_label_, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(detail_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(detail_label_, lv_color_hex(0x8BA6AA), 0);
+    lv_obj_align(detail_label_, LV_ALIGN_TOP_MID, 0, 234);
+
+    secondary_button_ = lv_btn_create(root_);
+    lv_obj_set_size(secondary_button_, 170, 52);
+    lv_obj_align(secondary_button_, LV_ALIGN_BOTTOM_LEFT, 28, -28);
+    lv_obj_set_style_radius(secondary_button_, 17, 0);
+    lv_obj_set_style_bg_color(secondary_button_, lv_color_hex(0x101B20), 0);
+    secondary_label_ = lv_label_create(secondary_button_);
+    lv_obj_set_style_text_color(secondary_label_, lv_color_hex(0xC2D3D5), 0);
+    lv_obj_center(secondary_label_);
+    lv_obj_add_event_cb(secondary_button_, secondaryClicked,
+                        LV_EVENT_CLICKED, this);
+
+    primary_button_ = lv_btn_create(root_);
+    lv_obj_set_size(primary_button_, 170, 52);
+    lv_obj_align(primary_button_, LV_ALIGN_BOTTOM_RIGHT, -28, -28);
+    lv_obj_set_style_radius(primary_button_, 17, 0);
+    lv_obj_set_style_bg_color(primary_button_, lv_color_hex(0x153C39), 0);
+    primary_label_ = lv_label_create(primary_button_);
+    lv_obj_set_style_text_color(primary_label_, lv_color_hex(0xDCFFF7), 0);
+    lv_obj_center(primary_label_);
+    lv_obj_add_event_cb(primary_button_, primaryClicked,
+                        LV_EVENT_CLICKED, this);
+    hide();
+    return true;
+}
+
+void WifiProvisionOverlay::showRequest(const char * ssid, bool forget) {
+    if(!root_) return;
+    view_ = View::Request;
+    lv_label_set_text(status_label_, forget ? "FORGET NETWORK" : "WI-FI REQUEST");
+    lv_label_set_text(title_label_, forget ? "Forget this network?" : "Connect to Wi-Fi?");
+    lv_label_set_text(network_label_, ssid ? ssid : "Unknown network");
+    lv_label_set_text(detail_label_, forget
+        ? "This clears the saved credential. The phone must send it again to reconnect."
+        : "Confirm only the network name. FireflyOS never shows or logs the password.");
+    setButtons(forget ? "Forget" : "Connect", "Cancel");
+    lv_obj_clear_flag(root_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void WifiProvisionOverlay::showProgress(const char * ssid) {
+    if(!root_) return;
+    view_ = View::Progress;
+    lv_label_set_text(status_label_, "CONNECTING");
+    lv_label_set_text(title_label_, "Connecting to Wi-Fi");
+    lv_label_set_text(network_label_, ssid ? ssid : "Network");
+    lv_label_set_text(detail_label_, "Waiting up to 15 seconds. There is no automatic retry loop.");
+    setButtons("Please wait", nullptr);
+    lv_obj_add_state(primary_button_, LV_STATE_DISABLED);
+}
+
+void WifiProvisionOverlay::showResult(const char * title,
+                                      const char * detail,
+                                      bool success) {
+    if(!root_) return;
+    view_ = View::Result;
+    lv_label_set_text(status_label_, success ? "DONE" : "NOT CONNECTED");
+    lv_label_set_text(title_label_, title ? title : "Wi-Fi result");
+    lv_label_set_text(detail_label_, detail ? detail : "No detail available.");
+    setButtons("Done", nullptr);
+}
+
+void WifiProvisionOverlay::setButtons(const char * primary,
+                                      const char * secondary) {
+    lv_label_set_text(primary_label_, primary ? primary : "");
+    lv_obj_clear_state(primary_button_, LV_STATE_DISABLED);
+    if(secondary) {
+        lv_label_set_text(secondary_label_, secondary);
+        lv_obj_clear_flag(secondary_button_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_width(primary_button_, 170);
+        lv_obj_align(primary_button_, LV_ALIGN_BOTTOM_RIGHT, -28, -28);
+    } else {
+        lv_obj_add_flag(secondary_button_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_width(primary_button_, 354);
+        lv_obj_align(primary_button_, LV_ALIGN_BOTTOM_MID, 0, -28);
+    }
+    lv_obj_clear_flag(root_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void WifiProvisionOverlay::hide() {
+    if(root_) lv_obj_add_flag(root_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void WifiProvisionOverlay::primaryClicked(lv_event_t * event) {
+    auto * self = static_cast<WifiProvisionOverlay *>(lv_event_get_user_data(event));
+    if(!self || !self->callback_ || self->view_ == View::Progress) return;
+    self->callback_(self->view_ == View::Request
+        ? WifiProvisionDecision::Confirm : WifiProvisionDecision::Dismiss);
+}
+
+void WifiProvisionOverlay::secondaryClicked(lv_event_t * event) {
+    auto * self = static_cast<WifiProvisionOverlay *>(lv_event_get_user_data(event));
+    if(self && self->callback_ && self->view_ == View::Request) {
+        self->callback_(WifiProvisionDecision::Deny);
+    }
+}
+
 bool SystemOverlayHost::attach(lv_obj_t * host) {
     host_ = host;
     clear();

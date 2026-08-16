@@ -1,0 +1,4 @@
+{"type":"server-started","port":60815,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:60815","screen_dir":"D:\\Study\\Projects\\ESP32Projects\\FireflyOS\\.worktrees\\wifi-weather-ota\\.superpowers\\brainstorm\\plan6-ota-ui-20260802\\content","state_dir":"D:\\Study\\Projects\\ESP32Projects\\FireflyOS\\.worktrees\\wifi-weather-ota\\.superpowers\\brainstorm\\plan6-ota-ui-20260802\\state"}
+{"type":"screen-added","file":"D:\\Study\\Projects\\ESP32Projects\\FireflyOS\\.worktrees\\wifi-weather-ota\\.superpowers\\brainstorm\\plan6-ota-ui-20260802\\content\\ota-layout-directions.html"}
+{"type":"screen-added","file":"D:\\Study\\Projects\\ESP32Projects\\FireflyOS\\.worktrees\\wifi-weather-ota\\.superpowers\\brainstorm\\plan6-ota-ui-20260802\\content\\waiting-after-layout.html"}
+{"type":"server-stopped","reason":"idle timeout"}

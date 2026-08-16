@@ -15,6 +15,7 @@ public:
     bool push(const NotificationSummary & summary);
     bool dismiss(const char * key);
     void clearLocal();
+    bool clearSensitiveState();
     void setPhoneConnected(bool connected);
     bool phoneConnected() const { return phone_connected_; }
     void setLockScreenBodyHidden(bool hidden);

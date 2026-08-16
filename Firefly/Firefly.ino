@@ -12,6 +12,7 @@ firefly::Route route_for_app(const char * id) {
     if(strcmp(id, "tools") == 0) return firefly::Route::Tools;
     if(strcmp(id, "activity") == 0) return firefly::Route::Activity;
     if(strcmp(id, "weather") == 0) return firefly::Route::Weather;
+    if(strcmp(id, "update") == 0) return firefly::Route::Update;
     if(strcmp(id, "music") == 0) return firefly::Route::Music;
     if(strcmp(id, "recorder") == 0) return firefly::Route::Recorder;
     if(strcmp(id, "files") == 0) return firefly::Route::Files;
@@ -25,6 +26,7 @@ const char * title_for_route(firefly::Route route) {
         case firefly::Route::Calendar: return "Calendar";
         case firefly::Route::Activity: return "Activity";
         case firefly::Route::Weather: return "Weather";
+        case firefly::Route::Update: return "System Update";
         case firefly::Route::Music: return "Music";
         case firefly::Route::Recorder: return "Recorder";
         case firefly::Route::Files: return "Files";
@@ -35,6 +37,33 @@ const char * title_for_route(firefly::Route route) {
     }
 }
 
+void show_hardware_diagnostics() {
+    const firefly::HardwareCapabilitySnapshot snapshot =
+        hardware_capabilities.snapshot();
+    char text[320]{};
+    size_t used = 0;
+    for(uint8_t index = 0;
+        index < static_cast<uint8_t>(firefly::HardwareDevice::Count);
+        ++index) {
+        const firefly::HardwareDevice device =
+            static_cast<firefly::HardwareDevice>(index);
+        const firefly::HardwareAvailability status = snapshot.status[index];
+        const int written = snprintf(
+            text + used, sizeof(text) - used, "%s: %s%s%s\n",
+            firefly::HardwareCapabilities::deviceName(device),
+            firefly::HardwareCapabilities::statusText(status),
+            status == firefly::HardwareAvailability::Available ? "" : " · ",
+            status == firefly::HardwareAvailability::Available ? "" :
+                firefly::HardwareCapabilities::failureText(
+                    snapshot.failure[index]));
+        if(written <= 0 || static_cast<size_t>(written) >= sizeof(text) - used) {
+            break;
+        }
+        used += static_cast<size_t>(written);
+    }
+    app_shell_screen.setStatus(text);
+}
+
 void handle_shell_route(firefly::Route previous, firefly::Route current) {
     LV_UNUSED(previous);
     close_settings_panel();
@@ -43,6 +72,8 @@ void handle_shell_route(firefly::Route previous, firefly::Route current) {
     tools_app.hide();
     activity_app_active = false;
     activity_app.hide();
+    weather_app.hide();
+    update_app.hide();
     files_app.hide();
     music_app.hide();
     recorder_app.hide();
@@ -108,14 +139,20 @@ void handle_shell_route(firefly::Route previous, firefly::Route current) {
         return;
     }
     if(current == firefly::Route::Weather) {
-        app_shell_screen.setTitle("Weather");
         firefly_refresh_companion_weather_ui();
-        app_shell_screen.show();
-        ui_shell.bringAppToFront(app_shell_screen.root());
+        weather_app.show();
+        ui_shell.bringAppToFront(weather_app.root());
+        return;
+    }
+    if(current == firefly::Route::Update) {
+        update_app.refresh(update_service.snapshot());
+        update_app.show();
+        ui_shell.bringAppToFront(update_app.root());
         return;
     }
 
     app_shell_screen.setTitle(title_for_route(current));
+    if(current == firefly::Route::Diagnostics) show_hardware_diagnostics();
     app_shell_screen.show();
     ui_shell.bringAppToFront(app_shell_screen.root());
 }
@@ -168,6 +205,128 @@ void pairing_decision_cb(firefly::PairingDecision decision) {
             ui_shell.closeOverlay(pairing_overlay.root());
             break;
     }
+}
+
+void wifi_provision_decision_cb(firefly::WifiProvisionDecision decision) {
+    const firefly::WifiProvisioningSnapshot snapshot =
+        wifi_service.provisioningSnapshot();
+    if(decision == firefly::WifiProvisionDecision::Dismiss) {
+        ui_shell.closeOverlay(wifi_provision_overlay.root());
+        return;
+    }
+    const bool allow = decision == firefly::WifiProvisionDecision::Confirm;
+    const bool accepted = wifi_service.confirmProvisioning(allow, millis());
+    const firefly::WifiProvisioningStatus status =
+        wifi_service.provisioningSnapshot().status;
+    if(accepted && status == firefly::WifiProvisioningStatus::Connecting) {
+        wifi_provision_overlay.showProgress(snapshot.ssid);
+    } else if(status == firefly::WifiProvisioningStatus::Forgotten) {
+        wifi_provision_overlay.showResult(
+            "Network forgotten", "The saved Wi-Fi credential was cleared.", true);
+    } else if(!allow) {
+        wifi_provision_overlay.showResult(
+            "Request cancelled", "No Wi-Fi credential was changed.", false);
+    } else {
+        wifi_provision_overlay.showResult(
+            "Cannot connect", "Power or request validation blocked Wi-Fi.", false);
+    }
+}
+
+void weather_refresh_cb(void *) {
+    weather_service.requestRefresh(millis(), static_cast<int64_t>(time(nullptr)));
+}
+
+void update_start_cb(void *) {
+    update_coordinator.postStart();
+    update_app.refresh(update_service.snapshot());
+}
+
+void update_cancel_cb(void *) {
+    update_coordinator.postCancel();
+    update_app.refresh(update_service.snapshot());
+}
+
+void update_diagnostics_cb(void *) {
+    firefly_export_diagnostics();
+    ui_shell.showRoute(firefly::Route::Diagnostics);
+}
+
+void open_update_page(lv_event_t * event) {
+    LV_UNUSED(event);
+    const firefly::UpdateState state = update_service.snapshot().state;
+    if(state == firefly::UpdateState::Idle ||
+       state == firefly::UpdateState::Blocked ||
+       state == firefly::UpdateState::Failed) {
+        update_coordinator.postCheck();
+    }
+    ui_shell.showRoute(firefly::Route::Update);
+}
+
+void show_factory_reset_first_confirmation() {
+    if(settings_reset_title) lv_label_set_text(settings_reset_title, "Factory Reset");
+    if(settings_reset_detail) {
+        lv_label_set_text(settings_reset_detail,
+            "Erase pairing, Wi-Fi, notifications, weather, settings and internal caches.");
+    }
+    if(settings_reset_notice) lv_label_set_text(settings_reset_notice, "Keep SD media");
+    if(settings_reset_keep_button) {
+        lv_obj_clear_flag(settings_reset_keep_button, LV_OBJ_FLAG_HIDDEN);
+    }
+    if(settings_reset_sd_button) {
+        lv_obj_t * label = lv_obj_get_child(settings_reset_sd_button, 0);
+        if(label) lv_label_set_text(label, "Delete managed FireflyOS data");
+        lv_obj_clear_flag(settings_reset_sd_button, LV_OBJ_FLAG_HIDDEN);
+    }
+    if(settings_reset_cancel_button) {
+        lv_obj_clear_flag(settings_reset_cancel_button, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void open_factory_reset_page(lv_event_t * event) {
+    LV_UNUSED(event);
+    if(factory_reset_service.snapshot().state != firefly::FactoryResetState::Running) {
+        factory_reset_service.beginRequest();
+        show_factory_reset_first_confirmation();
+    }
+    set_settings_subpage(settings_reset_container);
+}
+
+void factory_reset_keep_sd_cb(lv_event_t * event) {
+    LV_UNUSED(event);
+    const firefly::FactoryResetSnapshot state = factory_reset_service.snapshot();
+    if(factory_reset_service.confirmInternal(state.generation)) {
+        factory_reset_execute_request.store(0, std::memory_order_release);
+    }
+}
+
+void factory_reset_sd_cb(lv_event_t * event) {
+    LV_UNUSED(event);
+    const firefly::FactoryResetSnapshot state = factory_reset_service.snapshot();
+    if(state.state == firefly::FactoryResetState::Preview) {
+        if(!factory_reset_service.confirmInternal(state.generation)) return;
+        if(settings_reset_title) lv_label_set_text(settings_reset_title, "Erase SD data?");
+        if(settings_reset_detail) {
+            lv_label_set_text(settings_reset_detail,
+                "Remove only managed folders under /FireflyOS. Other SD content is untouched.");
+        }
+        if(settings_reset_notice) lv_label_set_text(settings_reset_notice, "Second confirmation");
+        if(settings_reset_keep_button) lv_obj_add_flag(settings_reset_keep_button, LV_OBJ_FLAG_HIDDEN);
+        if(settings_reset_sd_button) {
+            lv_obj_t * label = lv_obj_get_child(settings_reset_sd_button, 0);
+            if(label) lv_label_set_text(label, "Confirm SD erase");
+        }
+        return;
+    }
+    if(state.state == firefly::FactoryResetState::InternalConfirmed &&
+       factory_reset_service.confirmSdErase(state.generation)) {
+        factory_reset_execute_request.store(1, std::memory_order_release);
+    }
+}
+
+void factory_reset_cancel_cb(lv_event_t * event) {
+    LV_UNUSED(event);
+    factory_reset_service.cancel();
+    set_settings_subpage(NULL);
 }
 
 void ble_quick_action_cb(lv_event_t * event) {
@@ -597,6 +756,8 @@ void build_firefly_os() {
     ui_shell.create(scr_firefly, firefly::UiTheme::fireflyDefault());
     pairing_overlay.create(ui_shell.overlayHost());
     pairing_overlay.setDecisionCallback(pairing_decision_cb);
+    wifi_provision_overlay.create(ui_shell.overlayHost());
+    wifi_provision_overlay.setDecisionCallback(wifi_provision_decision_cb);
 
     tv_main = lv_tileview_create(ui_shell.appHost());
     lv_obj_set_size(tv_main, LCD_WIDTH, LCD_HEIGHT);
@@ -663,23 +824,29 @@ void build_firefly_os() {
         ui_app_registry.add({"clock", "Clock", 0});
         ui_app_registry.add({"calendar", "Calendar", 0});
         ui_app_registry.add({"tools", "Tools", 0});
-        ui_app_registry.add({"activity", "Activity", 0});
+        ui_app_registry.add({"activity", "Activity", firefly::capabilityBit(firefly::Capability::Motion)});
         ui_app_registry.add({"weather", "Weather", 0});
-        ui_app_registry.add({"music", "Music", 0});
-        ui_app_registry.add({"recorder", "Recorder", 0});
-        ui_app_registry.add({"files", "Files", 0});
-        ui_app_registry.add({"themes", "Themes", 0});
+        ui_app_registry.add({"music", "Music", firefly::capabilityBit(firefly::Capability::Audio)});
+        ui_app_registry.add({"recorder", "Recorder", firefly::capabilityBit(firefly::Capability::Audio)});
+        ui_app_registry.add({"files", "Files", firefly::capabilityBit(firefly::Capability::Sd)});
+        ui_app_registry.add({"themes", "Themes", firefly::capabilityBit(firefly::Capability::Sd)});
         ui_app_registry.add({"settings", "Settings", 0});
         ui_app_registry.add({"diagnostics", "Diagnostics", 0});
     }
     home_screen.create(desktop_icon_layer, ui_tokens);
-    home_screen.populate(ui_app_registry, open_home_app);
+    home_screen.populate(ui_app_registry, system_capabilities, open_home_app);
     app_shell_screen.create(ui_shell.appHost(), ui_tokens);
     static firefly::UiComponents app_components;
     clock_app.create(ui_shell.appHost(), app_components, time_service, alarm_service);
     calendar_app.create(ui_shell.appHost(), app_components);
     tools_app.create(ui_shell.appHost(), app_components);
     activity_app.create(ui_shell.appHost(), app_components);
+    weather_app.create(ui_shell.appHost(), app_components);
+    weather_app.setRefreshCallback(weather_refresh_cb);
+    update_app.create(ui_shell.appHost(), app_components);
+    update_app.setStartCallback(update_start_cb);
+    update_app.setCancelCallback(update_cancel_cb);
+    update_app.setDiagnosticsCallback(update_diagnostics_cb);
     files_app.create(ui_shell.appHost(), app_components);
     music_app.create(ui_shell.appHost(), app_components, audio_service);
     music_app.setPhoneMediaCallback(firefly_send_phone_media_command);
@@ -917,6 +1084,7 @@ void build_firefly_os() {
     settings_sound_container = lv_obj_create(settings_shell);
     settings_alarm_container = lv_obj_create(settings_shell);
     settings_display_container = lv_obj_create(settings_shell);
+    settings_reset_container = lv_obj_create(settings_shell);
 
     lv_obj_t * pages[] = {
         settings_menu_container,
@@ -924,9 +1092,10 @@ void build_firefly_os() {
         settings_time_container,
         settings_sound_container,
         settings_alarm_container,
-        settings_display_container
+        settings_display_container,
+        settings_reset_container
     };
-    for(uint8_t i = 0; i < 6; ++i) {
+    for(uint8_t i = 0; i < 7; ++i) {
         lv_obj_set_size(pages[i], LCD_WIDTH, settings_page_height);
         lv_obj_align(pages[i], LV_ALIGN_TOP_MID, 0, settings_page_top);
         lv_obj_set_style_bg_opa(pages[i], LV_OPA_TRANSP, 0);
@@ -939,12 +1108,60 @@ void build_firefly_os() {
     lv_obj_add_flag(settings_sound_container, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(settings_alarm_container, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(settings_display_container, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(settings_reset_container, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_set_scroll_dir(settings_menu_container, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(settings_menu_container, LV_SCROLLBAR_MODE_AUTO);
 
     create_menu_button(12, LV_SYMBOL_VOLUME_MAX "  Sound", open_sound_page);
     create_menu_button(84, LV_SYMBOL_BELL "  Alarm", open_alarm_page);
     create_menu_button(156, LV_SYMBOL_EDIT "  Time & Date", open_time_page);
     create_menu_button(228, LV_SYMBOL_BATTERY_FULL "  Battery & Power", open_battery_page);
     create_menu_button(300, LV_SYMBOL_IMAGE "  Display & Sleep", open_display_page);
+    create_menu_button(372, LV_SYMBOL_REFRESH "  System Update", open_update_page);
+    create_menu_button(444, LV_SYMBOL_TRASH "  Factory Reset", open_factory_reset_page);
+
+    settings_reset_title = lv_label_create(settings_reset_container);
+    lv_obj_set_style_text_font(settings_reset_title, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(settings_reset_title, settings_text_primary, 0);
+    lv_obj_align(settings_reset_title, LV_ALIGN_TOP_MID, 0, 8);
+
+    settings_reset_detail = lv_label_create(settings_reset_container);
+    lv_obj_set_width(settings_reset_detail, 330);
+    lv_label_set_long_mode(settings_reset_detail, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(settings_reset_detail, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(settings_reset_detail, settings_text_secondary, 0);
+    lv_obj_align(settings_reset_detail, LV_ALIGN_TOP_MID, 0, 54);
+
+    settings_reset_notice = lv_label_create(settings_reset_container);
+    lv_obj_set_width(settings_reset_notice, 300);
+    lv_obj_set_style_text_align(settings_reset_notice, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(settings_reset_notice, settings_action, 0);
+    lv_obj_align(settings_reset_notice, LV_ALIGN_TOP_MID, 0, 144);
+
+    auto create_reset_button = [&](lv_coord_t y, const char * text,
+                                   lv_event_cb_t callback, bool destructive) {
+        lv_obj_t * button = lv_btn_create(settings_reset_container);
+        lv_obj_set_size(button, 330, 52);
+        lv_obj_align(button, LV_ALIGN_TOP_MID, 0, y);
+        firefly::UiComponents::styleSettingsCard(
+            button, destructive ? lv_color_hex(0x4A1F25) : settings_action,
+            18, destructive ? lv_color_hex(0xFF777F) : settings_theme_accent,
+            LV_OPA_90);
+        lv_obj_t * label = lv_label_create(button);
+        lv_obj_set_style_text_color(label, settings_text_primary, 0);
+        lv_label_set_text(label, text);
+        lv_obj_center(label);
+        lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, NULL);
+        return button;
+    };
+    settings_reset_keep_button = create_reset_button(
+        188, "Reset, keep SD", factory_reset_keep_sd_cb, false);
+    settings_reset_sd_button = create_reset_button(
+        250, "Delete managed FireflyOS data", factory_reset_sd_cb, true);
+    settings_reset_cancel_button = create_reset_button(
+        312, "Cancel", factory_reset_cancel_cb, false);
+    show_factory_reset_first_confirmation();
 
     settings_batt_icon = lv_label_create(settings_batt_container);
     lv_obj_set_style_text_font(settings_batt_icon, &lv_font_montserrat_48, 0);
@@ -1357,19 +1574,49 @@ void build_firefly_os() {
     lv_scr_load(scr_firefly);
 }
 
+static bool boot_main_ui_heartbeat_submitted = false;
+
 void setup(void) {
     Serial.begin(115200);
     setenv("TZ", "CST-8", 1);
     tzset();
 
-    if(!storage_service.begin()) {
+    boot_validation_service.begin(millis());
+
+    const bool storage_ready = storage_service.begin();
+    boot_validation_service.submit(firefly::BootCheck::Nvs, storage_ready);
+    if(!storage_ready) {
         Serial.println("Versioned storage unavailable; using safe defaults.");
     }
+    wifi_service.attachPowerService(power_service);
+    wifi_service.attachCredentialStore(storage_service);
+    const bool wifi_ready = wifi_service.probeHardware();
+    system_capabilities.set(firefly::Capability::Wifi, wifi_ready);
+    hardware_capabilities.set(
+        firefly::HardwareDevice::Wifi,
+        wifi_ready ? firefly::HardwareAvailability::Available
+                   : firefly::HardwareAvailability::Unavailable,
+        wifi_ready ? firefly::HardwareFailure::None
+                   : firefly::HardwareFailure::InitFailed);
+    if(!wifi_ready) {
+        Serial.println("Wi-Fi radio unavailable; BLE provisioning remains available.");
+    } else if(!wifi_service.loadProvisionedNetwork()) {
+        Serial.println("Wi-Fi credentials unavailable; BLE provisioning remains available.");
+    } else if(wifi_service.provisioned()) {
+        wifi_service.request(firefly::WifiPurpose::Ntp, millis());
+    }
+    weather_service.loadCache();
     load_sound_alarm_preferences();
     load_companion_settings_preferences();
 
     const bool ble_ready = connectivity_service.begin("FireflyOS", false, millis());
     system_capabilities.set(firefly::Capability::Ble, ble_ready);
+    hardware_capabilities.set(
+        firefly::HardwareDevice::Ble,
+        ble_ready ? firefly::HardwareAvailability::Available
+                  : firefly::HardwareAvailability::Unavailable,
+        ble_ready ? firefly::HardwareFailure::None
+                  : firefly::HardwareFailure::InitFailed);
     if(!ble_ready) {
         Serial.println("BLE peripheral unavailable; local features remain active.");
     }
@@ -1378,13 +1625,26 @@ void setup(void) {
     GFX_EXTRA_PRE_INIT();
 #endif
 
-    gfx->begin();
+    const bool display_ready = gfx->begin();
+    system_capabilities.set(firefly::Capability::Display, display_ready);
+    boot_validation_service.submit(firefly::BootCheck::Display, display_ready);
     firefly_board.setDisplayBrightness(screen_brightness);
     gfx->fillScreen(BLACK);
     touch_init(gfx->width(), gfx->height(), gfx->getRotation());
+    const bool touch_driver_ready = touch_ready();
+    if(touch_driver_ready) (void)touch_touched();
+    system_capabilities.set(firefly::Capability::Touch, touch_driver_ready);
+    boot_validation_service.submit(firefly::BootCheck::Touch,
+                                   touch_driver_ready);
 
     const bool sd_ready = sd_card.begin();
     system_capabilities.set(firefly::Capability::Sd, sd_ready);
+    hardware_capabilities.set(
+        firefly::HardwareDevice::Sd,
+        sd_ready ? firefly::HardwareAvailability::Available
+                 : firefly::HardwareAvailability::Unavailable,
+        sd_ready ? firefly::HardwareFailure::None
+                 : firefly::HardwareFailure::NotDetected);
     if(sd_ready) {
         storage_service.attachSd(sd_card.filesystem(), sd_card);
         const uint16_t removed =
@@ -1392,13 +1652,23 @@ void setup(void) {
         if(removed > 0) {
             Serial.printf("Removed %u incomplete recording(s).\n", removed);
         }
+        const uint16_t removed_bulk_parts =
+            storage_service.cleanupBulkPartFiles();
+        if(removed_bulk_parts > 0) {
+            Serial.printf("Removed %u incomplete bulk transfer(s).\n",
+                          removed_bulk_parts);
+        }
     } else {
         Serial.println("SD card unavailable; core features remain active.");
     }
 
+    bool pmu_ready = false;
+    bool pmu_i2c_locked = false;
     Wire.begin(IIC_SDA, IIC_SCL);
     if(firefly_i2c_bus.lock(250)) {
+        pmu_i2c_locked = true;
         if(power.begin(Wire, AXP2101_SLAVE_ADDRESS, IIC_SDA, IIC_SCL)) {
+            pmu_ready = true;
             power.disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
             power.clearIrqStatus();
             const bool power_button_ready = power.enableIRQ(
@@ -1420,16 +1690,37 @@ void setup(void) {
     } else {
         Serial.println("PMU initialization skipped: I2C lock timeout");
     }
+    boot_validation_service.submit(firefly::BootCheck::Pmu, pmu_ready);
+    hardware_capabilities.set(
+        firefly::HardwareDevice::Pmu,
+        pmu_ready ? firefly::HardwareAvailability::Available
+                  : firefly::HardwareAvailability::Unavailable,
+        pmu_ready ? firefly::HardwareFailure::None
+                  : (pmu_i2c_locked ? firefly::HardwareFailure::NotDetected
+                                    : firefly::HardwareFailure::Timeout));
 
+    audio_service.setStartAllowedCallback(firefly_audio_start_allowed);
     const bool audio_ready = audio_service.begin();
     audio_service.setVolume(volume_level);
     system_capabilities.set(firefly::Capability::Audio, audio_ready);
+    hardware_capabilities.set(
+        firefly::HardwareDevice::Codec,
+        audio_ready ? firefly::HardwareAvailability::Available
+                    : firefly::HardwareAvailability::Unavailable,
+        audio_ready ? firefly::HardwareFailure::None
+                    : firefly::HardwareFailure::InitFailed);
     if(!audio_ready) {
         Serial.println("ES8311/I2S unavailable; visual alerts remain active.");
     }
 
     const bool motion_ready = motion_service.begin();
     system_capabilities.set(firefly::Capability::Motion, motion_ready);
+    hardware_capabilities.set(
+        firefly::HardwareDevice::Imu,
+        motion_ready ? firefly::HardwareAvailability::Available
+                     : firefly::HardwareAvailability::Unavailable,
+        motion_ready ? firefly::HardwareFailure::None
+                     : firefly::HardwareFailure::NotDetected);
     if(!motion_ready) {
         Serial.println("QMI8658 unavailable; motion features disabled.");
     } else {
@@ -1440,7 +1731,9 @@ void setup(void) {
     init_default_settings_theme();
 
     bool rtc_ready = false;
+    bool rtc_i2c_locked = false;
     if(firefly_i2c_bus.lock(250)) {
+        rtc_i2c_locked = true;
         rtc_ready = rtc.begin(Wire, IIC_SDA, IIC_SCL);
         firefly_i2c_bus.unlock();
     } else {
@@ -1456,6 +1749,15 @@ void setup(void) {
             Serial.println("RTC time invalid. Set time manually from Settings.");
         }
     }
+    system_capabilities.set(firefly::Capability::Rtc, rtc_ready);
+    hardware_capabilities.set(
+        firefly::HardwareDevice::Rtc,
+        rtc_ready ? firefly::HardwareAvailability::Available
+                  : firefly::HardwareAvailability::Unavailable,
+        rtc_ready ? firefly::HardwareFailure::None
+                  : (rtc_i2c_locked ? firefly::HardwareFailure::NotDetected
+                                    : firefly::HardwareFailure::Timeout));
+    boot_validation_service.submit(firefly::BootCheck::Rtc, rtc_ready);
     load_motion_summary_preference();
 
     lv_init();
@@ -1523,20 +1825,50 @@ void setup(void) {
 }
 
 void loop() {
-    audio_service.service();
-    firefly_process_connectivity();
-    firefly_process_sd_card();
-    firefly_process_system_events();
-    firefly_process_clock_sessions();
-    firefly_process_settings_commands();
-    firefly_process_power_policy();
-    firefly_process_tools_commands();
-    firefly_process_media_apps();
-    firefly_refresh_companion_weather_ui();
-    update_charging_overlay();
-    firefly_report_gate_a_diagnostics();
+    firefly_process_factory_reset();
+    if(!firefly_factory_reset_active()) {
+        audio_service.service();
+        firefly_process_connectivity();
+        firefly_process_sd_card();
+        firefly_process_system_events();
+        firefly_process_clock_sessions();
+        firefly_process_settings_commands();
+        firefly_process_power_policy();
+        firefly_process_tools_commands();
+        firefly_process_media_apps();
+        firefly_refresh_companion_weather_ui();
+        update_charging_overlay();
+        firefly_report_gate_a_diagnostics();
+        firefly_sample_diagnostics();
+    }
 
     lv_tick_inc(5);
     lv_timer_handler();
+    if(!boot_main_ui_heartbeat_submitted) {
+        boot_validation_service.submit(firefly::BootCheck::MainUi, true);
+        boot_main_ui_heartbeat_submitted = true;
+    }
+    if(!firefly_factory_reset_active()) {
+        boot_validation_service.tick(millis());
+    }
+    if(!firefly_factory_reset_active() &&
+       ui_shell.navigation().current() == firefly::Route::Update) {
+        firefly::UpdateSnapshot update = update_service.snapshot();
+        const firefly::BootValidationSnapshot boot =
+            boot_validation_service.snapshot();
+        if(boot.state == firefly::BootValidationState::Checking) {
+            update.state = firefly::UpdateState::BootChecking;
+            update.cancel_allowed = false;
+        } else if(boot.state == firefly::BootValidationState::Valid) {
+            update.state = firefly::UpdateState::Completed;
+            update.progress_percent = 100;
+        } else if(boot.state ==
+                  firefly::BootValidationState::RollbackRequested) {
+            update.state = firefly::UpdateState::RollbackRequested;
+            update.failure = firefly::UpdateFailure::BootValidationFailed;
+            update.cancel_allowed = false;
+        }
+        update_app.refresh(update);
+    }
     delay(2);
 }

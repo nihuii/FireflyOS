@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <FireflyOS.h>
+#include <mbedtls/sha256.h>
 #include <string.h>
 
 static_assert(firefly::ConnectivityService::kDispatchQueueCapacity >= 2,
@@ -12,6 +13,7 @@ static_assert(firefly::ConnectivityService::kDispatchQueueCapacity >= 2,
 #include <firefly/services/InputService.h>
 #include <firefly/services/MotionService.h>
 #include <firefly/services/PowerService.h>
+#include <firefly/services/WifiService.h>
 #include <firefly/services/StorageService.h>
 #include <firefly/services/TimeService.h>
 #include <firefly/services/ThemePackageService.h>
@@ -1967,7 +1969,7 @@ static void test_storage_settings_defaults_and_namespaces() {
                 "notification content hidden by default");
     expect_true(settings.wrist_raise_enabled,
                 "wrist raise enabled by default");
-    expect_true(strcmp(settings.theme_id, "firefly-default") == 0,
+    expect_true(strcmp(settings.theme_id, "system-default") == 0,
                 "default theme id");
     expect_true(strcmp(firefly::StorageService::kSystemNamespace,
                        "ff_sys") == 0 &&
@@ -2244,6 +2246,1943 @@ static void test_power_battery_priority_and_thresholds() {
     power.setBatteryState(battery);
     expect_true(power.evaluate(1001) == firefly::PowerMode::CriticalBattery,
                 "critical battery begins at five percent");
+}
+
+static void test_time_service_network_sync_is_deferred_for_alarm() {
+    FakeClockDevice clock;
+    clock.epoch = 1000;
+    firefly::TimeService time(clock);
+    expect_true(time.begin(), "network sync test starts from valid rtc");
+    expect_true(time.applyNetworkTime(1001, false) && !clock.wrote,
+                "network difference within two seconds does not rewrite rtc");
+    expect_true(time.applyNetworkTime(1100, true) && time.networkSyncPending() &&
+                    !clock.wrote,
+                "alarm defers a material network time correction");
+    expect_true(!time.flushDeferredNetworkTime(true) && !clock.wrote,
+                "deferred network time remains pending while alarm rings");
+    expect_true(time.flushDeferredNetworkTime(false) && clock.wrote &&
+                    clock.last_written == 1100 && !time.networkSyncPending(),
+                "deferred network time writes rtc after alarm closes");
+}
+
+class FakeWifiRadio : public firefly::WifiRadio {
+public:
+    bool connectStation(const char * ssid, const char * password) override {
+        ++connect_calls;
+        strlcpy(last_ssid, ssid ? ssid : "", sizeof(last_ssid));
+        strlcpy(last_password, password ? password : "", sizeof(last_password));
+        return connect_result;
+    }
+
+    void useMinimumModemPowerSave() override {
+        ++power_save_calls;
+    }
+
+    void disconnectAndPowerOff() override {
+        ++power_off_calls;
+    }
+
+    firefly::WifiLinkState linkState() const override {
+        return link_state;
+    }
+
+    bool connect_result = true;
+    firefly::WifiLinkState link_state = firefly::WifiLinkState::Connecting;
+    uint8_t connect_calls = 0;
+    uint8_t power_save_calls = 0;
+    uint8_t power_off_calls = 0;
+    char last_ssid[33]{};
+    char last_password[65]{};
+};
+
+class FakeWifiCredentialStore : public firefly::WifiCredentialStore {
+public:
+    bool loadWifiCredentials(firefly::WifiCredentials & output) override {
+        output = saved;
+        return load_result;
+    }
+
+    bool saveWifiCredentials(
+        const firefly::WifiCredentials & credentials) override {
+        ++save_calls;
+        if(!save_result) return false;
+        saved = credentials;
+        return true;
+    }
+
+    bool clearWifiCredentials() override {
+        ++clear_calls;
+        saved = {};
+        return clear_result;
+    }
+
+    firefly::WifiCredentials saved{};
+    bool load_result = true;
+    bool save_result = true;
+    bool clear_result = true;
+    uint8_t save_calls = 0;
+    uint8_t clear_calls = 0;
+};
+
+static uint16_t build_wifi_provision_payload(
+    uint8_t * output,
+    size_t capacity,
+    int64_t expires_epoch,
+    const uint8_t nonce[8],
+    const char * ssid,
+    const char * password) {
+    const size_t ssid_length = strlen(ssid);
+    const size_t password_length = strlen(password);
+    const size_t required = 19 + ssid_length + password_length;
+    if(capacity < required) return 0;
+    size_t offset = 0;
+    output[offset++] = 1;
+    for(uint8_t index = 0; index < 8; ++index) {
+        output[offset++] = static_cast<uint8_t>(
+            (static_cast<uint64_t>(expires_epoch) >> (index * 8)) & 0xFF
+        );
+    }
+    memcpy(output + offset, nonce, 8);
+    offset += 8;
+    output[offset++] = static_cast<uint8_t>(ssid_length);
+    memcpy(output + offset, ssid, ssid_length);
+    offset += ssid_length;
+    output[offset++] = static_cast<uint8_t>(password_length);
+    memcpy(output + offset, password, password_length);
+    offset += password_length;
+    return static_cast<uint16_t>(offset);
+}
+
+static uint16_t build_wifi_provision_payload_v2(
+    uint8_t * output,
+    size_t capacity,
+    uint8_t ttl_seconds,
+    const uint8_t nonce[8],
+    const char * ssid,
+    const char * password) {
+    const size_t ssid_length = strlen(ssid);
+    const size_t password_length = strlen(password);
+    const size_t required = 12 + ssid_length + password_length;
+    if(capacity < required) return 0;
+    size_t offset = 0;
+    output[offset++] = 2;
+    output[offset++] = ttl_seconds;
+    memcpy(output + offset, nonce, 8);
+    offset += 8;
+    output[offset++] = static_cast<uint8_t>(ssid_length);
+    memcpy(output + offset, ssid, ssid_length);
+    offset += ssid_length;
+    output[offset++] = static_cast<uint8_t>(password_length);
+    memcpy(output + offset, password, password_length);
+    offset += password_length;
+    return static_cast<uint16_t>(offset);
+}
+
+static void test_wifi_provisioning_v2_uses_monotonic_ttl_without_rtc() {
+    FakeWifiRadio radio;
+    FakeWifiCredentialStore store;
+    firefly::PowerService power;
+    firefly::BatteryState battery{};
+    battery.valid = true;
+    battery.percent = 80;
+    power.setBatteryState(battery);
+    firefly::WifiService wifi(radio, power, store);
+    const uint8_t nonce[8] = {3, 1, 4, 1, 5, 9, 2, 6};
+    uint8_t payload[128]{};
+    expect_true(!wifi.stageProvisioning(payload, 0, 999, 0),
+                "zero-length provisioning payload is rejected safely");
+    uint16_t length = build_wifi_provision_payload_v2(
+        payload, sizeof(payload), 60, nonce, "First-Boot", "secret");
+    expect_true(wifi.stageProvisioning(payload, length, 1000, 0),
+                "v2 provisioning accepts a monotonic TTL without RTC");
+    expect_true(wifi.confirmProvisioning(false, 1001),
+                "v2 first-boot provisioning can leave the confirmation gate");
+    expect_true(!wifi.stageProvisioning(payload, length, 1002, 0),
+                "v2 nonce cannot be replayed during its monotonic window");
+
+    payload[1] = 0;
+    expect_true(!wifi.stageProvisioning(payload, length, 1003, 0),
+                "v2 rejects a zero TTL");
+    payload[1] = 61;
+    expect_true(!wifi.stageProvisioning(payload, length, 1004, 0),
+                "v2 rejects TTL beyond sixty seconds");
+
+    expect_true(wifi.clearSensitiveState(),
+                "factory-reset hook clears Wi-Fi sensitive state");
+    payload[1] = 60;
+    expect_true(wifi.stageProvisioning(payload, length, 1005, 0),
+                "sensitive-state cleanup clears the nonce replay cache");
+    expect_true(wifi.confirmProvisioning(false, 1006),
+                "post-cleanup request can leave the confirmation gate");
+
+    expect_true(wifi.clearSensitiveState(),
+                "nonce capacity test starts from an empty cache");
+    for(uint8_t index = 0; index < firefly::WifiService::kRememberedNonces;
+        ++index) {
+        uint8_t unique_nonce[8] = {index, 2, 3, 4, 5, 6, 7, 8};
+        length = build_wifi_provision_payload_v2(
+            payload, sizeof(payload), 60, unique_nonce,
+            "Capacity", "secret");
+        expect_true(wifi.stageProvisioning(payload, length, 2000, 0) &&
+                        wifi.confirmProvisioning(false, 2000),
+                    "each live nonce occupies one fixed cache slot");
+    }
+    uint8_t overflow_nonce[8] = {99, 2, 3, 4, 5, 6, 7, 8};
+    length = build_wifi_provision_payload_v2(
+        payload, sizeof(payload), 60, overflow_nonce, "Capacity", "secret");
+    expect_true(!wifi.stageProvisioning(payload, length, 2001, 0),
+                "a ninth live nonce is rejected instead of evicting replay history");
+    expect_true(wifi.stageProvisioning(payload, length, 62001, 0),
+                "an expired nonce slot can be reused safely");
+    expect_true(wifi.confirmProvisioning(false, 62001),
+                "reused nonce slot leaves the confirmation gate");
+
+    expect_true(wifi.clearSensitiveState(),
+                "short TTL confirmation test starts clean");
+    uint8_t short_nonce[8] = {7, 7, 7, 7, 7, 7, 7, 7};
+    length = build_wifi_provision_payload_v2(
+        payload, sizeof(payload), 1, short_nonce, "Short", "secret");
+    expect_true(wifi.stageProvisioning(payload, length, 70000, 0),
+                "short TTL request enters the confirmation gate");
+    wifi.tick(71001);
+    expect_true(wifi.provisioningSnapshot().status ==
+                    firefly::WifiProvisioningStatus::Timeout &&
+                    !wifi.confirmProvisioning(false, 71001),
+                "unanswered confirmation expires without a user callback");
+    uint8_t next_nonce[8] = {8, 7, 6, 5, 4, 3, 2, 1};
+    length = build_wifi_provision_payload_v2(
+        payload, sizeof(payload), 60, next_nonce, "After timeout", "secret");
+    expect_true(wifi.stageProvisioning(payload, length, 71002, 0),
+                "a later request is accepted after proactive expiry");
+    wifi.confirmProvisioning(false, 71002);
+}
+
+static void test_wifi_provisioning_is_confirmed_and_persisted_after_connect() {
+    FakeWifiRadio radio;
+    FakeWifiCredentialStore store;
+    firefly::PowerService power;
+    firefly::BatteryState battery{};
+    battery.valid = true;
+    battery.percent = 80;
+    power.setBatteryState(battery);
+    firefly::WifiService wifi(radio, power, store);
+
+    const uint8_t nonce[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    uint8_t payload[128]{};
+    const uint16_t length = build_wifi_provision_payload(
+        payload, sizeof(payload), 1060, nonce, "Firefly-Lab", "secret"
+    );
+    expect_true(wifi.stageProvisioning(payload, length, 1000, 1000),
+                "authenticated Wi-Fi payload is staged");
+    const firefly::WifiProvisioningSnapshot pending =
+        wifi.provisioningSnapshot();
+    expect_true(pending.status == firefly::WifiProvisioningStatus::AwaitingUser &&
+                    strcmp(pending.ssid, "Firefly-Lab") == 0 &&
+                    store.save_calls == 0,
+                "staged Wi-Fi request hides password and is not persisted");
+
+    expect_true(wifi.confirmProvisioning(true, 1010),
+                "watch confirmation starts Wi-Fi connection");
+    expect_true(wifi.provisioningSnapshot().status ==
+                    firefly::WifiProvisioningStatus::Connecting &&
+                    store.save_calls == 0,
+                "credentials remain volatile while connecting");
+    radio.link_state = firefly::WifiLinkState::Connected;
+    wifi.tick(1020);
+    expect_true(store.save_calls == 1 && store.saved.valid &&
+                    strcmp(store.saved.ssid, "Firefly-Lab") == 0 &&
+                    strcmp(store.saved.password, "secret") == 0 &&
+                    wifi.provisioningSnapshot().status ==
+                        firefly::WifiProvisioningStatus::Success &&
+                    wifi.mode() == firefly::WifiMode::Off,
+                "successful connection atomically persists then powers off");
+
+    const uint8_t forget_payload[2] = {1, 0};
+    expect_true(wifi.stageProvisioning(forget_payload, sizeof(forget_payload),
+                                       2000, 1000) &&
+                    wifi.provisioningSnapshot().status ==
+                        firefly::WifiProvisioningStatus::AwaitingForget,
+                "forget network requires an on-watch confirmation");
+    expect_true(wifi.confirmProvisioning(true, 2010) &&
+                    wifi.provisioningSnapshot().status ==
+                        firefly::WifiProvisioningStatus::Forgotten &&
+                    store.clear_calls == 1 && !wifi.provisioned(),
+                "confirmed forget clears durable and in-memory credentials");
+}
+
+static void test_wifi_provisioning_rejects_expired_duplicate_and_unconfirmed() {
+    FakeWifiRadio radio;
+    FakeWifiCredentialStore store;
+    firefly::PowerService power;
+    firefly::BatteryState battery{};
+    battery.valid = true;
+    battery.percent = 80;
+    power.setBatteryState(battery);
+    firefly::WifiService wifi(radio, power, store);
+    const uint8_t nonce[8] = {9, 8, 7, 6, 5, 4, 3, 2};
+    uint8_t payload[128]{};
+
+    uint16_t length = build_wifi_provision_payload(
+        payload, sizeof(payload), 999, nonce, "Expired", "secret"
+    );
+    expect_true(!wifi.stageProvisioning(payload, length, 0, 1000),
+                "expired provisioning nonce is rejected");
+    length = build_wifi_provision_payload(
+        payload, sizeof(payload), 1061, nonce, "TooFar", "secret"
+    );
+    expect_true(!wifi.stageProvisioning(payload, length, 0, 1000),
+                "nonce beyond sixty seconds is rejected");
+    length = build_wifi_provision_payload(
+        payload, sizeof(payload), 1060, nonce, "Firefly-Lab", "secret"
+    );
+    expect_true(wifi.stageProvisioning(payload, length, 0, 1000),
+                "fresh nonce is accepted once");
+    expect_true(wifi.confirmProvisioning(false, 1) && store.save_calls == 0,
+                "user denial discards credentials without persistence");
+    expect_true(!wifi.stageProvisioning(payload, length, 2, 1000),
+                "duplicate nonce cannot be replayed");
+}
+
+static void test_wifi_provisioning_rejects_busy_replay_and_failed_forget() {
+    FakeWifiRadio radio;
+    FakeWifiCredentialStore store;
+    firefly::PowerService power;
+    firefly::BatteryState battery{};
+    battery.valid = true;
+    battery.percent = 80;
+    power.setBatteryState(battery);
+    firefly::WifiService wifi(radio, power, store);
+    const uint8_t nonce_a[8] = {1, 1, 1, 1, 1, 1, 1, 1};
+    const uint8_t nonce_b[8] = {2, 2, 2, 2, 2, 2, 2, 2};
+    uint8_t first[128]{};
+    uint8_t second[128]{};
+    const uint16_t first_length = build_wifi_provision_payload(
+        first, sizeof(first), 1060, nonce_a, "Network-A", "password-a"
+    );
+    const uint16_t second_length = build_wifi_provision_payload(
+        second, sizeof(second), 1060, nonce_b, "Network-B", "password-b"
+    );
+    expect_true(wifi.stageProvisioning(first, first_length, 0, 1000),
+                "first provisioning request enters the confirmation gate");
+    expect_true(!wifi.stageProvisioning(second, second_length, 1, 1000) &&
+                    wifi.provisioningSnapshot().status ==
+                        firefly::WifiProvisioningStatus::AwaitingUser,
+                "a second request cannot overwrite an in-flight credential");
+    expect_true(wifi.confirmProvisioning(false, 2),
+                "denying the first request clears the busy gate");
+    expect_true(wifi.stageProvisioning(second, second_length, 3, 1000),
+                "a distinct nonce is accepted after the first request ends");
+    expect_true(wifi.confirmProvisioning(false, 4),
+                "the second request can be denied independently");
+    expect_true(!wifi.stageProvisioning(first, first_length, 5, 1000),
+                "A-B-A replay is rejected for the full nonce window");
+
+    expect_true(wifi.provision("Persisted", "secret"),
+                "a saved network is available for forget failure coverage");
+    store.saved.valid = true;
+    strlcpy(store.saved.ssid, "Persisted", sizeof(store.saved.ssid));
+    strlcpy(store.saved.password, "secret", sizeof(store.saved.password));
+    store.clear_result = false;
+    const uint8_t forget_payload[2] = {1, 0};
+    expect_true(wifi.stageProvisioning(forget_payload, sizeof(forget_payload),
+                                       10, 1000),
+                "forget request still requires confirmation");
+    expect_true(!wifi.confirmProvisioning(true, 11) &&
+                    wifi.provisioningSnapshot().status ==
+                        firefly::WifiProvisioningStatus::PersistenceFailed &&
+                    store.saved.valid && !wifi.provisioned(),
+                "failed durable deletion is reported while RAM secrets are cleared");
+}
+
+static void test_wifi_soft_ap_requires_exclusive_idle_radio() {
+    FakeWifiRadio radio;
+    firefly::PowerService power;
+    firefly::BatteryState battery{};
+    battery.valid = true;
+    battery.percent = 80;
+    power.setBatteryState(battery);
+    firefly::WifiService wifi(radio, power);
+    expect_true(wifi.provision("Firefly Lab", "secret"),
+                "station credentials are available");
+    expect_true(wifi.request(firefly::WifiPurpose::Weather, 1000),
+                "weather owns the station session");
+    expect_true(!wifi.beginSoftApSession(firefly::WifiPurpose::Transfer, 1001) &&
+                    wifi.active(firefly::WifiPurpose::Weather) &&
+                    wifi.mode() == firefly::WifiMode::Connecting,
+                "SoftAP cannot replace or strand an active station purpose");
+    wifi.release(firefly::WifiPurpose::Weather, 1002);
+    const uint8_t station_connects = radio.connect_calls;
+    const uint8_t nonce_a[8] = {4, 3, 2, 1, 8, 7, 6, 5};
+    uint8_t payload[128]{};
+    uint16_t length = build_wifi_provision_payload_v2(
+        payload, sizeof(payload), 60, nonce_a, "Replacement", "secret-2");
+    expect_true(wifi.stageProvisioning(payload, length, 1003, 0),
+                "credential replacement can await confirmation while radio is idle");
+    expect_true(wifi.beginSoftApSession(firefly::WifiPurpose::Transfer, 1003),
+                "transfer can start SoftAP after the station releases");
+    expect_true(!wifi.request(firefly::WifiPurpose::Ntp, 1004) &&
+                    !wifi.request(firefly::WifiPurpose::Weather, 1004) &&
+                    wifi.mode() == firefly::WifiMode::SoftAp &&
+                    wifi.active(firefly::WifiPurpose::Transfer) &&
+                    radio.connect_calls == station_connects,
+                "station requests cannot preempt or restart an active SoftAP");
+    expect_true(!wifi.confirmProvisioning(true, 1005) &&
+                    wifi.provisioningSnapshot().status ==
+                        firefly::WifiProvisioningStatus::Busy &&
+                    wifi.mode() == firefly::WifiMode::SoftAp &&
+                    radio.connect_calls == station_connects,
+                "confirmed provisioning cannot tear down an active SoftAP");
+    wifi.release(firefly::WifiPurpose::Transfer, 1006);
+
+    const uint8_t nonce_b[8] = {5, 3, 2, 1, 8, 7, 6, 4};
+    length = build_wifi_provision_payload_v2(
+        payload, sizeof(payload), 60, nonce_b, "Replacement", "secret-3");
+    expect_true(wifi.stageProvisioning(payload, length, 1007, 0) &&
+                    wifi.request(firefly::WifiPurpose::Transfer, 1008),
+                "shared-LAN transfer can race a staged confirmation");
+    const uint8_t shared_connects = radio.connect_calls;
+    expect_true(!wifi.confirmProvisioning(true, 1009) &&
+                    wifi.provisioningSnapshot().status ==
+                        firefly::WifiProvisioningStatus::Busy &&
+                    wifi.mode() == firefly::WifiMode::Connecting &&
+                    wifi.active(firefly::WifiPurpose::Transfer) &&
+                    radio.connect_calls == shared_connects,
+                "confirmed provisioning cannot replace an active shared-LAN session");
+    wifi.release(firefly::WifiPurpose::Transfer, 1010);
+}
+
+static void test_wifi_inactive_error_state_allows_recovery() {
+    FakeWifiRadio radio;
+    FakeWifiCredentialStore store;
+    firefly::PowerService power;
+    firefly::BatteryState battery{};
+    battery.valid = true;
+    battery.percent = 80;
+    power.setBatteryState(battery);
+    firefly::WifiService wifi(radio, power, store);
+    expect_true(wifi.provision("Broken", "secret") &&
+                    wifi.request(firefly::WifiPurpose::Weather, 2000),
+                "failed-station recovery begins from a provisioned request");
+    radio.link_state = firefly::WifiLinkState::AuthFailed;
+    wifi.tick(2001);
+    expect_true(wifi.mode() == firefly::WifiMode::Error,
+                "station authentication failure remains observable");
+    expect_true(wifi.beginSoftApSession(firefly::WifiPurpose::Transfer, 2002) &&
+                    wifi.mode() == firefly::WifiMode::SoftAp,
+                "inactive Error normalizes before direct SoftAP recovery");
+    wifi.release(firefly::WifiPurpose::Transfer, 2003);
+
+    radio.link_state = firefly::WifiLinkState::Connecting;
+    expect_true(wifi.request(firefly::WifiPurpose::Weather, 2010),
+                "station may be retried after SoftAP recovery");
+    radio.link_state = firefly::WifiLinkState::AuthFailed;
+    wifi.tick(2011);
+    const uint8_t nonce[8] = {9, 1, 2, 3, 4, 5, 6, 7};
+    uint8_t payload[128]{};
+    const uint16_t length = build_wifi_provision_payload_v2(
+        payload, sizeof(payload), 60, nonce, "Replacement", "secret-2");
+    expect_true(wifi.stageProvisioning(payload, length, 2012, 0) &&
+                    wifi.confirmProvisioning(true, 2013) &&
+                    wifi.mode() == firefly::WifiMode::Connecting,
+                "inactive Error permits confirmed credential replacement");
+    radio.link_state = firefly::WifiLinkState::Connected;
+    wifi.tick(2014);
+    expect_true(wifi.provisioningSnapshot().status ==
+                    firefly::WifiProvisioningStatus::Success,
+                "replacement credentials complete normal persistence");
+
+    radio.link_state = firefly::WifiLinkState::Connecting;
+    expect_true(wifi.request(firefly::WifiPurpose::Weather, 2020),
+                "saved replacement can enter another station attempt");
+    radio.link_state = firefly::WifiLinkState::NotFound;
+    wifi.tick(2021);
+    const uint8_t forget_payload[2] = {1, 0};
+    expect_true(wifi.stageProvisioning(forget_payload, sizeof(forget_payload),
+                                       2022, 0) &&
+                    wifi.confirmProvisioning(true, 2023) &&
+                    wifi.provisioningSnapshot().status ==
+                        firefly::WifiProvisioningStatus::Forgotten &&
+                    !wifi.provisioned(),
+                "inactive Error permits confirmed forget recovery");
+}
+
+class FakeWeatherCacheStore : public firefly::WeatherCacheStore {
+public:
+    bool load(firefly::WeatherSnapshot & output,
+              firefly::WeatherSource & source) override {
+        output = saved;
+        source = saved_source;
+        return load_result;
+    }
+
+    bool save(const firefly::WeatherSnapshot & snapshot,
+              firefly::WeatherSource source) override {
+        ++save_calls;
+        saved = snapshot;
+        saved_source = source;
+        return save_result;
+    }
+
+    firefly::WeatherSnapshot saved{};
+    firefly::WeatherSource saved_source = firefly::WeatherSource::None;
+    bool load_result = true;
+    bool save_result = true;
+    uint8_t save_calls = 0;
+};
+
+static uint16_t build_weather_payload(uint8_t * output,
+                                      size_t capacity,
+                                      const char * city,
+                                      int16_t current,
+                                      int16_t high,
+                                      int16_t low,
+                                      uint16_t code,
+                                      int64_t updated_epoch) {
+    const size_t city_length = strlen(city);
+    if(city_length == 0 || city_length > 31 ||
+       capacity < 18 + city_length) return 0;
+    output[0] = 1;
+    output[1] = static_cast<uint8_t>(city_length);
+    output[2] = static_cast<uint8_t>(code & 0xFF);
+    output[3] = static_cast<uint8_t>((code >> 8) & 0xFF);
+    const int16_t values[3] = {current, high, low};
+    for(uint8_t value = 0; value < 3; ++value) {
+        const uint16_t raw = static_cast<uint16_t>(values[value]);
+        output[4 + value * 2] = static_cast<uint8_t>(raw & 0xFF);
+        output[5 + value * 2] = static_cast<uint8_t>((raw >> 8) & 0xFF);
+    }
+    for(uint8_t index = 0; index < 8; ++index) {
+        output[10 + index] = static_cast<uint8_t>(
+            (static_cast<uint64_t>(updated_epoch) >> (index * 8)) & 0xFF
+        );
+    }
+    memcpy(output + 18, city, city_length);
+    return static_cast<uint16_t>(18 + city_length);
+}
+
+static void test_weather_phone_payload_cache_and_freshness() {
+    FakeWeatherCacheStore cache;
+    firefly::WeatherService weather(cache);
+    uint8_t payload[64]{};
+    const uint16_t length = build_weather_payload(
+        payload, sizeof(payload), "Shenzhen", 255, 301, 220, 2, 1000
+    );
+    expect_true(weather.applyPhonePayload(payload, length, 1060),
+                "valid phone weather payload is cached");
+    expect_true(cache.save_calls == 1 &&
+                    weather.source() == firefly::WeatherSource::Phone &&
+                    strcmp(weather.snapshot(1060).city, "Shenzhen") == 0,
+                "phone weather is the unified preferred source");
+    expect_true(weather.freshness(1000 + 3 * 60 * 60) ==
+                    firefly::WeatherFreshness::Fresh,
+                "weather remains fresh through exactly three hours");
+    expect_true(weather.freshness(1001 + 3 * 60 * 60) ==
+                    firefly::WeatherFreshness::Stale,
+                "weather becomes stale after three hours");
+    const firefly::WeatherSnapshot old =
+        weather.snapshot(1001 + 24 * 60 * 60);
+    expect_true(old.valid && old.stale &&
+                    weather.freshness(1001 + 24 * 60 * 60) ==
+                        firefly::WeatherFreshness::Old,
+                "weather older than twenty four hours remains visibly old");
+
+    payload[4] = 0xB0;
+    payload[5] = 0x04;
+    expect_true(!weather.applyPhonePayload(payload, length, 1060),
+                "extreme phone temperature is rejected");
+}
+
+static void test_weather_open_meteo_bounds_and_source_switching() {
+    FakeWeatherCacheStore cache;
+    firefly::WeatherService weather(cache);
+    uint8_t payload[64]{};
+    const uint16_t length = build_weather_payload(
+        payload, sizeof(payload), "Shenzhen", 255, 301, 220, 2, 1000
+    );
+    expect_true(weather.applyPhonePayload(payload, length, 1000),
+                "phone source staged for priority test");
+    const char response[] =
+        "{\"current_units\":{\"temperature_2m\":\"degC\","
+        "\"weather_code\":\"wmo code\"},"
+        "\"current\":{\"temperature_2m\":18.5,\"weather_code\":61},"
+        "\"daily_units\":{\"temperature_2m_max\":\"degC\","
+        "\"temperature_2m_min\":\"degC\"},"
+        "\"daily\":{\"temperature_2m_max\":[21.2,22],"
+        "\"temperature_2m_min\":[12.4,13]}}";
+    firefly::WeatherSnapshot parsed{};
+    expect_true(firefly::WeatherService::parseOpenMeteoJson(
+                    response, strlen(response), "Shenzhen", 1200, parsed),
+                "bounded Open-Meteo response parses required fields");
+    expect_true(parsed.temperature_tenths_c == 185 &&
+                    parsed.high_tenths_c == 212 &&
+                    parsed.low_tenths_c == 124 && parsed.weather_code == 61,
+                "Open-Meteo values convert to unified tenths model");
+    expect_true(!weather.applyDirectSnapshot(parsed, 2000),
+                "fresh phone weather is not overwritten by direct fallback");
+    expect_true(weather.applyDirectSnapshot(parsed, 1001 + 3 * 60 * 60),
+                "stale phone weather may switch to direct fallback");
+    expect_true(weather.source() == firefly::WeatherSource::Direct,
+                "direct fallback source is recorded");
+    expect_true(!firefly::WeatherService::parseOpenMeteoJson(
+                    "{}", 2, "Shenzhen", 1200, parsed),
+                "missing Open-Meteo fields are rejected");
+    expect_true(!firefly::WeatherService::parseOpenMeteoJson(
+                    response, firefly::WeatherService::kMaxResponseBytes + 1,
+                    "Shenzhen", 1200, parsed),
+                "responses above eight kilobytes are rejected before parsing");
+}
+
+class FakeWeatherDeadlineClock : public firefly::WeatherDeadlineClock {
+public:
+    uint32_t nowMs() const override { return now_ms; }
+    void idle() override { now_ms += idle_step_ms; }
+    uint32_t now_ms = 0;
+    uint32_t idle_step_ms = 1;
+};
+
+class FakeWeatherResponseStream : public firefly::WeatherResponseStream {
+public:
+    FakeWeatherResponseStream(const char * data,
+                              FakeWeatherDeadlineClock & clock,
+                              uint32_t byte_interval_ms = 0)
+        : data_(data), length_(strlen(data)), clock_(clock),
+          byte_interval_ms_(byte_interval_ms) {}
+    bool connected() override { return index_ < length_; }
+    int available() override {
+        return index_ < length_ && clock_.now_ms >= next_byte_ms_ ? 1 : 0;
+    }
+    int read() override {
+        if(available() == 0) return -1;
+        const uint8_t value = static_cast<uint8_t>(data_[index_++]);
+        next_byte_ms_ = clock_.now_ms + byte_interval_ms_;
+        return value;
+    }
+private:
+    const char * data_ = nullptr;
+    size_t length_ = 0;
+    FakeWeatherDeadlineClock & clock_;
+    uint32_t byte_interval_ms_ = 0;
+    uint32_t next_byte_ms_ = 0;
+    size_t index_ = 0;
+};
+
+static void test_weather_http_reader_enforces_absolute_deadline() {
+    const char response[] =
+        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}";
+    char output[32]{};
+    size_t output_length = 0;
+    int status_code = 0;
+    FakeWeatherDeadlineClock fast_clock;
+    FakeWeatherResponseStream fast_stream(response, fast_clock);
+    expect_true(firefly::WeatherHttpResponseReader::read(
+                    fast_stream, fast_clock, 15000, output, sizeof(output),
+                    output_length, status_code) &&
+                    status_code == 200 && output_length == 2 &&
+                    strcmp(output, "{}") == 0,
+                "bounded HTTP reader accepts a complete fixed-length body");
+
+    FakeWeatherDeadlineClock slow_clock;
+    FakeWeatherResponseStream slow_stream(response, slow_clock, 1000);
+    output_length = 0;
+    status_code = 0;
+    expect_true(!firefly::WeatherHttpResponseReader::read(
+                    slow_stream, slow_clock, 15000, output, sizeof(output),
+                    output_length, status_code) &&
+                    slow_clock.now_ms == 15000,
+                "slow-trickle headers cannot refresh the absolute deadline");
+
+    const char chunked_response[] =
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+        "2\r\n{}\r\n0\r\n\r\n";
+    FakeWeatherDeadlineClock chunked_clock;
+    FakeWeatherResponseStream chunked_stream(chunked_response, chunked_clock);
+    output_length = 0;
+    status_code = 0;
+    expect_true(firefly::WeatherHttpResponseReader::read(
+                    chunked_stream, chunked_clock, 15000, output,
+                    sizeof(output), output_length, status_code) &&
+                    output_length == 2 && strcmp(output, "{}") == 0,
+                "bounded HTTP reader decodes chunked weather bodies");
+
+    const char close_response[] = "HTTP/1.1 200 OK\r\n\r\n{}";
+    FakeWeatherDeadlineClock close_clock;
+    FakeWeatherResponseStream close_stream(close_response, close_clock);
+    output_length = 0;
+    status_code = 0;
+    expect_true(firefly::WeatherHttpResponseReader::read(
+                    close_stream, close_clock, 15000, output, sizeof(output),
+                    output_length, status_code) && output_length == 2,
+                "bounded HTTP reader accepts a clean close-delimited body");
+
+    const char short_response[] =
+        "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\n{}";
+    FakeWeatherDeadlineClock short_clock;
+    FakeWeatherResponseStream short_stream(short_response, short_clock);
+    output_length = 0;
+    status_code = 0;
+    expect_true(!firefly::WeatherHttpResponseReader::read(
+                    short_stream, short_clock, 15000, output, sizeof(output),
+                    output_length, status_code),
+                "short fixed-length weather bodies are rejected");
+}
+
+static bool decode_hex_fixture(const char * hex,
+                               uint8_t * output,
+                               size_t output_length) {
+    if(!hex || !output || strlen(hex) != output_length * 2) return false;
+    for(size_t index = 0; index < output_length; ++index) {
+        const char high = hex[index * 2];
+        const char low = hex[index * 2 + 1];
+        const auto nibble = [](char value) -> int {
+            if(value >= '0' && value <= '9') return value - '0';
+            if(value >= 'a' && value <= 'f') return value - 'a' + 10;
+            if(value >= 'A' && value <= 'F') return value - 'A' + 10;
+            return -1;
+        };
+        const int upper = nibble(high);
+        const int lower = nibble(low);
+        if(upper < 0 || lower < 0) return false;
+        output[index] = static_cast<uint8_t>((upper << 4) | lower);
+    }
+    return true;
+}
+
+static void test_update_manifest_canonical_signature_and_bounds() {
+    const char json[] =
+        "{\"schema\":1,\"product\":\"FireflyOS\","
+        "\"version\":\"0.1.1\",\"build\":101,\"min_build\":100,"
+        "\"size\":4096,"
+        "\"sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\","
+        "\"signature\":\"8a9e323b85716833dcf9fbe6db68503e7d7f5ca913d6a4e6723d8c0c41bf3eb71b0c0a01519fd092b428941bd00da4914416ab103c23299178c90ee2de1167d6\"}";
+    firefly::UpdateManifest manifest{};
+    expect_true(firefly::UpdateManifestCodec::parseJson(
+                    json, strlen(json), manifest),
+                "update manifest parses exact signed fields");
+    expect_true(manifest.schema == 1 && manifest.build == 101 &&
+                    manifest.min_build == 100 && manifest.size == 4096 &&
+                    strcmp(manifest.product, "FireflyOS") == 0 &&
+                    strcmp(manifest.version, "0.1.1") == 0,
+                "update manifest preserves strongly typed metadata");
+
+    const char canonical_hex[] =
+        "46464f5441310000010046697265666c794f5300000000000000302e312e3100"
+        "0000000000000000000065000000640000000010000011111111111111111111"
+        "1111111111111111111111111111111111111111111111111111";
+    uint8_t expected[firefly::UpdateManifestCodec::kCanonicalBytes]{};
+    uint8_t actual[firefly::UpdateManifestCodec::kCanonicalBytes]{};
+    expect_true(decode_hex_fixture(canonical_hex, expected, sizeof(expected)) &&
+                    firefly::UpdateManifestCodec::canonicalize(manifest, actual) &&
+                    memcmp(expected, actual, sizeof(actual)) == 0,
+                "firmware canonical manifest matches signer byte for byte");
+    expect_true(firefly::UpdateManifestCodec::verifySignature(
+                    manifest, firefly::kDevelopmentUpdatePublicKey),
+                "firmware accepts the P-256 golden signature");
+
+    manifest.build = 102;
+    expect_true(!firefly::UpdateManifestCodec::verifySignature(
+                    manifest, firefly::kDevelopmentUpdatePublicKey),
+                "metadata tampering invalidates the update signature");
+
+    const char duplicate[] =
+        "{\"schema\":1,\"product\":\"FireflyOS\",\"version\":\"0.1.1\","
+        "\"build\":101,\"build\":102,\"min_build\":100,\"size\":4096,"
+        "\"sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\","
+        "\"signature\":\"8a9e323b85716833dcf9fbe6db68503e7d7f5ca913d6a4e6723d8c0c41bf3eb71b0c0a01519fd092b428941bd00da4914416ab103c23299178c90ee2de1167d6\"}";
+    expect_true(!firefly::UpdateManifestCodec::parseJson(
+                    duplicate, strlen(duplicate), manifest),
+                "duplicate update manifest fields are rejected");
+
+    const char unknown[] =
+        "{\"schema\":1,\"product\":\"FireflyOS\",\"version\":\"0.1.1\","
+        "\"build\":101,\"min_build\":100,\"size\":4096,"
+        "\"sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\","
+        "\"signature\":\"8a9e323b85716833dcf9fbe6db68503e7d7f5ca913d6a4e6723d8c0c41bf3eb71b0c0a01519fd092b428941bd00da4914416ab103c23299178c90ee2de1167d6\","
+        "\"endpoint\":\"http://example.invalid\"}";
+    expect_true(!firefly::UpdateManifestCodec::parseJson(
+                    unknown, strlen(unknown), manifest),
+                "unknown update manifest fields are rejected");
+
+    char oversized[firefly::UpdateManifestCodec::kMaxJsonBytes + 2]{};
+    memset(oversized, ' ', sizeof(oversized));
+    oversized[0] = '{';
+    oversized[sizeof(oversized) - 2] = '}';
+    expect_true(!firefly::UpdateManifestCodec::parseJson(
+                    oversized, sizeof(oversized) - 1, manifest),
+                "oversized update manifest JSON is rejected before parsing");
+}
+
+class FakeUpdateSource : public firefly::UpdateSource {
+public:
+    firefly::UpdateIoResult open(const firefly::UpdateManifest &) override {
+        ++open_calls;
+        position = 0;
+        return open_result;
+    }
+    firefly::UpdateIoResult read(uint8_t * output,
+                                 size_t capacity,
+                                 size_t & output_length) override {
+        ++read_calls;
+        if(capacity > max_capacity) max_capacity = capacity;
+        output_length = 0;
+        if(read_result != firefly::UpdateIoResult::Ok) return read_result;
+        if(position >= length) return firefly::UpdateIoResult::End;
+        const size_t available = length - position;
+        const size_t count = available < capacity ? available : capacity;
+        memcpy(output, bytes + position, count);
+        position += count;
+        output_length = count;
+        return firefly::UpdateIoResult::Ok;
+    }
+    void close() override { ++close_calls; }
+
+    uint8_t bytes[16]{};
+    size_t length = 0;
+    size_t position = 0;
+    size_t max_capacity = 0;
+    uint8_t open_calls = 0;
+    uint8_t read_calls = 0;
+    uint8_t close_calls = 0;
+    firefly::UpdateIoResult open_result = firefly::UpdateIoResult::Ok;
+    firefly::UpdateIoResult read_result = firefly::UpdateIoResult::Ok;
+};
+
+class FakeUpdateWriter : public firefly::UpdateWriter {
+public:
+    bool begin(uint32_t size) override {
+        ++begin_calls;
+        declared_size = size;
+        return begin_result;
+    }
+    bool write(const uint8_t *, size_t size) override {
+        ++write_calls;
+        if(size > max_write) max_write = size;
+        written += size;
+        return write_result;
+    }
+    bool finish() override { ++finish_calls; return finish_result; }
+    bool selectForNextBoot() override {
+        ++select_calls;
+        return select_result;
+    }
+    void abort() override { ++abort_calls; }
+
+    uint32_t declared_size = 0;
+    size_t written = 0;
+    size_t max_write = 0;
+    uint8_t begin_calls = 0;
+    uint8_t write_calls = 0;
+    uint8_t finish_calls = 0;
+    uint8_t select_calls = 0;
+    uint8_t abort_calls = 0;
+    bool begin_result = true;
+    bool write_result = true;
+    bool finish_result = true;
+    bool select_result = true;
+};
+
+static firefly::UpdateManifest signed_four_byte_update() {
+    firefly::UpdateManifest manifest{};
+    manifest.schema = 1;
+    strcpy(manifest.product, "FireflyOS");
+    strcpy(manifest.version, "0.1.1");
+    manifest.build = 101;
+    manifest.min_build = 100;
+    manifest.size = 4;
+    decode_hex_fixture(
+        "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
+        manifest.sha256, sizeof(manifest.sha256));
+    decode_hex_fixture(
+        "2cdee97c59cbdd589e1066610b039753588b0cab68de028643ee565e318e2136"
+        "25cb59984584375dc41ca60716f6b31b1e238ff6c6882a74c4e8e172ce26b6f6",
+        manifest.ecdsa_p256_signature,
+        sizeof(manifest.ecdsa_p256_signature));
+    return manifest;
+}
+
+static firefly::UpdateRuntimeGate safe_update_gate() {
+    firefly::UpdateRuntimeGate gate{};
+    gate.battery_valid = true;
+    gate.battery_percent = 80;
+    return gate;
+}
+
+static void test_update_service_gates_streams_and_finalizes_once() {
+    firefly::UpdateManifest manifest = signed_four_byte_update();
+    firefly::UpdateRuntimeGate gate = safe_update_gate();
+
+    {
+        firefly::ResourceGovernor resources;
+        FakeUpdateWriter writer;
+        FakeUpdateSource source;
+        firefly::UpdateService updates(resources, writer, 100);
+        gate.battery_percent = 39;
+        expect_true(!updates.offer(manifest, source, gate, 1000) &&
+                        updates.snapshot().failure ==
+                            firefly::UpdateFailure::LowPower,
+                    "battery below 40 percent blocks OTA");
+        gate.battery_percent = 1;
+        gate.charging = true;
+        expect_true(updates.offer(manifest, source, gate, 1001),
+                    "charging explicitly exempts the OTA battery threshold");
+    }
+
+    {
+        firefly::ResourceGovernor resources;
+        FakeUpdateWriter writer;
+        FakeUpdateSource source;
+        firefly::UpdateService updates(resources, writer, 100);
+        gate = safe_update_gate();
+        gate.recording_active = true;
+        expect_true(!updates.offer(manifest, source, gate, 2000),
+                    "active recording blocks OTA");
+        expect_true(updates.snapshot().failure ==
+                        firefly::UpdateFailure::AudioBusy,
+                    "OTA exposes the exact audio gate");
+    }
+
+    {
+        firefly::ResourceGovernor resources;
+        FakeUpdateWriter writer;
+        FakeUpdateSource source;
+        source.bytes[0] = 1;
+        source.bytes[1] = 2;
+        source.bytes[2] = 3;
+        source.bytes[3] = 4;
+        source.length = 4;
+        firefly::UpdateService updates(resources, writer, 100);
+        gate = safe_update_gate();
+        expect_true(updates.offer(manifest, source, gate, 3000) &&
+                        updates.snapshot().state ==
+                            firefly::UpdateState::Available &&
+                        resources.held(firefly::ResourceKind::Ota),
+                    "valid signed update reserves the OTA resource");
+        expect_true(updates.start(gate, 3001),
+                    "available update starts with a consistent gate snapshot");
+        updates.tick(3002);
+        expect_true(updates.snapshot().processed == 4 &&
+                        writer.written == 4 &&
+                        source.max_capacity <= firefly::UpdateService::kChunkBytes &&
+                        writer.max_write <= firefly::UpdateService::kChunkBytes,
+                    "OTA streams bounded chunks into the inactive writer");
+        updates.tick(3003);
+        expect_true(updates.snapshot().state == firefly::UpdateState::Writing &&
+                        !updates.cancel(3003),
+                    "final boot selection phase cannot be cancelled");
+        updates.tick(3004);
+        const firefly::UpdateSnapshot complete = updates.snapshot();
+        expect_true(complete.state == firefly::UpdateState::RebootPending &&
+                        complete.progress_percent == 100 &&
+                        writer.finish_calls == 1 && writer.select_calls == 1 &&
+                        writer.abort_calls == 0 && source.close_calls == 1 &&
+                        !resources.held(firefly::ResourceKind::Ota),
+                    "verified OTA selects next boot and cleans up exactly once");
+        updates.tick(3005);
+        expect_true(writer.finish_calls == 1 && writer.select_calls == 1 &&
+                        source.close_calls == 1,
+                    "OTA terminal state wins and cleanup remains idempotent");
+    }
+
+    {
+        firefly::ResourceGovernor resources;
+        FakeUpdateWriter writer;
+        FakeUpdateSource source;
+        source.bytes[0] = 9;
+        source.bytes[1] = 9;
+        source.bytes[2] = 9;
+        source.bytes[3] = 9;
+        source.length = 4;
+        firefly::UpdateService updates(resources, writer, 100);
+        gate = safe_update_gate();
+        expect_true(updates.offer(manifest, source, gate, 4000) &&
+                        updates.start(gate, 4001),
+                    "hash mismatch fixture starts normally");
+        updates.tick(4002);
+        updates.tick(4003);
+        expect_true(updates.snapshot().state == firefly::UpdateState::Failed &&
+                        updates.snapshot().failure ==
+                            firefly::UpdateFailure::HashMismatch &&
+                        writer.select_calls == 0 && writer.abort_calls == 1,
+                    "hash mismatch aborts and never selects the target slot");
+    }
+}
+
+static void test_update_sources_are_managed_and_fail_closed() {
+    expect_true(firefly::SdUpdateSource::validManagedUpdatePath(
+                    "/FireflyOS/Updates/firefly-0.1.1.bin"),
+                "SD OTA source accepts one managed update filename");
+    expect_true(!firefly::SdUpdateSource::validManagedUpdatePath(
+                    "/FireflyOS/Music/firefly.bin") &&
+                    !firefly::SdUpdateSource::validManagedUpdatePath(
+                    "/FireflyOS/Updates/nested/firefly.bin") &&
+                    !firefly::SdUpdateSource::validManagedUpdatePath(
+                    "/FireflyOS/Updates/../firefly.bin") &&
+                    !firefly::SdUpdateSource::validManagedUpdatePath(
+                    "/FireflyOS/Updates/firefly..bin") &&
+                    !firefly::SdUpdateSource::validManagedUpdatePath(
+                    "/FireflyOS/Updates/firefly.bin.part"),
+                "SD OTA source rejects escaped, nested, and partial paths");
+    expect_true(!firefly::HttpsUpdateSource::configured(),
+                "HTTPS OTA source fails closed when no build endpoint exists");
+    expect_true(firefly::HttpsUpdateSource::validFilename("firefly-0.1.1.bin") &&
+                    !firefly::HttpsUpdateSource::validFilename("update.json") &&
+                    !firefly::HttpsUpdateSource::validFilename("../update.bin") &&
+                    !firefly::HttpsUpdateSource::validFilename("update.bin.part"),
+                "HTTPS package filenames are one safe final bin component");
+    expect_true(firefly::HttpsManifestSource::validFilename("update.json") &&
+                    !firefly::HttpsManifestSource::validFilename("update.bin") &&
+                    !firefly::HttpsManifestSource::validFilename("../update.json") &&
+                    !firefly::HttpsManifestSource::validFilename(
+                        "update.json.part"),
+                "HTTPS manifest filenames are one safe final json component");
+    expect_true(!firefly::HttpsManifestSource::configured() &&
+                    firefly::UpdateManifestCodec::kMaxJsonBytes <= 2048,
+                "HTTPS manifests fail closed and retain a fixed JSON bound");
+}
+
+class FakeUpdateManifestSource : public firefly::UpdateManifestSource {
+public:
+    firefly::UpdateIoResult fetch(firefly::UpdateManifest & output) override {
+        ++fetch_calls;
+        output = manifest;
+        return result;
+    }
+
+    firefly::UpdateManifest manifest{};
+    firefly::UpdateIoResult result = firefly::UpdateIoResult::Unavailable;
+    uint8_t fetch_calls = 0;
+};
+
+static void test_update_coordinator_prefers_sd_and_bounds_commands() {
+    firefly::PowerService power;
+    firefly::BatteryState battery{};
+    battery.valid = true;
+    battery.percent = 80;
+    power.setBatteryState(battery);
+    FakeWifiRadio radio;
+    firefly::WifiService wifi(radio, power);
+    firefly::ResourceGovernor resources;
+    FakeUpdateWriter writer;
+    FakeUpdateSource sd_package;
+    FakeUpdateSource https_package;
+    FakeUpdateManifestSource sd_manifest;
+    FakeUpdateManifestSource https_manifest;
+    firefly::UpdateService updates(resources, writer, 100);
+    firefly::UpdateCoordinator coordinator(
+        updates, wifi, sd_manifest, sd_package,
+        https_manifest, https_package);
+
+    sd_manifest.manifest = signed_four_byte_update();
+    sd_manifest.result = firefly::UpdateIoResult::Ok;
+    expect_true(coordinator.postCheck(),
+                "update coordinator accepts a bounded check command");
+    coordinator.runOnce(1000, safe_update_gate());
+    expect_true(sd_manifest.fetch_calls == 1 &&
+                    https_manifest.fetch_calls == 0 &&
+                    radio.connect_calls == 0 &&
+                    updates.snapshot().state == firefly::UpdateState::Available,
+                "SD manifest wins without starting Wi-Fi or HTTPS");
+
+    FakeUpdateWriter writer2;
+    firefly::UpdateService updates2(resources, writer2, 100);
+    FakeUpdateManifestSource unavailable_sd;
+    firefly::UpdateCoordinator no_endpoint(
+        updates2, wifi, unavailable_sd, sd_package,
+        https_manifest, https_package);
+    expect_true(no_endpoint.postCheck(),
+                "fallback discovery check is queued");
+    no_endpoint.runOnce(2000, safe_update_gate());
+    expect_true(updates2.snapshot().state == firefly::UpdateState::Blocked &&
+                    updates2.snapshot().failure ==
+                        firefly::UpdateFailure::NoHttpsEndpoint &&
+                    radio.connect_calls == 0,
+                "Development fails closed before Wi-Fi when HTTPS is absent");
+
+    FakeUpdateWriter writer3;
+    firefly::UpdateService updates3(resources, writer3, 100);
+    firefly::UpdateCoordinator bounded(
+        updates3, wifi, unavailable_sd, sd_package,
+        https_manifest, https_package);
+    bool first_four = true;
+    for(uint8_t index = 0; index <
+            firefly::UpdateCoordinator::kCommandCapacity; ++index) {
+        first_four = first_four && bounded.postCancel();
+    }
+    expect_true(first_four && !bounded.postCancel(),
+                "update coordinator rejects a fifth queued command");
+}
+
+class FakeBootValidationPlatform : public firefly::BootValidationPlatform {
+public:
+    bool pendingVerify() override { ++pending_calls; return pending; }
+    bool markValid() override { ++valid_calls; return valid_result; }
+    bool markInvalidAndRollback() override {
+        ++rollback_calls;
+        return rollback_result;
+    }
+
+    bool pending = false;
+    bool valid_result = true;
+    bool rollback_result = true;
+    uint8_t pending_calls = 0;
+    uint8_t valid_calls = 0;
+    uint8_t rollback_calls = 0;
+};
+
+static void submit_all_boot_checks(firefly::BootValidationService & service,
+                                   bool value = true) {
+    service.submit(firefly::BootCheck::Rtc, value);
+    service.submit(firefly::BootCheck::Pmu, value);
+    service.submit(firefly::BootCheck::Display, value);
+    service.submit(firefly::BootCheck::Touch, value);
+    service.submit(firefly::BootCheck::Nvs, value);
+    service.submit(firefly::BootCheck::MainUi, value);
+}
+
+static void test_boot_validation_is_pending_only_and_bounded() {
+    {
+        FakeBootValidationPlatform platform;
+        firefly::BootValidationService service(platform);
+        expect_true(!service.begin(1000) &&
+                        service.snapshot().state ==
+                            firefly::BootValidationState::Inactive,
+                    "normal boot leaves rollback APIs inactive");
+        submit_all_boot_checks(service);
+        for(uint8_t index = 0; index < 8; ++index) service.tick(1001 + index);
+        expect_true(platform.valid_calls == 0 && platform.rollback_calls == 0,
+                    "normal boot never marks OTA state");
+    }
+
+    {
+        FakeBootValidationPlatform platform;
+        platform.pending = true;
+        firefly::BootValidationService service(platform);
+        expect_true(service.begin(2000),
+                    "pending-verify image starts the six-check state machine");
+        submit_all_boot_checks(service);
+        for(uint8_t index = 0; index < 6; ++index) service.tick(2001 + index);
+        expect_true(service.snapshot().state ==
+                        firefly::BootValidationState::Valid &&
+                        platform.valid_calls == 1 && platform.rollback_calls == 0,
+                    "six successful checks mark the image valid exactly once");
+        service.tick(2010);
+        expect_true(platform.valid_calls == 1,
+                    "valid terminal state does not call OTA APIs again");
+    }
+
+    {
+        FakeBootValidationPlatform platform;
+        platform.pending = true;
+        firefly::BootValidationService service(platform);
+        service.begin(3000);
+        service.submit(firefly::BootCheck::Rtc, false);
+        service.tick(3001);
+        expect_true(service.snapshot().state ==
+                        firefly::BootValidationState::RollbackRequested &&
+                        platform.rollback_calls == 1 && platform.valid_calls == 0,
+                    "failed required check requests rollback immediately");
+    }
+
+    {
+        FakeBootValidationPlatform platform;
+        platform.pending = true;
+        platform.rollback_result = false;
+        firefly::BootValidationService service(platform);
+        service.begin(4000);
+        service.tick(4000 + firefly::BootValidationService::kDeadlineMs);
+        service.tick(4001 + firefly::BootValidationService::kDeadlineMs);
+        expect_true(service.snapshot().state ==
+                        firefly::BootValidationState::Error &&
+                        service.snapshot().failure ==
+                            firefly::BootValidationFailure::RollbackApiFailed &&
+                        platform.rollback_calls == 1,
+                    "rollback API failure becomes a stable non-repeating error");
+    }
+}
+
+class FakeDiagnosticExport : public firefly::DiagnosticExport {
+public:
+    bool begin() override { ++begin_calls; return begin_result; }
+    bool write(const firefly::DiagnosticRecord & record) override {
+        ++write_calls;
+        last_timestamp = record.timestamp_ms;
+        return write_result;
+    }
+    bool finish() override { ++finish_calls; return finish_result; }
+    void abort() override { ++abort_calls; }
+
+    bool begin_result = true;
+    bool write_result = true;
+    bool finish_result = true;
+    uint8_t begin_calls = 0;
+    uint8_t finish_calls = 0;
+    uint8_t abort_calls = 0;
+    uint16_t write_calls = 0;
+    uint32_t last_timestamp = 0;
+};
+
+static void test_diagnostics_ring_metrics_and_explicit_export() {
+    firefly::DiagnosticService diagnostics;
+    firefly::DiagnosticSample sample{};
+    sample.internal_free = 100000;
+    for(uint32_t index = 0; index < 65; ++index) {
+        diagnostics.record(index, firefly::DiagnosticReason::SessionBoundary,
+                           sample);
+    }
+    firefly::DiagnosticRecord oldest{};
+    firefly::DiagnosticRecord newest{};
+    expect_true(diagnostics.count() == 64 && diagnostics.at(0, oldest) &&
+                    diagnostics.at(63, newest) && oldest.timestamp_ms == 1 &&
+                    newest.timestamp_ms == 64,
+                "diagnostics ring overwrites only the oldest of 65 records");
+    expect_true(diagnostics.sampleMinute(1000, sample) &&
+                    !diagnostics.sampleMinute(60999, sample) &&
+                    diagnostics.sampleMinute(61000, sample),
+                "periodic diagnostics records at most once per minute");
+
+    FakeDiagnosticExport failed;
+    failed.write_result = false;
+    const uint8_t count_before = diagnostics.count();
+    expect_true(!diagnostics.exportTo(failed) && failed.abort_calls == 1 &&
+                    diagnostics.count() == count_before,
+                "failed explicit export preserves the RAM diagnostics ring");
+
+    FakeDiagnosticExport complete;
+    expect_true(diagnostics.exportTo(complete) &&
+                    complete.write_calls == diagnostics.count() &&
+                    complete.finish_calls == 1 && complete.abort_calls == 0,
+                "explicit export writes the bounded ring in stable order");
+
+    firefly::EventBus events;
+    firefly::SystemEvent event{};
+    event.priority = firefly::EventPriority::Normal;
+    for(uint8_t index = 0; index < firefly::EventBus::kCapacity; ++index) {
+        events.post(event);
+    }
+    expect_true(!events.post(event) &&
+                    events.peakSize() == firefly::EventBus::kCapacity &&
+                    events.droppedCount() == 1,
+                "event bus exposes bounded peak and saturated drop metrics");
+}
+
+class FakeFactoryResetOwners : public firefly::FactoryResetOwners {
+public:
+    bool clearPairing() override { ++pairing_calls; return pairing_ok; }
+    bool clearWifi() override { ++wifi_calls; return wifi_ok; }
+    bool clearNotifications() override { ++notification_calls; return true; }
+    bool clearWeather() override { ++weather_calls; return true; }
+    bool clearSettings() override { ++settings_calls; return settings_ok; }
+    bool clearCaches() override { ++cache_calls; return true; }
+    bool clearManagedSdRoot() override { ++sd_calls; return sd_ok; }
+
+    uint8_t pairing_calls = 0;
+    uint8_t wifi_calls = 0;
+    uint8_t notification_calls = 0;
+    uint8_t weather_calls = 0;
+    uint8_t settings_calls = 0;
+    uint8_t cache_calls = 0;
+    uint8_t sd_calls = 0;
+    bool pairing_ok = true;
+    bool wifi_ok = true;
+    bool settings_ok = true;
+    bool sd_ok = true;
+};
+
+class FakeFactoryResetRebooter : public firefly::FactoryResetRebooter {
+public:
+    bool requestReboot() override {
+        ++calls;
+        if(reentered_service) reentered_generation = reentered_service->beginRequest();
+        return result;
+    }
+    uint8_t calls = 0;
+    bool result = true;
+    firefly::FactoryResetService * reentered_service = nullptr;
+    uint32_t reentered_generation = 0;
+};
+
+static void test_factory_reset_defaults_to_keep_sd_and_requires_generation() {
+    {
+        FakeFactoryResetOwners owners;
+        FakeFactoryResetRebooter rebooter;
+        firefly::FactoryResetService reset(owners, rebooter);
+        const uint32_t generation = reset.beginRequest();
+        expect_true(generation != 0 && reset.confirmInternal(generation) &&
+                        reset.execute(false),
+                    "internal factory reset executes after first confirmation");
+        expect_true(owners.pairing_calls == 1 && owners.wifi_calls == 1 &&
+                        owners.notification_calls == 1 &&
+                        owners.weather_calls == 1 && owners.settings_calls == 1 &&
+                        owners.cache_calls == 1 && owners.sd_calls == 0 &&
+                        rebooter.calls == 1,
+                    "factory reset clears internal owners and keeps SD by default");
+    }
+
+    {
+        FakeFactoryResetOwners owners;
+        FakeFactoryResetRebooter rebooter;
+        firefly::FactoryResetService reset(owners, rebooter);
+        const uint32_t generation = reset.beginRequest();
+        expect_true(reset.confirmInternal(generation) &&
+                        !reset.confirmSdErase(generation + 1) &&
+                        !reset.execute(true) && owners.sd_calls == 0,
+                    "stale SD confirmation generation cannot erase managed data");
+        expect_true(reset.confirmSdErase(generation) && reset.execute(true) &&
+                        owners.sd_calls == 1,
+                    "current one-shot generation permits explicitly confirmed SD erase");
+    }
+
+    {
+        FakeFactoryResetOwners owners;
+        owners.settings_ok = false;
+        FakeFactoryResetRebooter rebooter;
+        firefly::FactoryResetService reset(owners, rebooter);
+        const uint32_t generation = reset.beginRequest();
+        reset.confirmInternal(generation);
+        expect_true(!reset.execute(false) && rebooter.calls == 0 &&
+                        reset.snapshot().state == firefly::FactoryResetState::Failed &&
+                        reset.snapshot().failure ==
+                            firefly::FactoryResetFailure::InternalClearFailed,
+                    "critical clear failure never reboots or reports completion");
+        const firefly::FactoryResetSnapshot terminal = reset.snapshot();
+        expect_true(!reset.execute(false) &&
+                        reset.snapshot().state == terminal.state &&
+                        reset.snapshot().failure == terminal.failure &&
+                        reset.snapshot().generation == terminal.generation,
+                    "a repeated execute cannot overwrite the first terminal result");
+    }
+
+    {
+        FakeFactoryResetOwners owners;
+        FakeFactoryResetRebooter rebooter;
+        firefly::FactoryResetService reset(owners, rebooter);
+        const uint32_t generation = reset.beginRequest();
+        expect_true(reset.confirmInternal(generation),
+                    "reentrant reset test reaches its confirmation gate");
+        rebooter.reentered_service = &reset;
+        expect_true(!reset.execute(false) && rebooter.reentered_generation != 0,
+                    "a newer request invalidates the older reboot completion");
+        const firefly::FactoryResetSnapshot current = reset.snapshot();
+        expect_true(current.state == firefly::FactoryResetState::Preview &&
+                        current.generation == rebooter.reentered_generation &&
+                        current.failure == firefly::FactoryResetFailure::None,
+                    "reboot callback cannot overwrite a newer reset generation");
+    }
+}
+
+static void test_hardware_capabilities_degrade_independently() {
+    firefly::HardwareCapabilities capabilities;
+    for(uint8_t index = 0;
+        index < static_cast<uint8_t>(firefly::HardwareDevice::Count);
+        ++index) {
+        capabilities.set(
+            static_cast<firefly::HardwareDevice>(index),
+            firefly::HardwareAvailability::Available,
+            firefly::HardwareFailure::None);
+    }
+
+    capabilities.set(firefly::HardwareDevice::Rtc,
+                     firefly::HardwareAvailability::Unavailable,
+                     firefly::HardwareFailure::NotDetected);
+    capabilities.set(firefly::HardwareDevice::Sd,
+                     firefly::HardwareAvailability::Degraded,
+                     firefly::HardwareFailure::IoFailure);
+    const firefly::HardwareCapabilitySnapshot snapshot = capabilities.snapshot();
+    expect_true(
+        snapshot.status[static_cast<uint8_t>(firefly::HardwareDevice::Rtc)] ==
+            firefly::HardwareAvailability::Unavailable &&
+        snapshot.failure[static_cast<uint8_t>(firefly::HardwareDevice::Rtc)] ==
+            firefly::HardwareFailure::NotDetected,
+        "RTC failure preserves explicit hardware failure code");
+    expect_true(
+        snapshot.status[static_cast<uint8_t>(firefly::HardwareDevice::Sd)] ==
+            firefly::HardwareAvailability::Degraded &&
+        capabilities.available(firefly::HardwareDevice::Sd),
+        "degraded SD remains explicitly usable");
+    expect_true(capabilities.available(firefly::HardwareDevice::Pmu) &&
+                    capabilities.available(firefly::HardwareDevice::Imu) &&
+                    capabilities.available(firefly::HardwareDevice::Codec) &&
+                    capabilities.available(firefly::HardwareDevice::Ble) &&
+                    capabilities.available(firefly::HardwareDevice::Wifi),
+                "one device failure does not disable unrelated capabilities");
+
+    firefly::NavigationController navigation;
+    expect_true(navigation.current() == firefly::Route::Lock &&
+                    navigation.open(firefly::Route::Home) &&
+                    navigation.current() == firefly::Route::Home,
+                "hardware degradation does not block Lock or Home navigation");
+}
+
+class FakeBulkStorage : public firefly::BulkTransferStorage {
+public:
+    bool beginSession() override { ++session_starts; return session_result; }
+    void endSession() override { ++session_ends; }
+    bool cardPresent() const override { return card_present; }
+    bool cardAvailable() const override { return card_available; }
+    uint64_t freeBytes() const override { return free_bytes; }
+    bool beginPart(const char * final_path, uint64_t declared_size) override {
+        ++begin_calls;
+        strlcpy(path, final_path ? final_path : "", sizeof(path));
+        expected_size = declared_size;
+        length = 0;
+        return begin_result;
+    }
+    bool append(const uint8_t * data, size_t size) override {
+        if(!append_result || length + size > sizeof(bytes)) return false;
+        memcpy(bytes + length, data, size);
+        length += size;
+        return true;
+    }
+    bool closePart() override { return close_result; }
+    bool commitPart() override { ++commit_calls; return commit_result; }
+    void removePart() override { ++remove_calls; length = 0; }
+
+    bool card_present = true;
+    bool card_available = true;
+    uint64_t free_bytes = 128ULL * 1024ULL * 1024ULL;
+    bool begin_result = true;
+    bool session_result = true;
+    bool append_result = true;
+    bool close_result = true;
+    bool commit_result = true;
+    uint8_t bytes[2048]{};
+    size_t length = 0;
+    uint64_t expected_size = 0;
+    uint8_t begin_calls = 0;
+    uint8_t commit_calls = 0;
+    uint8_t remove_calls = 0;
+    uint8_t session_starts = 0;
+    uint8_t session_ends = 0;
+    char path[192]{};
+};
+
+class FakeBulkTransport : public firefly::BulkTransferTransport {
+public:
+    bool startLan(firefly::BulkTransferSink & sink,
+                  const char * token_hex) override {
+        ++lan_calls;
+        active_sink = &sink;
+        strlcpy(token, token_hex, sizeof(token));
+        return start_result;
+    }
+    bool startSoftAp(firefly::BulkTransferSink & sink,
+                     const char * ssid,
+                     const char * password,
+                     const char * token_hex) override {
+        ++ap_calls;
+        active_sink = &sink;
+        strlcpy(ap_ssid, ssid, sizeof(ap_ssid));
+        strlcpy(ap_password, password, sizeof(ap_password));
+        strlcpy(token, token_hex, sizeof(token));
+        return start_result;
+    }
+    void poll(uint32_t now_ms) override { last_poll = now_ms; }
+    void stop() override { ++stop_calls; active_sink = nullptr; }
+    const char * endpoint() const override { return "http://192.168.4.1/upload"; }
+
+    firefly::BulkTransferSink * active_sink = nullptr;
+    bool start_result = true;
+    uint8_t lan_calls = 0;
+    uint8_t ap_calls = 0;
+    uint8_t stop_calls = 0;
+    uint32_t last_poll = 0;
+    char token[33]{};
+    char ap_ssid[24]{};
+    char ap_password[24]{};
+};
+
+static void deterministic_bulk_random(uint8_t * output, size_t length) {
+    for(size_t index = 0; index < length; ++index) {
+        output[index] = static_cast<uint8_t>(index + 1);
+    }
+}
+
+static void configure_bulk_request(firefly::BulkTransferRequest & request,
+                                   uint16_t request_id,
+                                   const char * path,
+                                   uint64_t declared_size,
+                                   const uint8_t digest[32],
+                                   bool prefer_shared_lan = false) {
+    request = {};
+    request.request_id = request_id;
+    request.prefer_shared_lan = prefer_shared_lan;
+    request.declared_size = declared_size;
+    strlcpy(request.managed_path, path, sizeof(request.managed_path));
+    memcpy(request.expected_sha256, digest, 32);
+}
+
+static void test_bulk_transfer_token_path_hash_and_atomic_commit() {
+    FakeBulkStorage storage;
+    FakeBulkTransport transport;
+    FakeWifiRadio radio;
+    firefly::PowerService power;
+    firefly::BatteryState battery{};
+    battery.valid = true;
+    battery.percent = 80;
+    power.setBatteryState(battery);
+    firefly::WifiService wifi(radio, power);
+    firefly::BulkTransferService bulk(storage, transport, power, wifi,
+                                       deterministic_bulk_random);
+    uint8_t data[1024]{};
+    for(size_t index = 0; index < sizeof(data); ++index) {
+        data[index] = static_cast<uint8_t>(index & 0xFF);
+    }
+    uint8_t digest[32]{};
+    mbedtls_sha256_ret(data, sizeof(data), digest, 0);
+    firefly::BulkTransferRequest request{};
+    configure_bulk_request(request, 10, "/FireflyOS/Pictures/test.bin",
+                           sizeof(data), digest);
+    request.audio_active = false;
+    request.ota_active = false;
+    expect_true(bulk.startSession(request, 1000),
+                "safe transfer request starts temporary soft ap");
+    expect_true(power.wifiSessionActive() &&
+                    bulk.snapshot().state ==
+                        firefly::BulkTransferState::WaitingForNetwork,
+                "accepted SoftAP transfer blocks sleep before worker startup");
+    bulk.tick(1000);
+    firefly::BulkTransferSnapshot session = bulk.snapshot();
+    expect_true(session.state == firefly::BulkTransferState::Ready &&
+                    session.request_id == 10 &&
+                    session.result_request_id == 10 &&
+                    session.result_generation >= 2 &&
+                    strlen(session.token_hex) == 32 && transport.ap_calls == 1,
+                "transfer exposes one bounded authenticated endpoint");
+
+    expect_true(!bulk.beginFile(session.token_hex, "../secret.bin",
+                                sizeof(data), digest, 1010) &&
+                    bulk.snapshot().state == firefly::BulkTransferState::Error &&
+                    bulk.snapshot().result_failure ==
+                        firefly::BulkTransferFailure::InvalidPath,
+                "directory traversal terminates with an exact correlated result");
+    bulk.tick(1011);
+    configure_bulk_request(request, 11, "/FireflyOS/Pictures/test.bin",
+                           sizeof(data), digest);
+    expect_true(bulk.startSession(request, 1012),
+                "a new transfer may start after invalid metadata cleanup");
+    bulk.tick(1012);
+    session = bulk.snapshot();
+    expect_true(bulk.beginFile(session.token_hex,
+                               "/FireflyOS/Pictures/test.bin",
+                               sizeof(data), digest, 1020),
+                "allowed managed path begins a part file");
+    expect_true(bulk.writeChunk(session.token_hex, data, 600, 1030) &&
+                    bulk.writeChunk(session.token_hex, data + 600, 424, 1040),
+                "bounded chunks stream without whole-file buffering");
+    expect_true(bulk.finishFile(session.token_hex, 1050) &&
+                    storage.commit_calls == 1 &&
+                    strcmp(storage.path,
+                           "/FireflyOS/Pictures/test.bin") == 0,
+                 "matching size and sha commit the part atomically");
+    expect_true(!bulk.cancelSession(11, 1051) &&
+                    bulk.snapshot().state ==
+                        firefly::BulkTransferState::Completed &&
+                    bulk.snapshot().result_state ==
+                        firefly::BulkTransferState::Completed,
+                "late cancellation cannot relabel an already committed file");
+    bulk.cancel(firefly::BulkTransferFailure::LowPower, 1052);
+    expect_true(bulk.snapshot().state ==
+                    firefly::BulkTransferState::Completed &&
+                    bulk.snapshot().result_failure ==
+                        firefly::BulkTransferFailure::None,
+                "post-commit resource shutdown preserves the completed result");
+    bulk.tick(2051);
+    configure_bulk_request(request, 12, "/FireflyOS/Pictures/next.bin",
+                           sizeof(data), digest);
+    expect_true(bulk.startSession(request, 2052),
+                "a completed transfer allows a new session after cleanup");
+    bulk.cancelSession(12, 2053);
+    bulk.tick(2053);
+}
+
+static void test_bulk_transfer_rejects_bad_hash_and_cleans_timeout() {
+    FakeBulkStorage storage;
+    FakeBulkTransport transport;
+    FakeWifiRadio radio;
+    firefly::PowerService power;
+    firefly::BatteryState battery{};
+    battery.valid = true;
+    battery.percent = 80;
+    power.setBatteryState(battery);
+    firefly::WifiService wifi(radio, power);
+    firefly::BulkTransferService bulk(storage, transport, power, wifi,
+                                       deterministic_bulk_random);
+    firefly::BulkTransferRequest request{};
+    uint8_t wrong_digest[32]{};
+    configure_bulk_request(request, 11, "/FireflyOS/Music/bad.bin", 3,
+                           wrong_digest);
+    expect_true(bulk.startSession(request, 2000),
+                "second temporary transfer starts");
+    bulk.tick(2000);
+    firefly::BulkTransferSnapshot session = bulk.snapshot();
+    const uint8_t data[3] = {'a', 'b', 'c'};
+    expect_true(bulk.beginFile(session.token_hex,
+                               "/FireflyOS/Music/bad.bin", 3,
+                               wrong_digest, 2010) &&
+                    bulk.writeChunk(session.token_hex, data, sizeof(data), 2020),
+                "bad hash transfer reaches verification");
+    expect_true(!bulk.finishFile(session.token_hex, 2030) &&
+                    storage.commit_calls == 0,
+                "bad hash deletes only part file and never commits");
+    bulk.tick(2030);
+    expect_true(storage.remove_calls == 1,
+                "bulk task removes a failed part after the callback returns");
+
+    configure_bulk_request(request, 12, "/FireflyOS/Music/retry.bin", 3,
+                           wrong_digest);
+    expect_true(bulk.startSession(request, 2500),
+                "overrun regression starts a fresh bounded session");
+    bulk.tick(2500);
+    session = bulk.snapshot();
+    const uint8_t overrun[4] = {'a', 'b', 'c', 'd'};
+    expect_true(bulk.beginFile(session.token_hex,
+                               "/FireflyOS/Music/retry.bin", 3,
+                               wrong_digest, 2510) &&
+                    !bulk.writeChunk(session.token_hex, overrun,
+                                     sizeof(overrun), 2520) &&
+                    bulk.snapshot().state == firefly::BulkTransferState::Error &&
+                    bulk.snapshot().result_failure ==
+                        firefly::BulkTransferFailure::SizeMismatch,
+                "over-declared HTTP chunks terminate with SizeMismatch");
+    bulk.tick(2520);
+
+    configure_bulk_request(request, 13, "/FireflyOS/Music/retry.bin", 3,
+                           wrong_digest);
+    expect_true(bulk.startSession(request, 3000),
+                "session may restart after a finite failure");
+    bulk.tick(3000);
+    bulk.tick(3000 + firefly::BulkTransferService::kIdleTimeoutMs + 1);
+    expect_true(bulk.snapshot().state == firefly::BulkTransferState::Cancelled &&
+                    transport.stop_calls >= 2 && wifi.mode() == firefly::WifiMode::Off,
+                "idle timeout removes partial state and powers wifi off");
+}
+
+static void test_bulk_transfer_rolls_back_failed_soft_ap_start() {
+    FakeBulkStorage storage;
+    FakeBulkTransport transport;
+    transport.start_result = false;
+    FakeWifiRadio radio;
+    firefly::PowerService power;
+    firefly::BatteryState battery{};
+    battery.valid = true;
+    battery.percent = 80;
+    power.setBatteryState(battery);
+    firefly::WifiService wifi(radio, power);
+    firefly::BulkTransferService bulk(storage, transport, power, wifi,
+                                       deterministic_bulk_random);
+    firefly::BulkTransferRequest request{};
+    uint8_t digest[32]{};
+    configure_bulk_request(request, 13, "/FireflyOS/Updates/update.bin", 1,
+                           digest);
+    expect_true(bulk.startSession(request, 4000),
+                "temporary transfer is queued for the bulk task");
+    bulk.tick(4000);
+    expect_true(bulk.snapshot().state == firefly::BulkTransferState::Error &&
+                    wifi.mode() == firefly::WifiMode::Off &&
+                    storage.session_starts == 1 && storage.session_ends == 1 &&
+                    transport.stop_calls == 1,
+                "failed SoftAP transport rolls back Wi-Fi and SD lease");
+}
+
+static void test_bulk_transfer_preflight_and_explicit_busy_result() {
+    FakeBulkStorage storage;
+    FakeBulkTransport transport;
+    FakeWifiRadio radio;
+    firefly::PowerService power;
+    firefly::BatteryState battery{};
+    battery.valid = true;
+    battery.percent = 80;
+    power.setBatteryState(battery);
+    firefly::WifiService wifi(radio, power);
+    firefly::BulkTransferService bulk(storage, transport, power, wifi,
+                                      deterministic_bulk_random);
+    uint8_t digest[32]{};
+    firefly::BulkTransferRequest request{};
+    configure_bulk_request(request, 20, "../escape.bin", 1024, digest);
+    expect_true(!bulk.startSession(request, 1000) &&
+                    bulk.snapshot().result_request_id == 20 &&
+                    bulk.snapshot().result_failure ==
+                        firefly::BulkTransferFailure::InvalidPath &&
+                    bulk.snapshot().token_hex[0] == '\0' &&
+                    storage.session_starts == 0,
+                "invalid negotiated path fails before token or SD lease");
+
+    configure_bulk_request(request, 25,
+                           "/FireflyOS/Pictures/album/nested.bin",
+                           1024, digest);
+    expect_true(!bulk.startSession(request, 1001) &&
+                    bulk.snapshot().result_failure ==
+                        firefly::BulkTransferFailure::InvalidPath,
+                "negotiated paths are direct children of managed roots");
+    configure_bulk_request(request, 26, "/FireflyOS/Pictures/final.part",
+                           1024, digest);
+    expect_true(!bulk.startSession(request, 1002) &&
+                    bulk.snapshot().result_failure ==
+                        firefly::BulkTransferFailure::InvalidPath,
+                "reserved part suffix cannot become a committed user file");
+
+    configure_bulk_request(request, 21, "/FireflyOS/Pictures/full.bin",
+                           1024, digest);
+    storage.card_present = false;
+    expect_true(!bulk.startSession(request, 1050) &&
+                    bulk.snapshot().result_failure ==
+                        firefly::BulkTransferFailure::SdUnavailable &&
+                    storage.session_starts == 0,
+                "missing SD is reported before trying to acquire a lease");
+    storage.card_present = true;
+    storage.session_result = false;
+    expect_true(!bulk.startSession(request, 1060) &&
+                    bulk.snapshot().result_failure ==
+                        firefly::BulkTransferFailure::Busy &&
+                    storage.session_starts == 1 &&
+                    storage.session_ends == 0,
+                "open normal SD handles make the bulk lease explicitly busy");
+    storage.session_result = true;
+    storage.free_bytes = 1024 +
+        firefly::BulkTransferService::kSpaceReserveBytes - 1;
+    expect_true(!bulk.startSession(request, 1100) &&
+                    bulk.snapshot().result_failure ==
+                        firefly::BulkTransferFailure::InsufficientSpace &&
+                    storage.session_starts == 2 && storage.session_ends == 1 &&
+                    transport.ap_calls == 0,
+                "insufficient space fails before endpoint creation");
+
+    storage.free_bytes = 128ULL * 1024ULL * 1024ULL;
+    configure_bulk_request(request, 22, "/FireflyOS/Pictures/active.bin",
+                           1024, digest);
+    expect_true(bulk.startSession(request, 1200),
+                "valid preflight creates one active session");
+    const uint32_t accepted_generation = bulk.snapshot().result_generation;
+    configure_bulk_request(request, 23, "/FireflyOS/Pictures/busy.bin",
+                           1024, digest);
+    expect_true(!bulk.startSession(request, 1201) &&
+                    bulk.snapshot().state ==
+                        firefly::BulkTransferState::WaitingForNetwork &&
+                    bulk.snapshot().result_request_id == 23 &&
+                    bulk.snapshot().result_failure ==
+                        firefly::BulkTransferFailure::Busy &&
+                    bulk.snapshot().result_generation > accepted_generation,
+                 "Busy command emits a new correlated result without replacing session");
+
+    expect_true(!bulk.cancelSession(23, 1202) &&
+                    bulk.snapshot().state ==
+                        firefly::BulkTransferState::WaitingForNetwork &&
+                    bulk.snapshot().result_request_id == 23 &&
+                    bulk.snapshot().result_failure ==
+                        firefly::BulkTransferFailure::Busy,
+                "stale cancellation is correlated without replacing session");
+    expect_true(bulk.cancelSession(22, 1203) &&
+                    bulk.snapshot().state ==
+                        firefly::BulkTransferState::Cancelled &&
+                    bulk.snapshot().result_request_id == 22 &&
+                    bulk.snapshot().result_failure ==
+                        firefly::BulkTransferFailure::Cancelled,
+                "matching cancellation terminates exactly one session");
+    const uint32_t cancelled_generation = bulk.snapshot().result_generation;
+    bulk.cancel(firefly::BulkTransferFailure::Disconnected, 1204);
+    expect_true(bulk.snapshot().result_generation == cancelled_generation &&
+                    bulk.snapshot().failure ==
+                        firefly::BulkTransferFailure::Cancelled,
+                "late HTTP abort preserves an earlier user cancellation");
+    bulk.tick(1203);
+
+    configure_bulk_request(request, 28, "/FireflyOS/Pictures/race.bin",
+                           16, digest);
+    expect_true(bulk.startSession(request, 1500),
+                "reverse cancellation order starts a fresh session");
+    bulk.cancel(firefly::BulkTransferFailure::Disconnected, 1501);
+    const uint32_t disconnected_generation = bulk.snapshot().result_generation;
+    expect_true(!bulk.cancelSession(28, 1502) &&
+                    bulk.snapshot().result_generation > disconnected_generation &&
+                    bulk.snapshot().result_request_id == 28 &&
+                    bulk.snapshot().result_state ==
+                        firefly::BulkTransferState::Cancelled &&
+                    bulk.snapshot().result_failure ==
+                        firefly::BulkTransferFailure::Disconnected &&
+                    bulk.snapshot().failure ==
+                        firefly::BulkTransferFailure::Disconnected,
+                "late BLE cancel re-acknowledges the earlier terminal result");
+    bulk.tick(1502);
+
+    const uint32_t hard_start = 2000;
+    configure_bulk_request(request, 24, "/FireflyOS/Pictures/limited.bin",
+                           16, digest);
+    expect_true(bulk.startSession(request, hard_start),
+                "hard-limit session starts after cancellation cleanup");
+    bulk.tick(hard_start);
+    const firefly::BulkTransferSnapshot hard_session = bulk.snapshot();
+    expect_true(bulk.beginFile(hard_session.token_hex,
+                               "/FireflyOS/Pictures/limited.bin", 16,
+                               digest, hard_start + 10),
+                "hard-limit transfer starts receiving");
+    const uint8_t byte = 0;
+    for(uint8_t interval = 1; interval <= 3; ++interval) {
+        const uint32_t active_at = hard_start +
+            interval * 4UL * 60UL * 1000UL;
+        bulk.tick(active_at);
+        expect_true(bulk.writeChunk(hard_session.token_hex, &byte, 1,
+                                    active_at),
+                    "periodic data refreshes only the idle deadline");
+    }
+    bulk.tick(hard_start + firefly::BulkTransferService::kSessionLimitMs);
+    expect_true(bulk.snapshot().state ==
+                    firefly::BulkTransferState::Cancelled &&
+                    bulk.snapshot().failure ==
+                        firefly::BulkTransferFailure::Timeout,
+                "absolute fifteen-minute limit wins despite recent data");
+}
+
+static void test_bulk_transfer_shared_lan_fallback_and_link_loss() {
+    FakeBulkStorage storage;
+    FakeBulkTransport transport;
+    FakeWifiRadio radio;
+    firefly::PowerService power;
+    firefly::BatteryState battery{};
+    battery.valid = true;
+    battery.percent = 80;
+    power.setBatteryState(battery);
+    firefly::WifiService wifi(radio, power);
+    expect_true(wifi.provision("Firefly Lab", "secret"),
+                "shared-LAN fallback starts with saved credentials");
+    firefly::BulkTransferService bulk(storage, transport, power, wifi,
+                                      deterministic_bulk_random);
+    uint8_t digest[32]{};
+    firefly::BulkTransferRequest request{};
+    configure_bulk_request(request, 27, "/FireflyOS/Pictures/fallback.bin",
+                           16, digest, true);
+    expect_true(bulk.startSession(request, 1000) &&
+                    wifi.mode() == firefly::WifiMode::Connecting,
+                "preferred shared LAN begins with station association");
+    wifi.tick(1000 + firefly::WifiService::kConnectionTimeoutMs);
+    bulk.tick(1000 + firefly::WifiService::kConnectionTimeoutMs);
+    expect_true(bulk.snapshot().state == firefly::BulkTransferState::Ready &&
+                    transport.ap_calls == 1 &&
+                    wifi.mode() == firefly::WifiMode::SoftAp,
+                "station timeout falls back after Wi-Fi clears its purpose");
+
+    wifi.release(firefly::WifiPurpose::Transfer, 17000);
+    bulk.tick(17000);
+    expect_true(bulk.snapshot().state == firefly::BulkTransferState::Error &&
+                    bulk.snapshot().failure ==
+                        firefly::BulkTransferFailure::NetworkUnavailable,
+                "active transport link loss is reported as unavailable, not timeout");
+}
+
+static void test_wifi_session_timeout_and_release() {
+    FakeWifiRadio radio;
+    firefly::PowerService power;
+    firefly::BatteryState battery{};
+    battery.valid = true;
+    battery.percent = 80;
+    power.setBatteryState(battery);
+
+    firefly::WifiService wifi(radio, power);
+    wifi.configureTimeout(60000);
+    expect_true(wifi.provision("Firefly Lab", "secret"),
+                "Wi-Fi accepts bounded credentials");
+    expect_true(wifi.request(firefly::WifiPurpose::Weather, 1000),
+                "weather requests Wi-Fi");
+    expect_true(wifi.mode() == firefly::WifiMode::Connecting &&
+                    radio.connect_calls == 1 && power.wifiSessionActive(),
+                "Wi-Fi enters connecting state and blocks sleep");
+    radio.link_state = firefly::WifiLinkState::Connected;
+    wifi.onConnected(5000);
+    expect_true(wifi.mode() == firefly::WifiMode::Connected &&
+                    radio.power_save_calls == 1,
+                "Wi-Fi connected idle uses minimum modem power save");
+    wifi.tick(65001);
+    expect_true(wifi.mode() == firefly::WifiMode::Off &&
+                    radio.power_off_calls == 1 &&
+                    !power.wifiSessionActive(),
+                "ordinary Wi-Fi session auto stops after idle timeout");
+
+    expect_true(wifi.request(firefly::WifiPurpose::Ntp, 70000),
+                "NTP can start a new session");
+    wifi.release(firefly::WifiPurpose::Ntp, 70001);
+    expect_true(wifi.mode() == firefly::WifiMode::Off &&
+                    radio.power_off_calls == 2,
+                "last released purpose powers Wi-Fi off immediately");
+}
+
+static void test_wifi_connection_and_long_session_limits() {
+    FakeWifiRadio radio;
+    firefly::PowerService power;
+    firefly::BatteryState battery{};
+    battery.valid = true;
+    battery.percent = 80;
+    power.setBatteryState(battery);
+    firefly::WifiService wifi(radio, power);
+    expect_true(wifi.provision("Firefly Lab", "secret"),
+                "Wi-Fi credentials are available");
+
+    expect_true(wifi.request(firefly::WifiPurpose::Weather, 1000),
+                "weather connection starts");
+    wifi.tick(16001);
+    expect_true(wifi.mode() == firefly::WifiMode::Off,
+                "Wi-Fi connection attempt stops after fifteen seconds");
+
+    expect_true(wifi.request(firefly::WifiPurpose::Transfer, 20000),
+                "transfer session starts");
+    radio.link_state = firefly::WifiLinkState::Connected;
+    wifi.onConnected(21000);
+    wifi.tick(920001);
+    expect_true(wifi.mode() == firefly::WifiMode::Off,
+                "transfer session has a fifteen minute hard limit");
+
+    expect_true(wifi.beginSoftApSession(firefly::WifiPurpose::Transfer,
+                                        1000000),
+                "transfer can start an exclusive SoftAP session");
+    wifi.tick(1000000 + firefly::WifiService::kLongSessionLimitMs + 1);
+    expect_true(wifi.mode() == firefly::WifiMode::Off &&
+                    !wifi.active(firefly::WifiPurpose::Transfer),
+                "SoftAP transfer obeys the same fifteen minute hard limit");
+}
+
+static void test_wifi_power_policy_rejects_unsafe_sessions() {
+    FakeWifiRadio radio;
+    firefly::PowerService power;
+    firefly::BatteryState battery{};
+    battery.valid = true;
+    battery.percent = 15;
+    power.setBatteryState(battery);
+    firefly::WifiService wifi(radio, power);
+    expect_true(wifi.provision("Firefly Lab", "secret"),
+                "Wi-Fi credentials provisioned for power policy test");
+
+    expect_true(!wifi.request(firefly::WifiPurpose::Transfer, 0) &&
+                    !wifi.request(firefly::WifiPurpose::Ota, 0),
+                "the inclusive low-battery boundary rejects transfer and OTA");
+    expect_true(wifi.request(firefly::WifiPurpose::Weather, 0),
+                "low battery still permits a short weather session");
+    wifi.release(firefly::WifiPurpose::Weather, 1);
+
+    battery.percent = 5;
+    power.setBatteryState(battery);
+    expect_true(!wifi.request(firefly::WifiPurpose::Ntp, 2) &&
+                    !wifi.request(firefly::WifiPurpose::Weather, 2),
+                "the inclusive critical boundary rejects every new Wi-Fi session");
+
+    battery.charging = true;
+    battery.vbus_present = true;
+    power.setBatteryState(battery);
+    expect_true(!wifi.request(firefly::WifiPurpose::Ntp, 3) &&
+                    !wifi.request(firefly::WifiPurpose::Transfer, 3),
+                "critical battery rejects Wi-Fi even while charging");
+
+    battery = {};
+    power.setBatteryState(battery);
+    expect_true(!wifi.request(firefly::WifiPurpose::Transfer, 4) &&
+                    wifi.request(firefly::WifiPurpose::Weather, 4),
+                "unknown battery telemetry rejects high-power Wi-Fi only");
+    wifi.release(firefly::WifiPurpose::Weather, 5);
+
+    battery.valid = true;
+    battery.percent = -1;
+    battery.vbus_present = true;
+    power.setBatteryState(battery);
+    expect_true(wifi.request(firefly::WifiPurpose::Ntp, 6) &&
+                    !wifi.request(firefly::WifiPurpose::Transfer, 6),
+                "partial battery telemetry is unknown, not critical, even on VBUS");
+    wifi.release(firefly::WifiPurpose::Ntp, 7);
 }
 
 static void test_debounced_button_short_and_long_press() {
@@ -2619,6 +4558,8 @@ void setup() {
     delay(200);
     expect_true(FIREFLYOS_VERSION_MAJOR == 0, "version major");
     expect_true(FIREFLYOS_VERSION_MINOR == 1, "version minor");
+    expect_true(FIREFLYOS_VERSION_PATCH == 0, "version patch");
+    expect_true(FIREFLYOS_BUILD == 100, "version build");
     test_ble_frame_codec_golden_frames();
     test_notification_service_is_bounded_and_local_only();
     test_companion_settings_resolve_independently_and_persist_first();
@@ -2660,6 +4601,7 @@ void setup() {
     test_alarm_service_publishes_trigger_event_once();
     test_time_service_invalid_rtc();
     test_time_service_reload_set_and_tick();
+    test_time_service_network_sync_is_deferred_for_alarm();
     test_countdown_timer_uses_target_time();
     test_countdown_pause_resume_and_one_shot_expiry();
     test_stopwatch_uses_monotonic_time();
@@ -2678,6 +4620,31 @@ void setup() {
     test_flashlight_controller_posts_brightness_commands();
     test_power_state_machine_timing();
     test_power_battery_priority_and_thresholds();
+    test_wifi_session_timeout_and_release();
+    test_wifi_connection_and_long_session_limits();
+    test_wifi_power_policy_rejects_unsafe_sessions();
+    test_wifi_provisioning_is_confirmed_and_persisted_after_connect();
+    test_wifi_provisioning_rejects_expired_duplicate_and_unconfirmed();
+    test_wifi_provisioning_rejects_busy_replay_and_failed_forget();
+    test_wifi_provisioning_v2_uses_monotonic_ttl_without_rtc();
+    test_wifi_soft_ap_requires_exclusive_idle_radio();
+    test_wifi_inactive_error_state_allows_recovery();
+    test_weather_phone_payload_cache_and_freshness();
+    test_weather_open_meteo_bounds_and_source_switching();
+    test_weather_http_reader_enforces_absolute_deadline();
+    test_update_manifest_canonical_signature_and_bounds();
+    test_update_service_gates_streams_and_finalizes_once();
+    test_update_sources_are_managed_and_fail_closed();
+    test_update_coordinator_prefers_sd_and_bounds_commands();
+    test_boot_validation_is_pending_only_and_bounded();
+    test_diagnostics_ring_metrics_and_explicit_export();
+    test_factory_reset_defaults_to_keep_sd_and_requires_generation();
+    test_hardware_capabilities_degrade_independently();
+    test_bulk_transfer_token_path_hash_and_atomic_commit();
+    test_bulk_transfer_rejects_bad_hash_and_cleans_timeout();
+    test_bulk_transfer_rolls_back_failed_soft_ap_start();
+    test_bulk_transfer_preflight_and_explicit_busy_result();
+    test_bulk_transfer_shared_lan_fallback_and_link_loss();
     test_debounced_button_short_and_long_press();
     test_debounced_button_rejects_jitter();
     test_light_sleep_requires_verified_wake_matrix();

@@ -39,6 +39,7 @@ struct WavInfo {
 
 class AudioService {
 public:
+    using StartAllowedCallback = bool (*)(AudioUse use, void * context);
     static constexpr int kMclkPin = 41;
     static constexpr int kBclkPin = 45;
     static constexpr int kWordSelectPin = 40;
@@ -48,6 +49,11 @@ public:
     static constexpr size_t kWavHeaderBytes = 44;
 
     explicit AudioService(Es8311Device & codec) : codec_(codec) {}
+    void setStartAllowedCallback(StartAllowedCallback callback,
+                                 void * context = nullptr) {
+        start_allowed_callback_ = callback;
+        start_allowed_context_ = context;
+    }
 
     bool begin();
     bool playPcm(const int16_t * samples,
@@ -116,6 +122,8 @@ private:
     bool playback_paused_ = false;
     uint8_t volume_ = 50;
     bool i2s_installed_ = false;
+    StartAllowedCallback start_allowed_callback_ = nullptr;
+    void * start_allowed_context_ = nullptr;
 };
 
 }  // namespace firefly

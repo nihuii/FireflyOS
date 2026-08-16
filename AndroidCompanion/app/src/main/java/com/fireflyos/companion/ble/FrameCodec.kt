@@ -30,6 +30,7 @@ enum class MessageType(val value: Int) {
     FindPhone(0x41),
     FindWatch(0x42),
     WifiProvision(0x50),
+    BulkTransfer(0x51),
     OtaControl(0x60),
     Error(0x7F);
 

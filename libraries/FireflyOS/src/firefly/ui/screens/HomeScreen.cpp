@@ -54,8 +54,12 @@ const char * HomeScreen::symbolFor(const char * id) {
     return LV_SYMBOL_EYE_OPEN;
 }
 
-bool HomeScreen::populate(const AppRegistry & registry, lv_event_cb_t callback) {
+bool HomeScreen::populate(const AppRegistry & registry,
+                          const CapabilityRegistry & capabilities,
+                          lv_event_cb_t callback) {
     if(!pager_) return false;
+    registry_ = &registry;
+    capabilities_ = &capabilities;
     page_count_ = (registry.count() + 5U) / 6U;
     if(page_count_ > kMaxPages) page_count_ = kMaxPages;
     for(uint8_t page = 0; page < page_count_; ++page) {
@@ -71,11 +75,13 @@ bool HomeScreen::populate(const AppRegistry & registry, lv_event_cb_t callback) 
             const uint8_t col = slot % 3U;
             const uint8_t row = slot / 3U;
             lv_obj_t * button = lv_btn_create(tile);
+            app_buttons_[index] = button;
             lv_obj_set_size(button, 72, 72);
             lv_obj_set_pos(button, 35 + col * 120, 88 + row * 146);
             lv_obj_set_style_radius(button, 24, 0);
             lv_obj_set_style_bg_color(button, lv_color_hex(tokens_.firefly_secondary), 0);
             lv_obj_set_style_bg_opa(button, LV_OPA_80, 0);
+            lv_obj_set_style_bg_opa(button, LV_OPA_30, LV_STATE_DISABLED);
             lv_obj_set_style_shadow_width(button, 0, 0);
             if(callback) lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED,
                                              const_cast<AppDescriptor *>(&app));
@@ -95,7 +101,22 @@ bool HomeScreen::populate(const AppRegistry & registry, lv_event_cb_t callback) 
     lv_obj_set_style_text_color(dots_, lv_color_hex(tokens_.text_secondary), 0);
     lv_obj_align(dots_, LV_ALIGN_BOTTOM_MID, 0, -20);
     updateDots(0);
+    refreshAvailability();
     return true;
+}
+
+void HomeScreen::refreshAvailability() {
+    if(!registry_ || !capabilities_) return;
+    for(uint8_t index = 0; index < registry_->count(); ++index) {
+        lv_obj_t * button = app_buttons_[index];
+        if(!button) continue;
+        const AppDescriptor & app = registry_->at(index);
+        if(registry_->available(app, *capabilities_)) {
+            lv_obj_clear_state(button, LV_STATE_DISABLED);
+        } else {
+            lv_obj_add_state(button, LV_STATE_DISABLED);
+        }
+    }
 }
 
 void HomeScreen::show() {
@@ -106,6 +127,8 @@ void HomeScreen::hide() {
     if(root_) lv_obj_add_flag(root_, LV_OBJ_FLAG_HIDDEN);
 }
 
-void HomeScreen::refresh(const SystemState &) {}
+void HomeScreen::refresh(const SystemState &) {
+    refreshAvailability();
+}
 
 }  // namespace firefly

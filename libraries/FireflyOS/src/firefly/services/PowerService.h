@@ -1,6 +1,8 @@
 #pragma once
 
 #include <stdint.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 #include "../core/SystemState.h"
 
@@ -70,16 +72,20 @@ public:
     static constexpr int16_t kMinSafeTemperatureC = 0;
     static constexpr int16_t kMaxSafeTemperatureC = 45;
 
-    void configure(const PowerTiming & timing) { timing_ = timing; }
-    const PowerTiming & timing() const { return timing_; }
-    void onActivity(uint32_t now_ms) { last_activity_ms_ = now_ms; }
-    uint32_t lastActivityMs() const { return last_activity_ms_; }
-    void setBatteryState(const BatteryState & state) { battery_ = state; }
-    const BatteryState & batteryState() const { return battery_; }
+    PowerService();
+    void configure(const PowerTiming & timing);
+    PowerTiming timing() const;
+    void onActivity(uint32_t now_ms);
+    uint32_t lastActivityMs() const;
+    void setBatteryState(const BatteryState & state);
+    BatteryState batteryState() const;
+    bool allowsWifiSession(bool high_power) const;
+    void setWifiSessionActive(bool active);
+    bool wifiSessionActive() const;
     PowerMode evaluateIdle(uint32_t now_ms) const;
     PowerMode evaluate(uint32_t now_ms) const;
     static bool isTemperatureSafe(const BatteryState & state);
-    void setSleepHooks(const SleepHooks & hooks) { sleep_hooks_ = hooks; }
+    void setSleepHooks(const SleepHooks & hooks);
     void recordWakeVerification(WakeSource source,
                                 uint16_t attempts,
                                 uint16_t successes);
@@ -98,6 +104,9 @@ private:
     SleepHooks sleep_hooks_{};
     WakeVerification wake_verification_[kWakeSourceCount]{};
     bool sleep_prepared_ = false;
+    bool wifi_session_active_ = false;
+    mutable StaticSemaphore_t mutex_storage_{};
+    mutable SemaphoreHandle_t mutex_ = nullptr;
 };
 
 }  // namespace firefly

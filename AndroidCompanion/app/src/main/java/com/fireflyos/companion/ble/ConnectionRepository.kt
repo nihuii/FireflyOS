@@ -6,6 +6,15 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.net.wifi.WifiNetworkSpecifier
+import com.fireflyos.companion.transfer.BulkTransferSession
+import com.fireflyos.companion.transfer.BulkTransferUploader
+import com.fireflyos.companion.transfer.BulkUploadResult
+import java.io.InputStream
 import com.fireflyos.companion.data.ConnectionStatus
 import com.fireflyos.companion.data.DeviceState
 import com.fireflyos.companion.notifications.NotificationSyncBridge
@@ -20,6 +29,9 @@ class ConnectionRepository(
         PrivateSharedPreferencesPairingTokenStore(context),
     localDeviceName: String = Build.MODEL,
 ) {
+    private val connectivityManager =
+        context.getSystemService(ConnectivityManager::class.java)
+    private var bulkNetworkCallback: ConnectivityManager.NetworkCallback? = null
     private var stateListener: ((DeviceState) -> Unit)? = null
     private var deliveryFailureListener: ((ReliableSendFailure) -> Unit)? = null
     private val _deviceState = MutableStateFlow(DeviceState())
@@ -186,6 +198,7 @@ class ConnectionRepository(
     }
 
     fun close() {
+        releaseBulkNetwork()
         NotificationSyncBridge.detach()
         handler.removeCallbacks(reliableTick)
         reliableSender.setConnected(false, SystemClock.elapsedRealtime())
@@ -205,6 +218,60 @@ class ConnectionRepository(
 
     fun sendBusinessFrame(type: MessageType, payload: ByteArray): Boolean =
         reliableSender.enqueue(type, payload, SystemClock.elapsedRealtime())
+
+    suspend fun uploadBulkFile(
+        session: BulkTransferSession,
+        managedPath: String,
+        declaredSize: Long,
+        sha256: String,
+        input: InputStream,
+        network: Network? = null,
+        onProgress: (Long, Long) -> Unit = { _, _ -> },
+    ): BulkUploadResult = BulkTransferUploader.upload(
+        session,
+        managedPath,
+        declaredSize,
+        sha256,
+        input,
+        onProgress,
+        openConnection = { url -> network?.openConnection(url) ?: url.openConnection() },
+    )
+
+    fun requestBulkSoftApNetwork(
+        session: BulkTransferSession,
+        onAvailable: (Network) -> Unit,
+        onUnavailable: () -> Unit,
+    ): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+            session.softApSsid.isEmpty() || session.softApPassword.length < 8 ||
+            connectivityManager == null
+        ) return false
+        releaseBulkNetwork()
+        val specifier = WifiNetworkSpecifier.Builder()
+            .setSsid(session.softApSsid)
+            .setWpa2Passphrase(session.softApPassword)
+            .build()
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .setNetworkSpecifier(specifier)
+            .build()
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = onAvailable(network)
+            override fun onUnavailable() = onUnavailable()
+        }
+        return runCatching {
+            connectivityManager.requestNetwork(request, callback, 30_000)
+            bulkNetworkCallback = callback
+            true
+        }.getOrDefault(false)
+    }
+
+    fun releaseBulkNetwork() {
+        val callback = bulkNetworkCallback ?: return
+        runCatching { connectivityManager?.unregisterNetworkCallback(callback) }
+        bulkNetworkCallback = null
+    }
 
     fun setStateListener(listener: ((DeviceState) -> Unit)?) {
         stateListener = listener

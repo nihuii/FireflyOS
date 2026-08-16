@@ -45,6 +45,7 @@ enum class MessageType : uint8_t {
     FindPhone = 0x41,
     FindWatch = 0x42,
     WifiProvision = 0x50,
+    BulkTransfer = 0x51,
     OtaControl = 0x60,
     Error = 0x7F
 };
@@ -85,6 +86,7 @@ inline bool isKnownMessageType(uint8_t value) {
         case MessageType::FindPhone:
         case MessageType::FindWatch:
         case MessageType::WifiProvision:
+        case MessageType::BulkTransfer:
         case MessageType::OtaControl:
         case MessageType::Error:
             return true;

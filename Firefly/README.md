@@ -231,3 +231,30 @@ Arduino IDE `Tools` 中和双核相关的两项，当前建议也补充说明如
 - 自动验证不能替代真机验收。Gate D 的通用 BLE 互操作、20/50 次重连、认证攻击、权限与解除绑定、冲突同步、离线本地功能、天气/媒体/找设备、内存趋势、410×502 圆角安全区和至少 48 px 触控矩阵仍为 `PENDING`。
 
 完整状态与真机执行表见 `docs/模块说明/08-Android伴侣验收.md`。
+
+## 计划 6：Wi-Fi、天气、OTA 与发布验收
+
+- 固件已接入 BLE 配网提交、按需 Wi-Fi、NTP、天气缓存/限流/离线降级、Weather 和 Diagnostics 页面；手机断开或网络不可用不破坏时间、闹钟、活动、音乐和录音。
+- Android 与固件已接入临时 Wi-Fi 大文件传输控制，使用固定容量会话、范围请求与摘要校验边界。
+- OTA 使用 `Firefly/partitions.csv` 的双 app 槽、ECDSA P-256 签名清单、SHA-256 流式校验、SD/HTTPS 双源、首次启动确认和回滚服务。
+- 固定后台 `UpdateCoordinator` 拥有检查、开始、取消、Wi-Fi 生命周期和 update tick；UI 回调只投递命令，后台不访问 LVGL。
+- Development 默认使用测试公钥并只保证 SD OTA；HTTPS 必须通过 Release 的仓库外 `FireflyUpdatePublicKey.local.h` 和 `FireflyUpdateConfig.local.h` 固定配置后启用。
+- 正式构建命令为 `powershell -ExecutionPolicy Bypass -File .\tools\build_firmware.ps1 -Target Firefly -Configuration Release`；生产材料缺失时按设计失败闭锁。
+- 恢复出厂默认保留 SD 媒体；显式 `Delete managed FireflyOS data` 只清理 Music、Recordings、Pictures、Themes、Updates、Backups、Logs 七个受管目录并保留未知内容。
+- 自动测试、Debug APK 和固件编译不能替代真机验收。Gate E 的 24 小时、400mAh、Wi-Fi、断电 OTA、回滚、410×502 安全区和至少 48px 触控仍为 `PENDING`。
+
+分区、签名、烧录与更新规则见 `docs/模块说明/10-OTA发布规范.md`；最终状态和发布前检查见 `docs/模块说明/11-最终验收报告.md` 与 `12-发布清单.md`。
+
+### 计划 6 构建、烧录与维护入口
+
+Development 自动验证使用：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\verify_all.ps1
+```
+
+单独构建主固件使用 `powershell -ExecutionPolicy Bypass -File .\tools\build_firmware.ps1 -Target Firefly`。烧录必须选择与脚本相同的 ESP32-S3、32MB Flash、OPI PSRAM、QIO 和项目 `Firefly/partitions.csv`；可从 Arduino IDE 上传，或在明确串口后使用同一 FQBN 的 Arduino CLI upload。不得把 Development 产物当作 Release。
+
+首次配对必须在手表与 Android 双方确认；解除绑定也走认证确认事务。SD 更新包固定放在 `/FireflyOS/Updates/update.json` 和 `/FireflyOS/Updates/update.bin`。生产包由离线 `FIREFLY_SIGNING_KEY` 签名，Release 构建只访问固定 HTTPS 主机。
+
+已知限制：生产密钥和端点不在仓库；当前没有 Release 产物或 RC 标签；Gate D、Gate E 和计划 3～6 的真机矩阵均为 `PENDING`。普通恢复出厂保留 SD；只有显式选择受管数据清理才删除七个白名单目录。

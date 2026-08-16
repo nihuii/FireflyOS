@@ -62,6 +62,52 @@
             android:minHeight="48dp"
             android:text="@string/request_unpair" />
 
+        <TextView
+            style="@style/Task9SectionTitle"
+            android:text="@string/wifi_provision_title" />
+
+        <EditText
+            android:id="@+id/wifiSsidInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/wifi_ssid_hint"
+            android:inputType="text"
+            android:maxLength="32"
+            android:minHeight="48dp" />
+
+        <EditText
+            android:id="@+id/wifiPasswordInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/wifi_password_hint"
+            android:inputType="textPassword"
+            android:maxLength="64"
+            android:minHeight="48dp" />
+
+        <Button
+            android:id="@+id/provisionWifiButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/wifi_provision_send" />
+
+        <Button
+            android:id="@+id/forgetWifiButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:minHeight="48dp"
+            android:text="@string/wifi_forget" />
+
+        <TextView
+            android:id="@+id/wifiProvisionStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/wifi_provision_idle"
+            android:textColor="@color/firefly_muted"
+            android:textSize="14sp" />
+
         <Button
             android:id="@+id/notificationPermissionButton"
             android:layout_width="match_parent"
@@ -138,7 +184,7 @@
             android:inputType="text"
             android:maxLength="23"
             android:minHeight="48dp"
-            android:text="firefly-default" />
+            android:text="system-default" />
 
         <Button
             android:id="@+id/syncThemeButton"
@@ -157,7 +203,23 @@
             android:layout_height="wrap_content"
             android:hint="@string/city_hint"
             android:inputType="textCapWords"
-            android:maxLength="47"
+            android:maxLength="31"
+            android:minHeight="48dp" />
+
+        <EditText
+            android:id="@+id/weatherLatitudeInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/latitude_hint"
+            android:inputType="numberDecimal|numberSigned"
+            android:minHeight="48dp" />
+
+        <EditText
+            android:id="@+id/weatherLongitudeInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/longitude_hint"
+            android:inputType="numberDecimal|numberSigned"
             android:minHeight="48dp" />
 
         <EditText
@@ -198,6 +260,49 @@
             android:layout_height="wrap_content"
             android:minHeight="48dp"
             android:text="@string/sync_weather" />
+
+        <TextView
+            style="@style/Task9SectionTitle"
+            android:text="@string/bulk_transfer_title" />
+
+        <EditText
+            android:id="@+id/bulkPathInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/bulk_path_hint"
+            android:inputType="textNoSuggestions"
+            android:minHeight="48dp" />
+
+        <CheckBox
+            android:id="@+id/bulkPreferLanCheck"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:checked="true"
+            android:minHeight="48dp"
+            android:text="@string/bulk_prefer_lan" />
+
+        <Button
+            android:id="@+id/bulkSelectFileButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/bulk_select_file" />
+
+        <Button
+            android:id="@+id/bulkCancelButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="@string/bulk_cancel">
+        </Button>
+
+        <TextView
+            android:id="@+id/bulkTransferStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/bulk_transfer_idle"
+            android:textColor="@color/firefly_muted"
+            android:textSize="14sp" />
 
         <TextView
             style="@style/Task9SectionTitle"

@@ -10,6 +10,14 @@ import com.fireflyos.companion.media.MediaCommandCodec
 import com.fireflyos.companion.media.MediaCommandDispatcher
 import com.fireflyos.companion.media.MediaDispatchError
 import com.fireflyos.companion.media.MediaDispatchResult
+import com.fireflyos.companion.wifi.WifiProvisioningCodec
+import com.fireflyos.companion.wifi.WifiProvisioningRequest
+import com.fireflyos.companion.wifi.WifiProvisioningResult
+import com.fireflyos.companion.wifi.WifiProvisioningResultCodec
+import com.fireflyos.companion.transfer.BulkTransferCodec
+import com.fireflyos.companion.transfer.BulkTransferRequest
+import com.fireflyos.companion.transfer.BulkTransferSession
+import com.fireflyos.companion.transfer.BulkTransferStatus
 
 enum class CompanionErrorCode(val wireId: Int) {
     InvalidPayload(1),
@@ -56,6 +64,9 @@ class CompanionController(
     private val triggerFindPhone: () -> FindPhoneRoute,
     private val settingsStore: SettingsStateStore = SettingsStateStore(),
     private val onSettingsResolved: (SettingsSnapshot) -> Unit = {},
+    private val onWifiProvisioningResult: (WifiProvisioningResult) -> Unit = {},
+    private val onBulkTransferReady: (BulkTransferSession) -> Unit = {},
+    private val onBulkTransferStatus: (BulkTransferStatus) -> Unit = {},
 ) {
     fun syncSettings(snapshot: SettingsSnapshot): Boolean =
         sendBusiness(MessageType.SettingsSet, SettingsSyncCodec.encode(snapshot))
@@ -66,6 +77,24 @@ class CompanionController(
     fun syncWeather(weather: PhoneWeather): Boolean {
         val payload = WeatherPayloadCodec.encodeOrNull(weather) ?: return false
         return sendBusiness(MessageType.WeatherUpdate, payload)
+    }
+
+    fun provisionWifi(request: WifiProvisioningRequest): Boolean {
+        val payload = WifiProvisioningCodec.encodeOrNull(request) ?: return false
+        return sendBusiness(MessageType.WifiProvision, payload)
+    }
+
+    fun forgetWifi(): Boolean =
+        sendBusiness(MessageType.WifiProvision, WifiProvisioningCodec.encodeForget())
+
+    fun requestBulkTransfer(request: BulkTransferRequest): Boolean {
+        val payload = BulkTransferCodec.encodeRequestOrNull(request) ?: return false
+        return sendBusiness(MessageType.BulkTransfer, payload)
+    }
+
+    fun cancelBulkTransfer(requestId: Int): Boolean {
+        val payload = BulkTransferCodec.encodeCancelOrNull(requestId) ?: return false
+        return sendBusiness(MessageType.BulkTransfer, payload)
     }
 
     fun syncCalendar(payload: CalendarPayload): Boolean =
@@ -82,7 +111,30 @@ class CompanionController(
             MessageType.SettingsSet -> handleSettings(frame)
             MessageType.MediaCommand -> handleMedia(frame)
             MessageType.FindPhone -> handleFindPhone(frame)
+            MessageType.WifiProvision -> handleWifiProvisioning(frame)
+            MessageType.BulkTransfer -> handleBulkTransfer(frame)
             else -> Unit
+        }
+    }
+
+    private fun handleWifiProvisioning(frame: Frame) {
+        val result = WifiProvisioningResultCodec.decode(frame.payload)
+        if (result == null) {
+            sendError(MessageType.WifiProvision, CompanionErrorCode.InvalidPayload)
+            return
+        }
+        onWifiProvisioningResult(result)
+    }
+
+    private fun handleBulkTransfer(frame: Frame) {
+        val session = BulkTransferCodec.decodeSession(frame.payload)
+        if (session != null) {
+            onBulkTransferReady(session)
+        } else {
+            val status = BulkTransferCodec.decodeStatus(frame.payload)
+            if (status != null) onBulkTransferStatus(status)
+            else sendError(MessageType.BulkTransfer,
+                CompanionErrorCode.InvalidPayload)
         }
     }
 

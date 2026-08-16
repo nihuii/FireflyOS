@@ -101,6 +101,71 @@ class ThemeManifestTests(unittest.TestCase):
         self.assertIn("lv_obj_get_child_cnt", components_source)
         self.assertIn("UiComponents::applyThemeTree", runtime)
 
+    def test_system_default_is_neutral_and_legacy_alias_is_migrated(self):
+        services = ROOT / "libraries" / "FireflyOS" / "src" / "firefly" / "services"
+        theme = (
+            (services / "ThemePackageService.h").read_text(encoding="utf-8")
+            + (services / "ThemePackageService.cpp").read_text(encoding="utf-8")
+        )
+        storage = (
+            (services / "StorageService.h").read_text(encoding="utf-8")
+            + (services / "StorageService.cpp").read_text(encoding="utf-8")
+        )
+        runtime = (ROOT / "Firefly" / "FireflyInteraction.cpp").read_text(
+            encoding="utf-8"
+        )
+        companion = (services / "CompanionSyncService.cpp").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"system-default", "Default"', theme)
+        self.assertIn('char theme_id[24] = "system-default"', storage)
+        self.assertIn('strcmp(settings.theme_id, "firefly-default") == 0', storage)
+        self.assertIn('strlcpy(settings.theme_id, "system-default"', storage)
+        self.assertIn("saveSettings(settings)", storage)
+        migration = storage[
+            storage.index('strcmp(settings.theme_id, "firefly-default") == 0'):
+            storage.index("if(settings.volume > 100)")
+        ]
+        self.assertNotIn("clearThemeCache", migration)
+        self.assertIn("normalize_theme_id", runtime)
+        self.assertIn('strcmp(theme_id, "firefly-default") == 0', runtime)
+        self.assertIn("normalizeLegacyThemeAlias", companion)
+        self.assertIn("persistence_->saveSnapshot(normalized)", companion)
+        self.assertIn("companion_sync_service.settingsSnapshot()", runtime)
+        cache_migration = storage[
+            storage.index("bool StorageService::loadThemeCache"):
+            storage.index("bool StorageService::clearThemeCache")
+        ]
+        self.assertIn('cached == "firefly-default"', cache_migration)
+        self.assertIn('saveThemeCache("system-default", palette)', cache_migration)
+
+        android_layout = (
+            ROOT / "AndroidCompanion" / "app" / "src" / "main" / "res" /
+            "layout" / "activity_main.xml"
+        ).read_text(encoding="utf-8")
+        theme_doc = (ROOT / "docs" / "模块说明" / "06-主题包格式.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('android:text="system-default"', android_layout)
+        self.assertIn("`system-default`", theme_doc)
+
+    def test_core_layers_do_not_reference_role_art_paths(self):
+        source_root = ROOT / "libraries" / "FireflyOS" / "src" / "firefly"
+        forbidden = (
+            "LockWallpaper.h", "SettingsWallpaper.h", "SleepIcons.h",
+            "lock_wallpaper_firefly", "settings_wallpaper_firefly",
+            "sleep_icon_firefly", "image/图片生成提示词",
+        )
+        offenders = []
+        for folder in ("core", "protocol", "hal", "services"):
+            for path in (source_root / folder).rglob("*"):
+                if path.suffix not in (".h", ".cpp"):
+                    continue
+                text = path.read_text(encoding="utf-8")
+                if any(token in text for token in forbidden):
+                    offenders.append(str(path.relative_to(ROOT)))
+        self.assertEqual([], offenders)
+
 
 if __name__ == "__main__":
     unittest.main()

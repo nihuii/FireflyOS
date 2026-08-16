@@ -34,6 +34,54 @@ bool writeSchema(Preferences & preferences) {
 constexpr uint8_t kPairPhaseProvisional = 1;
 constexpr uint8_t kPairPhaseConfirmed = 2;
 
+bool validManagedChildName(const char * name) {
+    if(!name || !name[0] || strcmp(name, ".") == 0 ||
+       strcmp(name, "..") == 0) return false;
+    for(const char * cursor = name; *cursor; ++cursor) {
+        if(*cursor == '/' || *cursor == '\\' || *cursor == ':' ||
+           static_cast<unsigned char>(*cursor) < 0x20) return false;
+    }
+    return true;
+}
+
+bool removeManagedTree(fs::FS & filesystem,
+                       const char * path,
+                       uint8_t depth) {
+    if(!StorageService::isManagedPath(path) || depth > 8) return false;
+    fs::File node = filesystem.open(path, FILE_READ);
+    if(!node) return !filesystem.exists(path);
+    if(!node.isDirectory()) {
+        node.close();
+        return filesystem.remove(path);
+    }
+
+    bool ok = true;
+    while(ok) {
+        fs::File entry = node.openNextFile();
+        if(!entry) break;
+        const char * raw_name = entry.name();
+        const char * name = raw_name ? strrchr(raw_name, '/') : nullptr;
+        name = name ? name + 1 : raw_name;
+        const bool directory = entry.isDirectory();
+        char child[256]{};
+        const int written = validManagedChildName(name)
+            ? snprintf(child, sizeof(child), "%s/%s", path, name)
+            : -1;
+        entry.close();
+        if(written <= 0 || static_cast<size_t>(written) >= sizeof(child) ||
+           !StorageService::isManagedPath(child)) {
+            ok = false;
+        } else if(directory) {
+            ok = removeManagedTree(filesystem, child,
+                                   static_cast<uint8_t>(depth + 1U));
+        } else {
+            ok = filesystem.remove(child);
+        }
+    }
+    node.close();
+    return ok && filesystem.rmdir(path);
+}
+
 }  // namespace
 
 bool StorageService::begin() {
@@ -45,7 +93,8 @@ bool StorageService::begin() {
 
 bool StorageService::initializeNamespaces() {
     const char * namespaces[] = {
-        kSystemNamespace, kAlarmNamespace, kPairNamespace, kStatsNamespace
+        kSystemNamespace, kAlarmNamespace, kPairNamespace, kStatsNamespace,
+        kWifiNamespace
     };
     for(const char * name : namespaces) {
         Preferences preferences;
@@ -92,6 +141,11 @@ bool StorageService::loadSettings(SystemSettings & settings) {
     const String theme = preferences.getString("theme", settings.theme_id);
     strlcpy(settings.theme_id, theme.c_str(), sizeof(settings.theme_id));
     preferences.end();
+
+    if(strcmp(settings.theme_id, "firefly-default") == 0) {
+        strlcpy(settings.theme_id, "system-default", sizeof(settings.theme_id));
+        if(!saveSettings(settings)) return false;
+    }
 
     if(settings.volume > 100) settings.volume = 100;
     if(settings.auto_sleep_seconds > 3600) settings.auto_sleep_seconds = 30;
@@ -377,9 +431,12 @@ bool StorageService::loadThemeCache(char * theme_id,
     }
     present = preferences.isKey("cache_theme");
     bool ok = true;
+    bool migrate_legacy = false;
     if(present) {
         const String cached = preferences.getString("cache_theme", "");
-        strlcpy(theme_id, cached.c_str(), id_size);
+        migrate_legacy = cached == "firefly-default";
+        strlcpy(theme_id,
+                migrate_legacy ? "system-default" : cached.c_str(), id_size);
         const char * keys[] = {"th_bg", "th_surface", "th_primary",
                               "th_second", "th_critical"};
         for(uint8_t i = 0; i < 5; ++i) {
@@ -392,6 +449,9 @@ bool StorageService::loadThemeCache(char * theme_id,
     }
     preferences.end();
     if(!ok) recordFailure(StorageDiagnosticCode::ReadFailed);
+    if(ok && migrate_legacy) {
+        (void)saveThemeCache("system-default", palette);
+    }
     return ok;
 }
 
@@ -503,24 +563,163 @@ bool StorageService::clearPairing() {
     return ok;
 }
 
+bool StorageService::loadWifiCredentials(WifiCredentials & credentials) {
+    credentials = {};
+    Preferences preferences;
+    if(!openNamespace(preferences, kWifiNamespace, true)) {
+        recordFailure(StorageDiagnosticCode::NamespaceOpenFailed);
+        return false;
+    }
+    const size_t length = preferences.getBytesLength("credentials");
+    if(length == 0) {
+        preferences.end();
+        return true;
+    }
+    const bool ok = length == sizeof(credentials) &&
+        preferences.getBytes("credentials", &credentials,
+                             sizeof(credentials)) == sizeof(credentials) &&
+        credentials.valid &&
+        memchr(credentials.ssid, '\0', sizeof(credentials.ssid)) != nullptr &&
+        memchr(credentials.password, '\0', sizeof(credentials.password)) != nullptr;
+    preferences.end();
+    if(!ok) {
+        credentials = {};
+        recordFailure(StorageDiagnosticCode::ReadFailed);
+    }
+    return ok;
+}
+
+bool StorageService::saveWifiCredentials(const WifiCredentials & credentials) {
+    if(!credentials.valid || !credentials.ssid[0] ||
+       memchr(credentials.ssid, '\0', sizeof(credentials.ssid)) == nullptr ||
+       memchr(credentials.password, '\0', sizeof(credentials.password)) == nullptr) {
+        return false;
+    }
+    Preferences preferences;
+    if(!openNamespace(preferences, kWifiNamespace, false)) {
+        recordFailure(StorageDiagnosticCode::NamespaceOpenFailed);
+        return false;
+    }
+    const bool ok = writeSchema(preferences) &&
+        preferences.putBytes("credentials", &credentials,
+                             sizeof(credentials)) == sizeof(credentials);
+    preferences.end();
+    if(!ok) recordFailure(StorageDiagnosticCode::WriteFailed);
+    return ok;
+}
+
+bool StorageService::clearWifiCredentials() {
+    Preferences preferences;
+    if(!openNamespace(preferences, kWifiNamespace, false)) {
+        recordFailure(StorageDiagnosticCode::NamespaceOpenFailed);
+        return false;
+    }
+    bool ok = writeSchema(preferences);
+    if(preferences.isKey("credentials")) {
+        ok = preferences.remove("credentials") && ok;
+    }
+    preferences.end();
+    if(!ok) recordFailure(StorageDiagnosticCode::WriteFailed);
+    return ok;
+}
+
+bool StorageService::clearInternalUserData() {
+    const char * namespaces[] = {
+        kSystemNamespace, kAlarmNamespace, kPairNamespace, kStatsNamespace,
+        kWifiNamespace
+    };
+    bool ok = true;
+    for(const char * name : namespaces) {
+        Preferences preferences;
+        if(!openNamespace(preferences, name, false)) {
+            ok = false;
+            continue;
+        }
+        const bool cleared = preferences.clear();
+        const bool schema_written = cleared && writeSchema(preferences);
+        preferences.end();
+        ok = schema_written && ok;
+    }
+
+    Preferences legacy;
+    if(openNamespace(legacy, kLegacyNamespace, false)) {
+        ok = legacy.clear() && ok;
+        legacy.end();
+    } else {
+        ok = false;
+    }
+    if(!ok) recordFailure(StorageDiagnosticCode::WriteFailed);
+    return ok;
+}
+
+bool StorageService::clearManagedSdRoot() {
+    if(!sd_mutex_ || xSemaphoreTake(sd_mutex_, pdMS_TO_TICKS(250)) != pdTRUE) {
+        return false;
+    }
+    const bool exclusive = !bulk_sd_session_ && !ota_sd_session_ &&
+        normal_sd_handles_ == 0 && sd_filesystem_ && sd_device_ &&
+        sd_device_->validateSession();
+    if(!exclusive) {
+        xSemaphoreGive(sd_mutex_);
+        return false;
+    }
+
+    static const char * const roots[] = {
+        "/FireflyOS/Music", "/FireflyOS/Recordings",
+        "/FireflyOS/Pictures", "/FireflyOS/Themes",
+        "/FireflyOS/Updates", "/FireflyOS/Backups", "/FireflyOS/Logs",
+    };
+    // Keep this name-only list beside the roots as a reviewable allow-list.
+    static const char * const managed_names[] = {
+        "Music", "Recordings", "Pictures", "Themes",
+        "Updates", "Backups", "Logs",
+    };
+    static_assert(sizeof(roots) / sizeof(roots[0]) ==
+                  sizeof(managed_names) / sizeof(managed_names[0]),
+                  "factory reset SD allow-list must stay aligned");
+
+    bool ok = true;
+    for(const char * root : roots) {
+        if(sd_filesystem_->exists(root)) {
+            ok = removeManagedTree(*sd_filesystem_, root, 0) && ok;
+        }
+    }
+    sd_device_->noteIoResult(ok);
+    xSemaphoreGive(sd_mutex_);
+    return ok;
+}
+
 void StorageService::attachSd(fs::FS & filesystem, SdCardDevice & device) {
     if(!sd_mutex_) sd_mutex_ = xSemaphoreCreateMutex();
+    if(!sd_mutex_ || xSemaphoreTake(sd_mutex_, portMAX_DELAY) != pdTRUE) return;
     sd_filesystem_ = &filesystem;
     sd_device_ = &device;
+    xSemaphoreGive(sd_mutex_);
 }
 
 void StorageService::detachSd() {
+    if(!sd_mutex_ || xSemaphoreTake(sd_mutex_, portMAX_DELAY) != pdTRUE) return;
     sd_filesystem_ = nullptr;
     sd_device_ = nullptr;
+    bulk_sd_session_ = false;
+    ota_sd_session_ = false;
+    normal_sd_handles_ = 0;
+    xSemaphoreGive(sd_mutex_);
 }
 
 bool StorageService::sdAvailable() const {
-    return sd_filesystem_ && sd_device_ && sd_device_->mounted();
+    if(!sd_mutex_ || xSemaphoreTake(sd_mutex_, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return false;
+    }
+    const bool available = sd_filesystem_ && sd_device_ &&
+        sd_device_->mounted();
+    xSemaphoreGive(sd_mutex_);
+    return available;
 }
 
 bool StorageService::validateSdSession() {
-    if(!sd_device_ || !takeSdLock()) return false;
-    const bool available = sd_device_->validateSession();
+    if(!takeSdLock()) return false;
+    const bool available = sd_device_ && sd_device_->validateSession();
     giveSdLock();
     return available;
 }
@@ -584,8 +783,13 @@ bool StorageService::isManagedPath(const char * path) {
     return true;
 }
 
-bool StorageService::takeSdLock(TickType_t timeout) {
-    return sd_mutex_ && xSemaphoreTake(sd_mutex_, timeout) == pdTRUE;
+bool StorageService::takeSdLock(TickType_t timeout, bool bulk_owner) {
+    if(!sd_mutex_ || xSemaphoreTake(sd_mutex_, timeout) != pdTRUE) return false;
+    if((bulk_sd_session_ || ota_sd_session_) && !bulk_owner) {
+        xSemaphoreGive(sd_mutex_);
+        return false;
+    }
+    return true;
 }
 
 void StorageService::giveSdLock() {
@@ -594,18 +798,34 @@ void StorageService::giveSdLock() {
 
 fs::File StorageService::openManaged(const char * path, const char * mode) {
     if(!sdAvailable() || !isManagedPath(path) || !takeSdLock()) return {};
+    if(!sd_filesystem_ || !sd_device_ || !sd_device_->mounted()) {
+        giveSdLock();
+        return {};
+    }
     fs::File file = sd_filesystem_->open(path, mode);
     if(!file && sd_device_) sd_device_->validateSession();
-    else if(file && sd_device_) sd_device_->noteIoResult(true);
+    else if(file && normal_sd_handles_ == UINT16_MAX) file.close();
+    else if(file) {
+        ++normal_sd_handles_;
+        if(sd_device_) sd_device_->noteIoResult(true);
+    }
     giveSdLock();
     return file;
 }
 
 fs::File StorageService::openNextManaged(fs::File & directory) {
     if(!sdAvailable() || !directory || !takeSdLock()) return {};
+    if(!sd_filesystem_ || !sd_device_ || !sd_device_->mounted()) {
+        giveSdLock();
+        return {};
+    }
     fs::File entry = directory.openNextFile();
     if(!entry && sd_device_) sd_device_->validateSession();
-    else if(entry && sd_device_) sd_device_->noteIoResult(true);
+    else if(entry && normal_sd_handles_ == UINT16_MAX) entry.close();
+    else if(entry) {
+        ++normal_sd_handles_;
+        if(sd_device_) sd_device_->noteIoResult(true);
+    }
     giveSdLock();
     return entry;
 }
@@ -632,7 +852,8 @@ bool StorageService::managedFilePath(fs::File & file,
         return false;
     }
     const char * path = file.path();
-    const bool success = path && path[0] && isManagedPath(path);
+    const bool success = path && path[0] &&
+        strnlen(path, out_size) < out_size && isManagedPath(path);
     if(success) strlcpy(out, path, out_size);
     else out[0] = '\0';
     if(sd_device_) sd_device_->noteIoResult(success);
@@ -713,16 +934,239 @@ bool StorageService::seekManaged(fs::File & file, uint32_t position) {
 
 void StorageService::closeManaged(fs::File & file) {
     if(!file) return;
-    if(takeSdLock()) {
+    // A normal owner that predates a Bulk lease must always be able to close.
+    if(takeSdLock(portMAX_DELAY, true)) {
         file.close();
+        if(normal_sd_handles_ > 0) --normal_sd_handles_;
         giveSdLock();
-    } else {
-        file.close();
     }
 }
 
-void StorageService::reportSdResult(bool success) {
+uint16_t StorageService::cleanupBulkPartFiles() {
+    static const char * const roots[] = {
+        "/FireflyOS/Themes",
+        "/FireflyOS/Pictures",
+        "/FireflyOS/Music",
+        "/FireflyOS/Updates",
+    };
+    uint16_t removed = 0;
+    for(const char * root : roots) {
+        fs::File directory_handle = openManaged(root);
+        bool root_is_directory = false;
+        if(!directory_handle ||
+           !managedFileIsDirectory(directory_handle, root_is_directory) ||
+           !root_is_directory) {
+            closeManaged(directory_handle);
+            continue;
+        }
+        while(true) {
+            fs::File entry = openNextManaged(directory_handle);
+            if(!entry) break;
+            bool directory = false;
+            char path[256]{};
+            const bool removable = managedFileIsDirectory(entry, directory) &&
+                !directory && managedFilePath(entry, path, sizeof(path));
+            closeManaged(entry);
+            if(!removable) continue;
+            const size_t length = strlen(path);
+            if(length >= 5 && strcmp(path + length - 5, ".part") == 0 &&
+               removeManaged(path) && removed != UINT16_MAX) {
+                ++removed;
+            }
+        }
+        closeManaged(directory_handle);
+    }
+    return removed;
+}
+
+bool StorageService::beginBulkSdSession() {
+    if(!sd_mutex_ || xSemaphoreTake(sd_mutex_, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return false;
+    }
+    const bool available = !bulk_sd_session_ && !ota_sd_session_ &&
+        normal_sd_handles_ == 0 &&
+        sd_filesystem_ && sd_device_ && sd_device_->validateSession();
+    if(available) bulk_sd_session_ = true;
+    xSemaphoreGive(sd_mutex_);
+    return available;
+}
+
+void StorageService::endBulkSdSession() {
+    if(!sd_mutex_ || xSemaphoreTake(sd_mutex_, portMAX_DELAY) != pdTRUE) {
+        return;
+    }
+    bulk_sd_session_ = false;
+    xSemaphoreGive(sd_mutex_);
+}
+
+bool StorageService::bulkSdSessionActive() const {
+    if(!sd_mutex_ || xSemaphoreTake(sd_mutex_, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return true;
+    }
+    const bool active = bulk_sd_session_;
+    xSemaphoreGive(sd_mutex_);
+    return active;
+}
+
+bool StorageService::bulkSdAvailable() {
+    if(!takeSdLock(pdMS_TO_TICKS(50), true)) return false;
+    const bool available = bulk_sd_session_ && sd_filesystem_ && sd_device_ &&
+        sd_device_->validateSession();
+    giveSdLock();
+    return available;
+}
+
+uint64_t StorageService::bulkSdFreeBytes() {
+    if(!takeSdLock(pdMS_TO_TICKS(50), true)) return 0;
+    if(!bulk_sd_session_ || !sd_device_) {
+        giveSdLock();
+        return 0;
+    }
+    const uint64_t total = sd_device_->totalBytes();
+    const uint64_t used = sd_device_->usedBytes();
+    giveSdLock();
+    return total > used ? total - used : 0;
+}
+
+fs::File StorageService::openBulkManaged(const char * path, const char * mode) {
+    if(!isManagedPath(path) || !takeSdLock(pdMS_TO_TICKS(50), true)) return {};
+    if(!bulk_sd_session_ || !sd_filesystem_) {
+        giveSdLock();
+        return {};
+    }
+    fs::File file = sd_filesystem_->open(path, mode);
+    if(sd_device_) sd_device_->noteIoResult(static_cast<bool>(file));
+    giveSdLock();
+    return file;
+}
+
+bool StorageService::bulkManagedExists(const char * path) {
+    if(!isManagedPath(path) || !takeSdLock(pdMS_TO_TICKS(50), true)) return false;
+    if(!bulk_sd_session_ || !sd_filesystem_) {
+        giveSdLock();
+        return false;
+    }
+    const bool present = sd_filesystem_->exists(path);
+    giveSdLock();
+    return present;
+}
+
+bool StorageService::removeBulkManaged(const char * path) {
+    if(!isManagedPath(path) || !takeSdLock(pdMS_TO_TICKS(50), true)) return false;
+    if(!bulk_sd_session_ || !sd_filesystem_) {
+        giveSdLock();
+        return false;
+    }
+    const bool success = sd_filesystem_->remove(path);
     if(sd_device_) sd_device_->noteIoResult(success);
+    giveSdLock();
+    return success;
+}
+
+bool StorageService::renameBulkManaged(const char * from, const char * to) {
+    if(!isManagedPath(from) || !isManagedPath(to) ||
+       !takeSdLock(pdMS_TO_TICKS(50), true)) return false;
+    if(!bulk_sd_session_ || !sd_filesystem_) {
+        giveSdLock();
+        return false;
+    }
+    const bool success = sd_filesystem_->rename(from, to);
+    if(sd_device_) sd_device_->noteIoResult(success);
+    giveSdLock();
+    return success;
+}
+
+size_t StorageService::writeBulkManaged(fs::File & file,
+                                        const uint8_t * data,
+                                        size_t length) {
+    if(!file || !data || length == 0 ||
+       !takeSdLock(pdMS_TO_TICKS(50), true)) return 0;
+    if(!bulk_sd_session_) {
+        giveSdLock();
+        return 0;
+    }
+    const size_t written = file.write(data, length);
+    if(sd_device_) sd_device_->noteIoResult(written == length);
+    giveSdLock();
+    return written;
+}
+
+size_t StorageService::readBulkManaged(fs::File & file,
+                                       uint8_t * data,
+                                       size_t length) {
+    if(!file || !data || length == 0 ||
+       !takeSdLock(pdMS_TO_TICKS(50), true)) return 0;
+    if(!bulk_sd_session_ && !ota_sd_session_) {
+        giveSdLock();
+        return 0;
+    }
+    const size_t count = file.read(data, length);
+    if(sd_device_) sd_device_->noteIoResult(count > 0 || file.available() == 0);
+    giveSdLock();
+    return count;
+}
+
+void StorageService::closeBulkManaged(fs::File & file) {
+    if(!file) return;
+    if(takeSdLock(pdMS_TO_TICKS(50), true)) {
+        file.close();
+        giveSdLock();
+    }
+}
+
+bool StorageService::beginOtaSdSession() {
+    if(!sd_mutex_ || xSemaphoreTake(sd_mutex_, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return false;
+    }
+    const bool available = !bulk_sd_session_ && !ota_sd_session_ &&
+        normal_sd_handles_ == 0 && sd_filesystem_ && sd_device_ &&
+        sd_device_->validateSession();
+    if(available) ota_sd_session_ = true;
+    xSemaphoreGive(sd_mutex_);
+    return available;
+}
+
+void StorageService::endOtaSdSession() {
+    if(!sd_mutex_ || xSemaphoreTake(sd_mutex_, portMAX_DELAY) != pdTRUE) return;
+    ota_sd_session_ = false;
+    xSemaphoreGive(sd_mutex_);
+}
+
+bool StorageService::otaSdAvailable() {
+    if(!takeSdLock(pdMS_TO_TICKS(50), true)) return false;
+    const bool available = ota_sd_session_ && sd_filesystem_ && sd_device_ &&
+        sd_device_->validateSession();
+    giveSdLock();
+    return available;
+}
+
+fs::File StorageService::openOtaManaged(const char * path) {
+    if(!isManagedPath(path) || !takeSdLock(pdMS_TO_TICKS(50), true)) return {};
+    if(!ota_sd_session_ || !sd_filesystem_) {
+        giveSdLock();
+        return {};
+    }
+    fs::File file = sd_filesystem_->open(path, FILE_READ);
+    if(sd_device_) sd_device_->noteIoResult(static_cast<bool>(file));
+    giveSdLock();
+    return file;
+}
+
+size_t StorageService::readOtaManaged(fs::File & file,
+                                      uint8_t * data,
+                                      size_t length) {
+    if(length > 4096) return 0;
+    return readBulkManaged(file, data, length);
+}
+
+void StorageService::closeOtaManaged(fs::File & file) {
+    closeBulkManaged(file);
+}
+
+void StorageService::reportSdResult(bool success) {
+    if(!takeSdLock()) return;
+    if(sd_device_) sd_device_->noteIoResult(success);
+    giveSdLock();
 }
 
 void StorageService::applyLegacySnapshot(

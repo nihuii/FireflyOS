@@ -7,6 +7,47 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class RepositoryContracts(unittest.TestCase):
+    def test_home_apps_declare_and_render_capability_requirements(self):
+        sketch = (ROOT / "Firefly" / "Firefly.ino").read_text(encoding="utf-8")
+        header = (
+            ROOT / "libraries" / "FireflyOS" / "src" / "firefly" /
+            "ui" / "screens" / "HomeScreen.h"
+        ).read_text(encoding="utf-8")
+        source = (
+            ROOT / "libraries" / "FireflyOS" / "src" / "firefly" /
+            "ui" / "screens" / "HomeScreen.cpp"
+        ).read_text(encoding="utf-8")
+        for app, capability in (
+            ("activity", "Motion"),
+            ("music", "Audio"),
+            ("recorder", "Audio"),
+            ("files", "Sd"),
+            ("themes", "Sd"),
+        ):
+            line = next(line for line in sketch.splitlines() if f'{{"{app}",' in line)
+            self.assertIn(f"Capability::{capability}", line)
+        self.assertIn("const CapabilityRegistry & capabilities", header)
+        self.assertIn("registry_->available(app, *capabilities_)", source)
+        self.assertIn("LV_STATE_DISABLED", source)
+
+    def test_hardware_failures_map_probe_and_bus_timeout_paths(self):
+        sketch = (ROOT / "Firefly" / "Firefly.ino").read_text(encoding="utf-8")
+        interaction = (ROOT / "Firefly" / "FireflyInteraction.cpp").read_text(
+            encoding="utf-8"
+        )
+        wifi_header = (
+            ROOT / "libraries" / "FireflyOS" / "src" / "firefly" /
+            "services" / "WifiService.h"
+        ).read_text(encoding="utf-8")
+        self.assertIn("bool probeHardware()", wifi_header)
+        self.assertIn("wifi_service.probeHardware()", sketch)
+        self.assertIn("wifi_service.hardwareAvailable()", interaction)
+        self.assertIn("HardwareDevice::Wifi", interaction)
+        self.assertIn("HardwareFailure::IoFailure", interaction)
+        for lock_flag in ("pmu_i2c_locked", "rtc_i2c_locked"):
+            self.assertIn(lock_flag, sketch)
+        self.assertGreaterEqual(sketch.count("HardwareFailure::Timeout"), 2)
+
     def test_main_sketch_exists(self):
         self.assertTrue((ROOT / "Firefly" / "Firefly.ino").is_file())
 
@@ -37,9 +78,7 @@ class RepositoryContracts(unittest.TestCase):
         self.assertIn("name=FireflyOS", manifest.read_text(encoding="utf-8"))
 
     def test_custom_32mb_partition_layout_is_project_owned(self):
-        partition = (
-            ROOT / "tools" / "partitions" / "app5M_fat24M_32MB.csv"
-        )
+        partition = ROOT / "Firefly" / "partitions.csv"
         self.assertTrue(
             partition.is_file(),
             "the custom partition layout must not depend on an Arduino cache",
@@ -47,13 +86,14 @@ class RepositoryContracts(unittest.TestCase):
         layout = partition.read_text(encoding="utf-8")
         self.assertIn("app0,", layout)
         self.assertIn("app1,", layout)
-        self.assertIn("0x480000", layout)
-        self.assertIn("0x16E0000", layout)
+        self.assertEqual(layout.count("0xB00000"), 2)
+        self.assertIn("0x9F0000", layout)
 
         build_script = (ROOT / "tools" / "build_firmware.ps1").read_text(
             encoding="utf-8"
         )
-        self.assertIn("app5M_fat24M_32MB.csv", build_script)
+        self.assertIn("Firefly\\partitions.csv", build_script)
+        self.assertIn("validate_partition_layout.py", build_script)
         self.assertIn("partitions.csv", build_script)
         self.assertLess(
             build_script.index("partitions.csv"),

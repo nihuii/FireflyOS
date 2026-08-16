@@ -1,4 +1,5 @@
 #include "FireflyApp.h"
+#include <SD_MMC.h>
 #include "touch.h"
 
 SensorPCF85063 rtc;
@@ -31,6 +32,13 @@ lv_obj_t * settings_time_container = NULL;
 lv_obj_t * settings_sound_container = NULL;
 lv_obj_t * settings_alarm_container = NULL;
 lv_obj_t * settings_display_container = NULL;
+lv_obj_t * settings_reset_container = NULL;
+lv_obj_t * settings_reset_title = NULL;
+lv_obj_t * settings_reset_detail = NULL;
+lv_obj_t * settings_reset_notice = NULL;
+lv_obj_t * settings_reset_keep_button = NULL;
+lv_obj_t * settings_reset_sd_button = NULL;
+lv_obj_t * settings_reset_cancel_button = NULL;
 lv_obj_t * settings_volume_slider = NULL;
 lv_obj_t * settings_volume_value_label = NULL;
 lv_obj_t * settings_brightness_slider = NULL;
@@ -84,7 +92,9 @@ volatile unsigned long last_activity_time = 0;
 volatile unsigned long sleep_entered_at = 0;
 volatile unsigned long charge_overlay_started_at = 0;
 volatile uint32_t settings_command_failures = 0;
-bool alarm_ringing = false;
+std::atomic<bool> alarm_ringing{false};
+std::atomic<int8_t> factory_reset_execute_request{-1};
+std::atomic<bool> factory_reset_reboot_pending{false};
 volatile bool charging_overlay_visible = false;
 bool charging_last_state = false;
 
@@ -110,18 +120,48 @@ firefly::Es8311Device es8311_device(firefly_i2c_bus);
 firefly::AudioService audio_service(es8311_device);
 firefly::AlarmService alarm_service;
 firefly::PowerService power_service;
+firefly::WifiService wifi_service;
 firefly::StorageService storage_service;
+firefly::LittleFsWeatherCacheStore weather_cache_store;
+firefly::WeatherService weather_service(weather_cache_store, wifi_service);
+firefly::SdBulkTransferStorage bulk_transfer_storage(storage_service);
+firefly::EspHttpBulkTransferTransport bulk_transfer_transport;
+firefly::BulkTransferService bulk_transfer_service(
+    bulk_transfer_storage, bulk_transfer_transport, power_service, wifi_service);
 firefly::FileScanService file_scan_service;
 firefly::ThemePackageService theme_package_service;
 firefly::SystemSettings system_settings;
 firefly::TimeService time_service(firefly_board);
 firefly::MotionService motion_service(qmi8658_device);
 firefly::CapabilityRegistry system_capabilities;
+firefly::HardwareCapabilities hardware_capabilities;
+firefly::ResourceGovernor system_resources;
+firefly::SystemLifecycle system_lifecycle;
+firefly::EspOtaWriter ota_writer;
+firefly::UpdateService update_service(
+    system_resources, ota_writer, FIREFLYOS_BUILD);
+firefly::SdManifestSource sd_manifest_source(
+    storage_service, "/FireflyOS/Updates/update.json");
+firefly::SdUpdateSource sd_update_source(
+    storage_service, "/FireflyOS/Updates/update.bin");
+firefly::HttpsManifestSource https_manifest_source;
+firefly::HttpsUpdateSource https_update_source;
+firefly::UpdateCoordinator update_coordinator(
+    update_service, wifi_service,
+    sd_manifest_source, sd_update_source,
+    https_manifest_source, https_update_source);
+firefly::EspOtaBootPlatform ota_boot_platform;
+firefly::BootValidationService boot_validation_service(ota_boot_platform);
+firefly::DiagnosticService diagnostic_service;
+firefly::SerialDiagnosticExport serial_diagnostic_export;
+firefly::SdDiagnosticExport sd_diagnostic_export(storage_service);
 firefly::UiShell ui_shell;
 firefly::GlanceScreen glance_screen;
 firefly::LockScreen lock_screen;
 firefly::HomeScreen home_screen;
 firefly::ActivityApp activity_app;
+firefly::WeatherApp weather_app;
+firefly::UpdateApp update_app;
 firefly::CalendarApp calendar_app;
 firefly::ClockApp clock_app;
 firefly::SettingsApp settings_app;
@@ -137,5 +177,6 @@ firefly::NotificationCenter notification_center;
 firefly::NotificationService notification_service;
 firefly::StateStore ui_state_store;
 firefly::PairingOverlay pairing_overlay;
+firefly::WifiProvisionOverlay wifi_provision_overlay;
 
 lv_disp_draw_buf_t draw_buf;

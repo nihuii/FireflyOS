@@ -3,6 +3,7 @@ package com.fireflyos.companion.sync
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.roundToInt
 
 data class PhoneWeather(
     val city: String,
@@ -11,52 +12,70 @@ data class PhoneWeather(
     val highTenthsC: Int,
     val lowTenthsC: Int,
     val updatedAtEpochSeconds: Long,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
 )
 
 object WeatherPayloadCodec {
-    const val MAX_CITY_BYTES = 47
-    const val MAX_PAYLOAD_BYTES = 66
-    private const val SCHEMA = 1
-    private const val FIXED_BYTES = 18
+    const val MAX_CITY_BYTES = 31
+    const val MAX_PAYLOAD_BYTES = 58
+    private const val SCHEMA_V1 = 1
+    private const val SCHEMA_V2 = 2
+    private const val FIXED_BYTES_V1 = 18
+    private const val FIXED_BYTES_V2 = 26
 
     fun encode(weather: PhoneWeather): ByteArray =
         requireNotNull(encodeOrNull(weather)) { "weather payload is out of bounds" }
 
     fun encodeOrNull(weather: PhoneWeather): ByteArray? {
         val city = weather.city.toByteArray(Charsets.UTF_8)
+        val hasLocation = weather.latitude != null || weather.longitude != null
+        val latitude = weather.latitude
+        val longitude = weather.longitude
         if (city.isEmpty() || city.size > MAX_CITY_BYTES ||
             city.toString(Charsets.UTF_8) != weather.city ||
             weather.temperatureTenthsC !in Short.MIN_VALUE..Short.MAX_VALUE ||
             weather.highTenthsC !in Short.MIN_VALUE..Short.MAX_VALUE ||
             weather.lowTenthsC !in Short.MIN_VALUE..Short.MAX_VALUE ||
-            weather.weatherCode !in 0..0xFFFF
+            weather.weatherCode !in 0..0xFFFF ||
+            (hasLocation && (latitude == null || longitude == null ||
+                !latitude.isFinite() || !longitude.isFinite() ||
+                latitude !in -90.0..90.0 || longitude !in -180.0..180.0))
         ) {
             return null
         }
-        return ByteBuffer.allocate(FIXED_BYTES + city.size)
+        val fixedBytes = if (hasLocation) FIXED_BYTES_V2 else FIXED_BYTES_V1
+        val buffer = ByteBuffer.allocate(fixedBytes + city.size)
             .order(ByteOrder.LITTLE_ENDIAN)
-            .put(SCHEMA.toByte())
+            .put((if (hasLocation) SCHEMA_V2 else SCHEMA_V1).toByte())
             .put(city.size.toByte())
             .putShort(weather.weatherCode.toShort())
             .putShort(weather.temperatureTenthsC.toShort())
             .putShort(weather.highTenthsC.toShort())
             .putShort(weather.lowTenthsC.toShort())
             .putLong(weather.updatedAtEpochSeconds)
-            .put(city)
-            .array()
+        if (hasLocation) {
+            buffer.putInt((latitude!! * 1_000_000.0).roundToInt())
+            buffer.putInt((longitude!! * 1_000_000.0).roundToInt())
+        }
+        return buffer.put(city).array()
     }
 
     fun decode(payload: ByteArray): PhoneWeather? {
-        if (payload.size !in (FIXED_BYTES + 1)..MAX_PAYLOAD_BYTES) return null
+        if (payload.size !in (FIXED_BYTES_V1 + 1)..MAX_PAYLOAD_BYTES) return null
         val buffer = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
-        if ((buffer.get().toInt() and 0xFF) != SCHEMA) return null
+        val schema = buffer.get().toInt() and 0xFF
+        if (schema != SCHEMA_V1 && schema != SCHEMA_V2) return null
         val cityLength = buffer.get().toInt() and 0xFF
-        if (cityLength !in 1..MAX_CITY_BYTES || buffer.remaining() != 16 + cityLength) return null
+        val fixedTail = if (schema == SCHEMA_V2) 24 else 16
+        if (cityLength !in 1..MAX_CITY_BYTES || buffer.remaining() != fixedTail + cityLength) return null
         val weatherCode = buffer.short.toInt() and 0xFFFF
         val temperature = buffer.short.toInt()
         val high = buffer.short.toInt()
         val low = buffer.short.toInt()
         val updatedAt = buffer.long
+        val latitude = if (schema == SCHEMA_V2) buffer.int / 1_000_000.0 else null
+        val longitude = if (schema == SCHEMA_V2) buffer.int / 1_000_000.0 else null
         val cityBytes = ByteArray(cityLength)
         buffer.get(cityBytes)
         val city = cityBytes.toString(Charsets.UTF_8)
@@ -65,7 +84,8 @@ object WeatherPayloadCodec {
         ) {
             return null
         }
-        return PhoneWeather(city, temperature, weatherCode, high, low, updatedAt)
+        return PhoneWeather(city, temperature, weatherCode, high, low, updatedAt,
+            latitude, longitude)
     }
 }
 

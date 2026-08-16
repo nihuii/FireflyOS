@@ -44,9 +44,9 @@ bool SdFailureMonitor::noteResult(bool success) {
 }
 
 bool SdCardDevice::begin() {
-    if(mounted_) end();
+    if(mounted()) end();
     failure_monitor_.reset();
-    removed_event_pending_ = false;
+    removed_event_pending_.store(false, std::memory_order_release);
 
     if(!SD_MMC.setPins(kClockPin, kCommandPin, kDataPin) ||
        !SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT, 5) ||
@@ -54,7 +54,7 @@ bool SdCardDevice::begin() {
         SD_MMC.end();
         return false;
     }
-    mounted_ = true;
+    mounted_.store(true, std::memory_order_release);
     if(!ensureFireflyDirectories()) {
         end();
         return false;
@@ -64,8 +64,8 @@ bool SdCardDevice::begin() {
 }
 
 void SdCardDevice::end() {
-    if(mounted_) SD_MMC.end();
-    mounted_ = false;
+    if(mounted()) SD_MMC.end();
+    mounted_.store(false, std::memory_order_release);
     failure_monitor_.reset();
 }
 
@@ -78,7 +78,7 @@ uint64_t SdCardDevice::usedBytes() const {
 }
 
 bool SdCardDevice::ensureFireflyDirectories() {
-    if(!mounted_) return false;
+    if(!mounted()) return false;
     if(!SD_MMC.exists("/FireflyOS") && !SD_MMC.mkdir("/FireflyOS")) {
         noteIoResult(false);
         return false;
@@ -86,7 +86,7 @@ bool SdCardDevice::ensureFireflyDirectories() {
     for(const char * path : kManagedDirectories) {
         const bool ok = SD_MMC.exists(path) || SD_MMC.mkdir(path);
         noteIoResult(ok);
-        if(!ok || !mounted_) return false;
+        if(!ok || !mounted()) return false;
     }
     return true;
 }
@@ -101,16 +101,15 @@ bool SdCardDevice::exists(const char * relative_path) const {
 }
 
 bool SdCardDevice::validateSession() const {
-    if(!mounted_) return false;
+    if(!mounted()) return false;
     const bool present = SD_MMC.cardType() != CARD_NONE;
     noteIoResult(present);
-    return present && mounted_;
+    return present && mounted();
 }
 
 bool SdCardDevice::takeRemovedEvent() {
-    const bool pending = removed_event_pending_;
-    removed_event_pending_ = false;
-    return pending;
+    return removed_event_pending_.exchange(
+        false, std::memory_order_acq_rel);
 }
 
 fs::FS & SdCardDevice::filesystem() {
@@ -157,10 +156,10 @@ bool SdCardDevice::makeManagedPath(const char * relative_path,
 }
 
 void SdCardDevice::noteIoResult(bool success) const {
-    if(!mounted_ || !failure_monitor_.noteResult(success)) return;
+    if(!mounted() || !failure_monitor_.noteResult(success)) return;
     SD_MMC.end();
-    mounted_ = false;
-    removed_event_pending_ = true;
+    mounted_.store(false, std::memory_order_release);
+    removed_event_pending_.store(true, std::memory_order_release);
 }
 
 }  // namespace firefly

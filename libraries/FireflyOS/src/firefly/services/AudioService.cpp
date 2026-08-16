@@ -494,6 +494,8 @@ uint16_t AudioService::cleanupTemporaryRecordings(StorageService & storage,
 bool AudioService::beginSession(AudioUse use,
                                 uint32_t sample_rate,
                                 bool playback) {
+    if(start_allowed_callback_ &&
+       !start_allowed_callback_(use, start_allowed_context_)) return false;
     if(!i2s_installed_ && !begin()) return false;
     const AudioUse previous = arbiter_.current();
     if(!arbiter_.acquire(use)) return false;

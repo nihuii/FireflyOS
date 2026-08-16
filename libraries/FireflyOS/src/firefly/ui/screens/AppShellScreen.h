@@ -12,6 +12,7 @@ public:
     void hide() override;
     void refresh(const SystemState & state) override;
     void setTitle(const char * title);
+    void setStatus(const char * status);
     void showWeather(const CompanionWeatherView & weather);
     lv_obj_t * root() const { return root_; }
 

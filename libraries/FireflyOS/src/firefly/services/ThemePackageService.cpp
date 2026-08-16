@@ -566,7 +566,7 @@ const ThemeManifest & ThemePackageService::neutralDefault() {
         0x080B10, 0x151A22, 0xD8E0EA, 0x8E9AAA, 0xFF5A5F
     };
     static const ThemeManifest manifest = makeBuiltIn(
-        "neutral-default", "Neutral", palette);
+        "system-default", "Default", palette);
     return manifest;
 }
 
@@ -576,7 +576,7 @@ const ThemeManifest & ThemePackageService::fireflyDefault() {
         0x05090C, 0x0C1820, 0x5FE7C7, 0x6EC4D6, 0xFF5A5F
     };
     static const ThemeManifest manifest = makeBuiltIn(
-        "firefly-default", "Firefly", palette);
+        "firefly-accent", "Firefly", palette);
     return manifest;
 #else
     return neutralDefault();

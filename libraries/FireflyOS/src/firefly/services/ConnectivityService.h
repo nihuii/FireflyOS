@@ -99,6 +99,7 @@ public:
     bool confirmPairing(bool allow, uint32_t now_ms);
     bool requestUnpairConfirmation(uint32_t now_ms);
     bool confirmUnpair(bool confirm, uint32_t now_ms);
+    bool clearSensitiveState();
 
 private:
     enum class PendingAckPurpose : uint8_t {

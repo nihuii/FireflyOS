@@ -277,6 +277,125 @@ class PairingSecurityContractTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, sources)
 
+    def test_factory_reset_uses_owner_cleanup_and_two_step_sd_confirmation(self):
+        services = LIB / "services"
+        reset_header = (services / "FactoryResetService.h").read_text(encoding="utf-8")
+        reset_source = (services / "FactoryResetService.cpp").read_text(encoding="utf-8")
+        storage = (
+            (services / "StorageService.h").read_text(encoding="utf-8")
+            + (services / "StorageService.cpp").read_text(encoding="utf-8")
+        )
+        connectivity = (
+            (services / "ConnectivityService.h").read_text(encoding="utf-8")
+            + (services / "ConnectivityService.cpp").read_text(encoding="utf-8")
+        )
+        runtime = (
+            (ROOT / "Firefly" / "FireflyApp.h").read_text(encoding="utf-8")
+            + (ROOT / "Firefly" / "FireflyState.cpp").read_text(encoding="utf-8")
+            + (ROOT / "Firefly" / "FireflyInteraction.cpp").read_text(encoding="utf-8")
+            + (ROOT / "Firefly" / "Firefly.ino").read_text(encoding="utf-8")
+        )
+
+        for token in (
+            "FactoryResetState::Preview",
+            "FactoryResetState::InternalConfirmed",
+            "FactoryResetState::SdConfirmed",
+            "generation == snapshot_.generation",
+            "!erase_sd || owners_.clearManagedSdRoot()",
+        ):
+            self.assertIn(token, reset_header + reset_source)
+        for token in (
+            "clearInternalUserData",
+            "clearManagedSdRoot",
+            '"Music", "Recordings", "Pictures", "Themes"',
+            '"Updates", "Backups", "Logs"',
+        ):
+            self.assertIn(token, storage)
+        self.assertIn("clearSensitiveState", connectivity)
+        for token in (
+            "FireflyFactoryResetOwners",
+            "factory_reset_service",
+            "Keep SD media",
+            "Delete managed FireflyOS data",
+            "Factory Reset",
+        ):
+            self.assertIn(token, runtime)
+
+    def test_factory_reset_cleanup_runs_off_the_lvgl_main_loop(self):
+        interaction = (ROOT / "Firefly" / "FireflyInteraction.cpp").read_text(
+            encoding="utf-8"
+        )
+        process_start = interaction.index("void firefly_process_factory_reset()")
+        process_end = interaction.index("void firefly_process_sd_card()", process_start)
+        process = interaction[process_start:process_end]
+        self.assertIn("factory_reset_worker", interaction)
+        self.assertIn("xTaskCreateStaticPinnedToCore", process)
+        self.assertNotIn("factory_reset_service.execute", process)
+        worker_start = interaction.index("void factory_reset_worker")
+        worker_end = interaction.index("void firefly_process_factory_reset()", worker_start)
+        worker = interaction[worker_start:worker_end]
+        self.assertIn("factory_reset_service.execute", worker)
+        self.assertNotIn("lv_", worker)
+        self.assertNotIn("notification_center", worker)
+
+    def test_privacy_defaults_and_android_permissions_remain_minimal(self):
+        notification_header = (LIB / "services" / "NotificationService.h").read_text(
+            encoding="utf-8"
+        )
+        storage_header = (LIB / "services" / "StorageService.h").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("lock_screen_body_hidden_ = true", notification_header)
+        self.assertIn("hide_notification_content = true", storage_header)
+
+        manifest = (
+            ROOT / "AndroidCompanion" / "app" / "src" / "main" /
+            "AndroidManifest.xml"
+        ).read_text(encoding="utf-8")
+        for forbidden in (
+            "ACCESS_BACKGROUND_LOCATION",
+            "READ_CONTACTS",
+            "WRITE_CONTACTS",
+            "RECORD_AUDIO",
+            "READ_EXTERNAL_STORAGE",
+            "WRITE_EXTERNAL_STORAGE",
+            "MANAGE_EXTERNAL_STORAGE",
+        ):
+            self.assertNotIn(forbidden, manifest)
+
+        sources = "\n".join(
+            path.read_text(encoding="utf-8")
+            for root in (ROOT / "Firefly", LIB / "services", LIB / "hal")
+            for path in root.rglob("*.cpp")
+        )
+        for line in sources.splitlines():
+            lowered = line.lower()
+            if not any(logger in lowered for logger in ("serial.", "log_")):
+                continue
+            for secret in (
+                "password", "ssid", "app_token", "token", "credential",
+                "session_secret", "hmac", "notification.body",
+                "recording_content",
+            ):
+                self.assertNotIn(secret, lowered, line)
+
+        android_root = (
+            ROOT / "AndroidCompanion" / "app" / "src" / "main" / "java"
+        )
+        for path in android_root.rglob("*.kt"):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                lowered = line.lower()
+                if not any(logger in lowered for logger in (
+                    "log.v(", "log.d(", "log.i(", "log.w(", "log.e(",
+                    "println(", "print(",
+                )):
+                    continue
+                for secret in (
+                    "password", "ssid", "token", "credential", "session",
+                    "notification.body",
+                ):
+                    self.assertNotIn(secret, lowered, f"{path}: {line}")
+
 
 if __name__ == "__main__":
     unittest.main()

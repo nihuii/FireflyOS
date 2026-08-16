@@ -112,6 +112,22 @@ bool dueOrPast(uint32_t now_ms, uint32_t deadline_ms) {
     return static_cast<int32_t>(now_ms - deadline_ms) >= 0;
 }
 
+void normalizeLegacyThemeAlias(CompanionSettingsSnapshot & snapshot) {
+    constexpr uint8_t theme_index =
+        static_cast<uint8_t>(CompanionSettingKind::Theme) - 1;
+    if(snapshot.valid[theme_index] != 1) return;
+    VersionedCompanionSetting & theme = snapshot.settings[theme_index];
+    static const char legacy_id[] = "firefly-default";
+    static const char neutral_id[] = "system-default";
+    if(theme.value_length != sizeof(legacy_id) - 1 ||
+       memcmp(theme.value, legacy_id, sizeof(legacy_id) - 1) != 0) {
+        return;
+    }
+    theme.value_length = sizeof(neutral_id) - 1;
+    memset(theme.value, 0, sizeof(theme.value));
+    memcpy(theme.value, neutral_id, sizeof(neutral_id) - 1);
+}
+
 void formatTenths(char * output,
                   size_t capacity,
                   const char * prefix,
@@ -290,8 +306,10 @@ bool CompanionSyncService::setting(
 
 bool CompanionSyncService::restoreSnapshot(
     const CompanionSettingsSnapshot & snapshot) {
-    if(!validSnapshot(snapshot)) return false;
-    settings_snapshot_ = snapshot;
+    CompanionSettingsSnapshot normalized = snapshot;
+    normalizeLegacyThemeAlias(normalized);
+    if(!validSnapshot(normalized)) return false;
+    settings_snapshot_ = normalized;
     return true;
 }
 
@@ -508,9 +526,11 @@ bool CompanionSyncService::validSnapshot(
 
 bool CompanionSyncService::persistAndCommit(
     const CompanionSettingsSnapshot & staged) {
-    if(!validSnapshot(staged)) return false;
-    if(persistence_ && !persistence_->saveSnapshot(staged)) return false;
-    settings_snapshot_ = staged;
+    CompanionSettingsSnapshot normalized = staged;
+    normalizeLegacyThemeAlias(normalized);
+    if(!validSnapshot(normalized)) return false;
+    if(persistence_ && !persistence_->saveSnapshot(normalized)) return false;
+    settings_snapshot_ = normalized;
     return true;
 }
 
@@ -574,18 +594,19 @@ bool CompanionSyncService::applySettingsFrame(const protocol::Frame & frame) {
 
 bool CompanionSyncService::applyWeatherFrame(const protocol::Frame & frame) {
     if(frame.payload_length <= kWeatherFixedBytes ||
-       frame.payload[0] != kSchema) {
+       (frame.payload[0] != kSchema && frame.payload[0] != 2)) {
         return false;
     }
+    const uint16_t fixed_bytes = frame.payload[0] == 2 ? 26 : kWeatherFixedBytes;
     const uint8_t city_length = frame.payload[1];
     if(city_length == 0 || city_length >= sizeof(weather_.city) ||
-       static_cast<uint16_t>(kWeatherFixedBytes + city_length) !=
+       static_cast<uint16_t>(fixed_bytes + city_length) !=
            frame.payload_length) {
         return false;
     }
     CompanionWeather decoded{};
     if(!copyUtf8(decoded.city, sizeof(decoded.city),
-                 frame.payload + kWeatherFixedBytes, city_length)) {
+                 frame.payload + fixed_bytes, city_length)) {
         return false;
     }
     decoded.weather_code = readU16(frame.payload + 2);

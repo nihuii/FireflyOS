@@ -20,6 +20,9 @@ Write-Host '[4/5] Firefly firmware compile'
 & (Join-Path $PSScriptRoot 'build_firmware.ps1') -Target Firefly
 
 Write-Host '[5/5] Documentation checks'
+python -m unittest tests.python.test_release_documentation -v
+if($LASTEXITCODE -ne 0) { throw 'Release documentation tests failed' }
+
 $docs = Get-ChildItem (Join-Path $root 'docs') -Recurse -File -Filter '*.md'
 $markers = @(('T' + 'BD'), ('T' + 'ODO'), ('FIX' + 'ME'))
 $bad = $docs | Select-String -Pattern ($markers -join '|')

@@ -13,6 +13,8 @@ public:
     bool post(const SystemEvent & event);
     bool take(SystemEvent & event);
     uint8_t size() const;
+    uint8_t peakSize() const;
+    uint16_t droppedCount() const;
 
 private:
     mutable portMUX_TYPE mux_ = portMUX_INITIALIZER_UNLOCKED;
@@ -20,6 +22,8 @@ private:
     uint8_t head_ = 0;
     uint8_t tail_ = 0;
     uint8_t count_ = 0;
+    uint8_t peak_size_ = 0;
+    uint16_t dropped_count_ = 0;
 };
 
 }  // namespace firefly

@@ -7,6 +7,7 @@
 #include <freertos/semphr.h>
 
 #include "AlarmService.h"
+#include "WifiService.h"
 
 namespace firefly {
 
@@ -19,7 +20,7 @@ struct SystemSettings {
     uint16_t auto_sleep_seconds = 30;
     bool hide_notification_content = true;
     bool wrist_raise_enabled = true;
-    char theme_id[24] = "firefly-default";
+    char theme_id[24] = "system-default";
 };
 
 struct ActivityStats {
@@ -66,13 +67,14 @@ struct StorageDiagnostics {
     StorageDiagnosticCode last = StorageDiagnosticCode::None;
 };
 
-class StorageService : public PairingStore {
+class StorageService : public PairingStore, public WifiCredentialStore {
 public:
     static constexpr uint16_t kSchemaVersion = 1;
     static constexpr const char * kSystemNamespace = "ff_sys";
     static constexpr const char * kAlarmNamespace = "ff_alarm";
     static constexpr const char * kPairNamespace = "ff_pair";
     static constexpr const char * kStatsNamespace = "ff_stats";
+    static constexpr const char * kWifiNamespace = "ff_wifi";
     static constexpr const char * kLegacyNamespace = "firefly";
 
     bool begin();
@@ -104,6 +106,11 @@ public:
     bool loadPairing(PairingRecord & record) override;
     bool savePairing(const PairingRecord & record) override;
     bool clearPairing() override;
+    bool loadWifiCredentials(WifiCredentials & credentials) override;
+    bool saveWifiCredentials(const WifiCredentials & credentials) override;
+    bool clearWifiCredentials() override;
+    bool clearInternalUserData();
+    bool clearManagedSdRoot();
 
     void attachSd(fs::FS & filesystem, SdCardDevice & device);
     void detachSd();
@@ -124,6 +131,32 @@ public:
     size_t writeManaged(fs::File & file, const uint8_t * data, size_t length);
     bool seekManaged(fs::File & file, uint32_t position);
     void closeManaged(fs::File & file);
+    uint16_t cleanupBulkPartFiles();
+    bool beginBulkSdSession();
+    void endBulkSdSession();
+    bool bulkSdSessionActive() const;
+    bool bulkSdAvailable();
+    uint64_t bulkSdFreeBytes();
+    fs::File openBulkManaged(const char * path,
+                             const char * mode = FILE_READ);
+    bool bulkManagedExists(const char * path);
+    bool removeBulkManaged(const char * path);
+    bool renameBulkManaged(const char * from, const char * to);
+    size_t writeBulkManaged(fs::File & file,
+                            const uint8_t * data,
+                            size_t length);
+    size_t readBulkManaged(fs::File & file,
+                           uint8_t * data,
+                           size_t length);
+    void closeBulkManaged(fs::File & file);
+    bool beginOtaSdSession();
+    void endOtaSdSession();
+    bool otaSdAvailable();
+    fs::File openOtaManaged(const char * path);
+    size_t readOtaManaged(fs::File & file,
+                          uint8_t * data,
+                          size_t length);
+    void closeOtaManaged(fs::File & file);
     void reportSdResult(bool success);
     static bool isManagedPath(const char * path);
 
@@ -140,7 +173,8 @@ private:
     bool initializeNamespaces();
     bool migrateLegacyPreferences();
     bool mountLittleFs();
-    bool takeSdLock(TickType_t timeout = pdMS_TO_TICKS(50));
+    bool takeSdLock(TickType_t timeout = pdMS_TO_TICKS(50),
+                    bool bulk_owner = false);
     void giveSdLock();
     void recordFailure(StorageDiagnosticCode code);
 
@@ -148,7 +182,10 @@ private:
     bool littlefs_read_only_ = false;
     fs::FS * sd_filesystem_ = nullptr;
     SdCardDevice * sd_device_ = nullptr;
-    SemaphoreHandle_t sd_mutex_ = nullptr;
+    mutable SemaphoreHandle_t sd_mutex_ = nullptr;
+    bool bulk_sd_session_ = false;
+    bool ota_sd_session_ = false;
+    uint16_t normal_sd_handles_ = 0;
     StorageDiagnostics diagnostics_{};
 };
 

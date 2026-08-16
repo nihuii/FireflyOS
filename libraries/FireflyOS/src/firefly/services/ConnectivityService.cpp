@@ -19,6 +19,7 @@ bool MessageAuthenticator::isSensitive(protocol::MessageType type) {
         case protocol::MessageType::FindPhone:
         case protocol::MessageType::FindWatch:
         case protocol::MessageType::WifiProvision:
+        case protocol::MessageType::BulkTransfer:
         case protocol::MessageType::OtaControl:
         case protocol::MessageType::UnpairRequest:
         case protocol::MessageType::UnpairConfirm:
@@ -857,6 +858,24 @@ bool ConnectivityService::finalizeUnpair(uint32_t now_ms) {
     postPairingEvent(EventType::PairingUnbound, 1U, now_ms);
     transport_.disconnect();
     return true;
+}
+
+bool ConnectivityService::clearSensitiveState() {
+    const bool bonds_cleared = transport_.clearBonds();
+    const bool record_cleared = pairing_store_.clearPairing();
+    transport_.disconnect();
+    clearSessionBuffers();
+
+    portENTER_CRITICAL(&pairing_mux_);
+    pairing_record_ = PairingRecord{};
+    pairing_state_ = PairingState::Idle;
+    pairing_passkey_ = 0;
+    memset(pending_phone_name_, 0, sizeof(pending_phone_name_));
+    paired_ = false;
+    portEXIT_CRITICAL(&pairing_mux_);
+    authentication_failures_ = 0;
+    connected_ = false;
+    return bonds_cleared && record_cleared;
 }
 
 void ConnectivityService::postPairingEvent(EventType type,

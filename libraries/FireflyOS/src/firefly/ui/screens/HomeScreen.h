@@ -8,7 +8,9 @@ namespace firefly {
 class HomeScreen : public Screen {
 public:
     bool create(lv_obj_t * parent, const UiTokens & tokens) override;
-    bool populate(const AppRegistry & registry, lv_event_cb_t callback);
+    bool populate(const AppRegistry & registry,
+                  const CapabilityRegistry & capabilities,
+                  lv_event_cb_t callback);
     void show() override;
     void hide() override;
     void refresh(const SystemState & state) override;
@@ -18,10 +20,14 @@ private:
     static const char * symbolFor(const char * id);
     static void pagerEventCallback(lv_event_t * event);
     void updateDots(uint8_t active_page);
+    void refreshAvailability();
     lv_obj_t * root_ = nullptr;
     lv_obj_t * pager_ = nullptr;
     lv_obj_t * dots_ = nullptr;
     lv_obj_t * pages_[kMaxPages]{};
+    lv_obj_t * app_buttons_[AppRegistry::kMaxApps]{};
+    const AppRegistry * registry_ = nullptr;
+    const CapabilityRegistry * capabilities_ = nullptr;
     uint8_t page_count_ = 0;
     UiTokens tokens_{};
 };

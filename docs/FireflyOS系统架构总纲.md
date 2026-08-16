@@ -755,6 +755,8 @@ no text, no letters, no watermark, no logo, no busy background, no photorealism,
 - 双分区 OTA、校验、回滚和 Android 端更新流程。
 - 大文件传输切换至临时 Wi-Fi 会话。
 
+计划 6 当前已在代码层接入上述服务、Weather/Diagnostics/Update 页面、固定后台更新协调器和 Release 失败闭锁。Development 默认只保证 SD OTA，HTTPS 依赖仓库外生产公钥与固定端点配置。自动测试与编译不代表真机通过；24 小时、400mAh、Wi-Fi、断电 OTA、回滚、故障降级、410×502 安全区和至少 48px 触控的 Gate E 状态仍为 `PENDING`。
+
 ### 阶段 7：视觉统一与发布准备
 
 - 完成流萤/SAM 双层视觉体系和主题包。

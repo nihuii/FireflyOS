@@ -53,6 +53,43 @@ private:
     lv_obj_t * secondary_label_ = nullptr;
 };
 
+enum class WifiProvisionDecision : uint8_t {
+    Confirm,
+    Deny,
+    Dismiss
+};
+
+class WifiProvisionOverlay {
+public:
+    using DecisionCallback = void (*)(WifiProvisionDecision);
+
+    bool create(lv_obj_t * parent);
+    void setDecisionCallback(DecisionCallback callback) { callback_ = callback; }
+    void showRequest(const char * ssid, bool forget);
+    void showProgress(const char * ssid);
+    void showResult(const char * title, const char * detail, bool success);
+    void hide();
+    lv_obj_t * root() const { return root_; }
+
+private:
+    enum class View : uint8_t { Request, Progress, Result };
+    static void primaryClicked(lv_event_t * event);
+    static void secondaryClicked(lv_event_t * event);
+    void setButtons(const char * primary, const char * secondary);
+
+    DecisionCallback callback_ = nullptr;
+    View view_ = View::Request;
+    lv_obj_t * root_ = nullptr;
+    lv_obj_t * status_label_ = nullptr;
+    lv_obj_t * title_label_ = nullptr;
+    lv_obj_t * network_label_ = nullptr;
+    lv_obj_t * detail_label_ = nullptr;
+    lv_obj_t * primary_button_ = nullptr;
+    lv_obj_t * primary_label_ = nullptr;
+    lv_obj_t * secondary_button_ = nullptr;
+    lv_obj_t * secondary_label_ = nullptr;
+};
+
 class SystemOverlayHost {
 public:
     static constexpr uint8_t kPairingPriority = 3;

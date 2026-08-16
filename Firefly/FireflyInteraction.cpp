@@ -4,6 +4,7 @@
 #include <freertos/task.h>
 #include <esp_timer.h>
 #include <esp_sleep.h>
+#include <esp_sntp.h>
 #include <sys/time.h>
 
 firefly::EventBus system_event_bus;
@@ -11,6 +12,41 @@ firefly::BlePeripheralDevice ble_peripheral_device;
 firefly::ConnectivityService connectivity_service(
     ble_peripheral_device, system_event_bus, ui_state_store, storage_service
 );
+
+class FireflyFactoryResetOwners final : public firefly::FactoryResetOwners {
+public:
+    bool clearPairing() override {
+        return connectivity_service.clearSensitiveState();
+    }
+    bool clearWifi() override { return wifi_service.clearSensitiveState(); }
+    bool clearNotifications() override {
+        return notification_service.clearSensitiveState();
+    }
+    bool clearWeather() override {
+        return weather_service.clearSensitiveState();
+    }
+    bool clearSettings() override {
+        return storage_service.clearInternalUserData();
+    }
+    bool clearCaches() override { return storage_service.clearThemeCache(); }
+    bool clearManagedSdRoot() override {
+        return storage_service.clearManagedSdRoot();
+    }
+};
+
+class FireflyFactoryResetRebooter final
+    : public firefly::FactoryResetRebooter {
+public:
+    bool requestReboot() override {
+        factory_reset_reboot_pending.store(true, std::memory_order_release);
+        return true;
+    }
+};
+
+FireflyFactoryResetOwners factory_reset_owners;
+FireflyFactoryResetRebooter factory_reset_rebooter;
+firefly::FactoryResetService factory_reset_service(
+    factory_reset_owners, factory_reset_rebooter);
 
 class FireflyCompanionSettingsPersistence final
     : public firefly::CompanionSettingsPersistence {
@@ -32,7 +68,13 @@ firefly::CompanionFrameDispatcher companion_frame_dispatcher(
 namespace {
 
 TaskHandle_t firefly_background_task_handle = NULL;
+TaskHandle_t firefly_weather_task_handle = NULL;
+TaskHandle_t firefly_bulk_task_handle = NULL;
+TaskHandle_t firefly_update_task_handle = NULL;
 bool firefly_background_task_running = false;
+bool firefly_weather_task_running = false;
+bool firefly_bulk_task_running = false;
+bool firefly_update_task_running = false;
 volatile uint32_t event_post_failures = 0;
 uint32_t desktop_transition_released_at = 0;
 uint32_t desktop_transition_max_ms = 0;
@@ -50,6 +92,89 @@ bool find_watch_feedback_sound_started = false;
 uint8_t find_watch_feedback_restore_brightness = 0;
 char companion_error_status[16]{};
 uint32_t companion_error_status_until = 0;
+bool ntp_request_configured = false;
+bool ntp_retry_after_alarm = false;
+bool sd_removal_cleanup_pending = false;
+constexpr uint32_t kFactoryResetTaskStackWords = 4096;
+StaticTask_t factory_reset_task_storage{};
+StackType_t factory_reset_task_stack[kFactoryResetTaskStackWords]{};
+TaskHandle_t factory_reset_task_handle = NULL;
+std::atomic<bool> factory_reset_worker_active{false};
+std::atomic<bool> factory_reset_worker_finished{false};
+std::atomic<bool> factory_reset_worker_completed{false};
+std::atomic<bool> factory_reset_worker_erase_sd{false};
+constexpr uint32_t kUpdateTaskStackWords = 8192;
+StaticTask_t update_task_storage{};
+StackType_t update_task_stack[kUpdateTaskStackWords]{};
+
+void stop_network_time_request() {
+    if(ntp_request_configured) esp_sntp_stop();
+    ntp_request_configured = false;
+}
+
+void requestSdRemovalCleanup() {
+    const firefly::BulkTransferState state =
+        bulk_transfer_service.snapshot().state;
+    if(state == firefly::BulkTransferState::WaitingForNetwork ||
+       state == firefly::BulkTransferState::Ready ||
+       state == firefly::BulkTransferState::Receiving ||
+       state == firefly::BulkTransferState::Completed) {
+        bulk_transfer_service.cancel(
+            firefly::BulkTransferFailure::SdUnavailable, millis());
+    }
+    sd_removal_cleanup_pending = true;
+}
+
+void finishSdRemovalCleanup() {
+    if(!sd_removal_cleanup_pending ||
+       storage_service.bulkSdSessionActive()) return;
+    if(audio_service.activeUse() == firefly::AudioUse::Music ||
+       audio_service.activeUse() == firefly::AudioUse::Recorder) {
+        audio_service.stop();
+    }
+    files_app.onSdRemoved();
+    music_app.onSdRemoved();
+    recorder_app.onSdRemoved();
+    themes_app.onSdRemoved();
+    storage_service.detachSd();
+    sd_removal_cleanup_pending = false;
+    Serial.println("SD card unavailable; media features disabled.");
+}
+
+void service_network_time(uint32_t now_ms) {
+    const bool alarm_is_ringing =
+        alarm_ringing.load(std::memory_order_acquire);
+    if(alarm_is_ringing &&
+       wifi_service.active(firefly::WifiPurpose::Ntp)) {
+        ntp_retry_after_alarm = true;
+        stop_network_time_request();
+        wifi_service.release(firefly::WifiPurpose::Ntp, now_ms);
+        return;
+    }
+    if(ntp_retry_after_alarm && !alarm_is_ringing &&
+       !wifi_service.active(firefly::WifiPurpose::Ntp)) {
+        if(!wifi_service.request(firefly::WifiPurpose::Ntp, now_ms)) return;
+        ntp_retry_after_alarm = false;
+    }
+    if(!wifi_service.active(firefly::WifiPurpose::Ntp)) {
+        stop_network_time_request();
+        time_service.flushDeferredNetworkTime(alarm_is_ringing);
+        return;
+    }
+    if(wifi_service.mode() != firefly::WifiMode::Connected) return;
+    if(!ntp_request_configured) {
+        configTzTime("CST-8", "pool.ntp.org", "time.cloudflare.com");
+        ntp_request_configured = true;
+        return;
+    }
+    if(sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED) return;
+    const int64_t network_epoch = static_cast<int64_t>(time(nullptr));
+    const bool applied = network_epoch > 1609459200LL &&
+        time_service.applyNetworkTime(network_epoch, alarm_is_ringing);
+    stop_network_time_request();
+    wifi_service.release(firefly::WifiPurpose::Ntp, now_ms);
+    if(!applied) time_service.flushDeferredNetworkTime(alarm_is_ringing);
+}
 
 void refresh_notification_center_from_service() {
     firefly::NotificationSummary visible[
@@ -76,6 +201,16 @@ bool decode_companion_alarm(const firefly::VersionedCompanionSetting & setting,
 bool resolve_remote_theme_palette(const char * theme_id,
                                   uint32_t palette[5]) {
     if(!theme_id || !theme_id[0] || !palette) return false;
+    char cached_theme_id[sizeof(system_settings.theme_id)]{};
+    uint32_t cached_palette[5]{};
+    bool cache_present = false;
+    if(storage_service.loadThemeCache(
+           cached_theme_id, sizeof(cached_theme_id),
+           cached_palette, cache_present) &&
+       cache_present && strcmp(theme_id, cached_theme_id) == 0) {
+        memcpy(palette, cached_palette, sizeof(cached_palette));
+        return true;
+    }
     const firefly::ThemeManifest & firefly_default =
         firefly::ThemePackageService::fireflyDefault();
     if(strcmp(theme_id, firefly_default.id) == 0) {
@@ -91,17 +226,12 @@ bool resolve_remote_theme_palette(const char * theme_id,
         return true;
     }
 
-    char cached_theme_id[sizeof(system_settings.theme_id)]{};
-    uint32_t cached_palette[5]{};
-    bool cache_present = false;
-    if(!storage_service.loadThemeCache(
-           cached_theme_id, sizeof(cached_theme_id),
-           cached_palette, cache_present) ||
-       !cache_present || strcmp(theme_id, cached_theme_id) != 0) {
-        return false;
-    }
-    memcpy(palette, cached_palette, sizeof(cached_palette));
-    return true;
+    return false;
+}
+
+const char * normalize_theme_id(const char * theme_id) {
+    return theme_id && strcmp(theme_id, "firefly-default") == 0
+        ? "system-default" : theme_id;
 }
 
 void apply_runtime_theme_palette(const uint32_t palette[5]) {
@@ -163,6 +293,10 @@ bool prepare_companion_settings_snapshot(
             }
             memcpy(next.theme_id, setting.value, setting.value_length);
             next.theme_id[setting.value_length] = '\0';
+            const char * normalized = normalize_theme_id(next.theme_id);
+            if(normalized != next.theme_id) {
+                strlcpy(next.theme_id, normalized, sizeof(next.theme_id));
+            }
         } else {
             return false;
         }
@@ -287,12 +421,23 @@ bool poll_motion_source(uint32_t now_ms) {
 
 bool prepare_verified_light_sleep() {
     light_sleep_entered = false;
+    const firefly::UpdateState update_state = update_service.snapshot().state;
+    if(update_state == firefly::UpdateState::Available ||
+       update_state == firefly::UpdateState::Downloading ||
+       update_state == firefly::UpdateState::Verifying ||
+       update_state == firefly::UpdateState::Writing ||
+       update_state == firefly::UpdateState::RebootPending) {
+        return false;
+    }
     persist_motion_summary(true);
     tools_app.closeFlashlightFromInput();
     audio_service.stop();
     if(firefly_background_task_handle) {
         vTaskSuspend(firefly_background_task_handle);
     }
+    if(firefly_weather_task_handle) vTaskSuspend(firefly_weather_task_handle);
+    if(firefly_bulk_task_handle) vTaskSuspend(firefly_bulk_task_handle);
+    if(firefly_update_task_handle) vTaskSuspend(firefly_update_task_handle);
     if(system_capabilities.has(firefly::Capability::Motion)) {
         const firefly::MotionPowerMode motion_mode =
             firefly::MotionPowerPolicy::modeFor(true, true);
@@ -303,6 +448,9 @@ bool prepare_verified_light_sleep() {
             if(firefly_background_task_handle) {
                 vTaskResume(firefly_background_task_handle);
             }
+            if(firefly_weather_task_handle) vTaskResume(firefly_weather_task_handle);
+            if(firefly_bulk_task_handle) vTaskResume(firefly_bulk_task_handle);
+            if(firefly_update_task_handle) vTaskResume(firefly_update_task_handle);
             return false;
         }
     }
@@ -332,12 +480,19 @@ void restore_verified_light_sleep() {
     if(light_sleep_motion_low_power) {
         if(!motion_service.setLowPower(false)) {
             system_capabilities.set(firefly::Capability::Motion, false);
+            hardware_capabilities.set(
+                firefly::HardwareDevice::Imu,
+                firefly::HardwareAvailability::Unavailable,
+                firefly::HardwareFailure::IoFailure);
         }
         light_sleep_motion_low_power = false;
     }
     if(firefly_background_task_handle) {
         vTaskResume(firefly_background_task_handle);
     }
+    if(firefly_weather_task_handle) vTaskResume(firefly_weather_task_handle);
+    if(firefly_bulk_task_handle) vTaskResume(firefly_bulk_task_handle);
+    if(firefly_update_task_handle) vTaskResume(firefly_update_task_handle);
     if(light_sleep_entered) {
         sleep_display_off = false;
         sleep_entered_at = millis();
@@ -553,6 +708,10 @@ void firefly_background_task(void * parameter) {
     LV_UNUSED(parameter);
 
     for(;;) {
+        if(factory_reset_worker_active.load(std::memory_order_acquire)) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
+        }
         const unsigned long now = millis();
 
         const firefly::ButtonAction boot_action = poll_boot_button(now);
@@ -596,7 +755,45 @@ void firefly_background_task(void * parameter) {
         }
 
         connectivity_service.service(now);
+        wifi_service.tick(now);
+        service_network_time(now);
         vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void firefly_weather_task(void * parameter) {
+    LV_UNUSED(parameter);
+    for(;;) {
+        if(factory_reset_worker_active.load(std::memory_order_acquire)) {
+            vTaskDelay(pdMS_TO_TICKS(25));
+            continue;
+        }
+        weather_service.tick(millis(), static_cast<int64_t>(time(nullptr)));
+        vTaskDelay(pdMS_TO_TICKS(25));
+    }
+}
+
+void firefly_bulk_task(void * parameter) {
+    LV_UNUSED(parameter);
+    for(;;) {
+        if(factory_reset_worker_active.load(std::memory_order_acquire)) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
+        }
+        bulk_transfer_service.tick(millis());
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+
+void firefly_update_task(void * parameter) {
+    LV_UNUSED(parameter);
+    for(;;) {
+        if(factory_reset_worker_active.load(std::memory_order_acquire)) {
+            vTaskDelay(pdMS_TO_TICKS(25));
+            continue;
+        }
+        update_coordinator.runOnce(millis(), firefly_current_update_gate());
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
 
@@ -891,6 +1088,48 @@ bool record_local_theme(const char * theme_id) {
 
 } // namespace
 
+firefly::UpdateRuntimeGate firefly_current_update_gate() {
+    const firefly::SystemState state = ui_state_store.snapshot();
+    const firefly::AudioUse audio = audio_service.activeUse();
+    const firefly::BulkTransferState transfer =
+        bulk_transfer_service.snapshot().state;
+    firefly::UpdateRuntimeGate gate{};
+    gate.battery_valid = state.battery.valid;
+    gate.battery_percent = state.battery.percent;
+    gate.charging = state.battery.charging || state.battery.vbus_present;
+    gate.alarm_active = alarm_ringing.load(std::memory_order_acquire);
+    gate.music_active = audio == firefly::AudioUse::Music;
+    gate.recording_active = audio == firefly::AudioUse::Recorder;
+    gate.transfer_active =
+        transfer == firefly::BulkTransferState::WaitingForNetwork ||
+        transfer == firefly::BulkTransferState::Ready ||
+        transfer == firefly::BulkTransferState::Receiving;
+    return gate;
+}
+
+bool firefly_audio_start_allowed(firefly::AudioUse use, void *) {
+    if(system_resources.held(firefly::ResourceKind::Ota)) {
+        if(use == firefly::AudioUse::Alarm && update_service.cancel(millis())) {
+            return true;
+        }
+        return false;
+    }
+    const firefly::BulkTransferState state =
+        bulk_transfer_service.snapshot().state;
+    const bool transfer_active =
+        state == firefly::BulkTransferState::WaitingForNetwork ||
+        state == firefly::BulkTransferState::Ready ||
+        state == firefly::BulkTransferState::Receiving ||
+        state == firefly::BulkTransferState::Completed;
+    if(!transfer_active) return true;
+    if(use == firefly::AudioUse::Alarm) {
+        bulk_transfer_service.cancel(
+            firefly::BulkTransferFailure::AudioBusy, millis());
+        return true;
+    }
+    return false;
+}
+
 bool firefly_apply_local_music_volume(uint8_t volume) {
     if(volume > 100 || !record_local_volume(volume)) {
         ++settings_command_failures;
@@ -1056,6 +1295,18 @@ void persist_motion_summary(bool force) {
 }
 
 void start_firefly_background_task() {
+    if(!firefly_update_task_handle) {
+#if defined(CONFIG_FREERTOS_UNICORE) && CONFIG_FREERTOS_UNICORE
+        const BaseType_t update_core = 0;
+#else
+        const BaseType_t update_ui_core = xPortGetCoreID();
+        const BaseType_t update_core = update_ui_core == 0 ? 1 : 0;
+#endif
+        firefly_update_task_handle = xTaskCreateStaticPinnedToCore(
+            firefly_update_task, "firefly_update", kUpdateTaskStackWords,
+            nullptr, 1, update_task_stack, &update_task_storage, update_core);
+    }
+    firefly_update_task_running = firefly_update_task_handle != NULL;
 #if defined(CONFIG_FREERTOS_UNICORE) && CONFIG_FREERTOS_UNICORE
     firefly_background_task_running = false;
 #else
@@ -1081,6 +1332,22 @@ void start_firefly_background_task() {
         firefly_background_task_handle = NULL;
         Serial.println("Failed to start Firefly background task. Falling back to single-core polling.");
     }
+    if(!firefly_weather_task_handle) {
+        firefly_weather_task_running = xTaskCreatePinnedToCore(
+            firefly_weather_task, "firefly_weather", 6144, NULL, 1,
+            &firefly_weather_task_handle, background_core) == pdPASS;
+        if(!firefly_weather_task_running) firefly_weather_task_handle = NULL;
+    } else {
+        firefly_weather_task_running = true;
+    }
+    if(!firefly_bulk_task_handle) {
+        firefly_bulk_task_running = xTaskCreatePinnedToCore(
+            firefly_bulk_task, "firefly_bulk", 6144, NULL, 1,
+            &firefly_bulk_task_handle, background_core) == pdPASS;
+        if(!firefly_bulk_task_running) firefly_bulk_task_handle = NULL;
+    } else {
+        firefly_bulk_task_running = true;
+    }
 #endif
 }
 
@@ -1088,6 +1355,20 @@ void firefly_process_connectivity() {
     if(!firefly_background_task_running) {
         const uint32_t now = millis();
         connectivity_service.service(now);
+        wifi_service.tick(now);
+        service_network_time(now);
+    }
+    const uint32_t now = millis();
+    if(!firefly_weather_task_running) {
+        weather_service.tick(now, static_cast<int64_t>(time(nullptr)));
+    }
+    if(!firefly_bulk_task_running) bulk_transfer_service.tick(now);
+    if(!wifi_service.hardwareAvailable()) {
+        system_capabilities.set(firefly::Capability::Wifi, false);
+        hardware_capabilities.set(
+            firefly::HardwareDevice::Wifi,
+            firefly::HardwareAvailability::Unavailable,
+            firefly::HardwareFailure::IoFailure);
     }
 }
 
@@ -1133,7 +1414,13 @@ void load_companion_settings_preferences() {
            &snapshot, sizeof(snapshot), length, present) &&
        present && length == sizeof(snapshot) &&
        companion_sync_service.restoreSnapshot(snapshot)) {
-        companion_settings_persistence.restoreSnapshot(snapshot);
+        const firefly::CompanionSettingsSnapshot normalized =
+            companion_sync_service.settingsSnapshot();
+        companion_settings_persistence.restoreSnapshot(normalized);
+        if(memcmp(&snapshot, &normalized, sizeof(snapshot)) != 0) {
+            storage_service.saveCompanionSettingsSnapshot(
+                &normalized, sizeof(normalized));
+        }
     }
 }
 
@@ -1185,6 +1472,7 @@ void set_settings_subpage(lv_obj_t * page) {
     if(settings_sound_container) lv_obj_add_flag(settings_sound_container, LV_OBJ_FLAG_HIDDEN);
     if(settings_alarm_container) lv_obj_add_flag(settings_alarm_container, LV_OBJ_FLAG_HIDDEN);
     if(settings_display_container) lv_obj_add_flag(settings_display_container, LV_OBJ_FLAG_HIDDEN);
+    if(settings_reset_container) lv_obj_add_flag(settings_reset_container, LV_OBJ_FLAG_HIDDEN);
 
     if(page) {
         lv_obj_clear_flag(page, LV_OBJ_FLAG_HIDDEN);
@@ -1605,6 +1893,118 @@ void firefly_process_system_events() {
                     companion_error_status_until = millis() + 5000UL;
                     break;
                 }
+                if(frame.type == firefly::protocol::MessageType::WifiProvision) {
+                    const firefly::TimeSnapshot local_time = time_service.now();
+                    const int64_t now_epoch = local_time.valid
+                        ? local_time.epoch_seconds : 0;
+                    if(wifi_service.stageProvisioning(
+                           frame.payload, frame.payload_length,
+                           millis(), now_epoch)) {
+                        const firefly::WifiProvisioningSnapshot request =
+                            wifi_service.provisioningSnapshot();
+                        wifi_provision_overlay.showRequest(
+                            request.ssid,
+                            request.status ==
+                                firefly::WifiProvisioningStatus::AwaitingForget);
+                        ui_shell.showOverlay(
+                            firefly::SystemOverlayHost::kPairingPriority,
+                            wifi_provision_overlay.root());
+                    } else {
+                        firefly::protocol::Frame error{};
+                        error.type = firefly::protocol::MessageType::Error;
+                        error.sequence = frame.sequence;
+                        error.payload[0] = 1;
+                        error.payload[1] = static_cast<uint8_t>(frame.type);
+                        error.payload[2] = static_cast<uint8_t>(
+                            firefly::protocol::WireErrorCode::InvalidPayload);
+                        error.payload_length = 3;
+                        connectivity_service.send(error, millis());
+                    }
+                    break;
+                }
+                if(frame.type == firefly::protocol::MessageType::BulkTransfer) {
+                    bool valid_request = false;
+                    bool cancel_request = false;
+                    firefly::BulkTransferRequest request{};
+                    if(frame.payload_length == 4 && frame.payload[0] == 2 &&
+                       frame.payload[1] == 4) {
+                        request.request_id = static_cast<uint16_t>(
+                            frame.payload[2] |
+                            (static_cast<uint16_t>(frame.payload[3]) << 8));
+                        cancel_request = request.request_id != 0;
+                        valid_request = cancel_request;
+                    } else if(frame.payload_length >= 47 &&
+                              frame.payload[0] == 2 &&
+                              frame.payload[1] == 1 &&
+                              frame.payload[4] <= 1) {
+                        request.request_id = static_cast<uint16_t>(
+                            frame.payload[2] |
+                            (static_cast<uint16_t>(frame.payload[3]) << 8));
+                        request.prefer_shared_lan = frame.payload[4] == 1;
+                        uint64_t declared_size = 0;
+                        for(uint8_t index = 0; index < 8; ++index) {
+                            declared_size |= static_cast<uint64_t>(
+                                frame.payload[5 + index]) << (index * 8);
+                        }
+                        request.declared_size = declared_size;
+                        memcpy(request.expected_sha256, frame.payload + 13,
+                               sizeof(request.expected_sha256));
+                        const uint8_t path_length = frame.payload[45];
+                        valid_request = request.request_id != 0 &&
+                            path_length > 0 &&
+                            path_length < sizeof(request.managed_path) &&
+                            frame.payload_length ==
+                                static_cast<uint16_t>(46 + path_length);
+                        for(uint16_t index = 0;
+                            valid_request && index < path_length; ++index) {
+                            const uint8_t value = frame.payload[46 + index];
+                            if(value < 0x20 || value == 0x7F) {
+                                valid_request = false;
+                            }
+                        }
+                        if(valid_request) {
+                            memcpy(request.managed_path, frame.payload + 46,
+                                   path_length);
+                            request.managed_path[path_length] = '\0';
+                        }
+                    }
+                    request.audio_active =
+                        audio_service.activeUse() != firefly::AudioUse::None;
+                    request.ota_active =
+                        system_resources.held(firefly::ResourceKind::Ota);
+                    if(!valid_request) {
+                        firefly::protocol::Frame error{};
+                        error.type = firefly::protocol::MessageType::Error;
+                        error.sequence = frame.sequence;
+                        error.payload[0] = 1;
+                        error.payload[1] = static_cast<uint8_t>(frame.type);
+                        error.payload[2] = static_cast<uint8_t>(
+                            firefly::protocol::WireErrorCode::InvalidPayload);
+                        error.payload_length = 3;
+                        connectivity_service.send(error, millis());
+                    } else if(cancel_request) {
+                        bulk_transfer_service.cancelSession(request.request_id,
+                                                            millis());
+                    } else {
+                        bulk_transfer_service.startSession(request, millis());
+                    }
+                    break;
+                }
+                if(frame.type == firefly::protocol::MessageType::WeatherUpdate &&
+                   !weather_service.applyPhonePayload(
+                       frame.payload, frame.payload_length,
+                       static_cast<int64_t>(time(nullptr)))) {
+                    firefly::protocol::Frame error{};
+                    error.type = firefly::protocol::MessageType::Error;
+                    error.sequence = frame.sequence;
+                    error.payload[0] = 1;
+                    error.payload[1] = static_cast<uint8_t>(frame.type);
+                    error.payload[2] = static_cast<uint8_t>(
+                        firefly::protocol::WireErrorCode::InvalidPayload);
+                    error.payload_length = 3;
+                    connectivity_service.send(error, millis());
+                    break;
+                }
                 const firefly::SystemState state = ui_state_store.snapshot();
                 const firefly::CompanionDispatchResult result =
                     companion_frame_dispatcher.dispatch(
@@ -1645,6 +2045,18 @@ void firefly_process_system_events() {
             }
             case firefly::EventType::PhoneConnectionChanged:
                 notification_service.setPhoneConnected(event.value != 0);
+                if(event.value == 0) {
+                    const firefly::BulkTransferState bulk_state =
+                        bulk_transfer_service.snapshot().state;
+                    if(bulk_state == firefly::BulkTransferState::Ready ||
+                       bulk_state == firefly::BulkTransferState::Receiving ||
+                       bulk_state ==
+                           firefly::BulkTransferState::WaitingForNetwork) {
+                        bulk_transfer_service.cancel(
+                            firefly::BulkTransferFailure::Disconnected,
+                            millis());
+                    }
+                }
                 break;
             case firefly::EventType::PairingRequested: {
                 const firefly::PairingSnapshot snapshot =
@@ -1685,21 +2097,310 @@ void firefly_process_system_events() {
                 }
                 ui_shell.closeOverlay(pairing_overlay.root());
                 break;
-            case firefly::EventType::SdRemoved:
-                if(audio_service.activeUse() == firefly::AudioUse::Music ||
-                   audio_service.activeUse() == firefly::AudioUse::Recorder) {
-                    audio_service.stop();
-                }
-                files_app.onSdRemoved();
-                music_app.onSdRemoved();
-                recorder_app.onSdRemoved();
-                themes_app.onSdRemoved();
-                storage_service.detachSd();
-                Serial.println("SD card unavailable; media features disabled.");
+            case firefly::EventType::SdRemoved: {
+                requestSdRemovalCleanup();
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+    static firefly::WifiProvisioningStatus last_wifi_status =
+        firefly::WifiProvisioningStatus::Idle;
+    const firefly::WifiProvisioningSnapshot wifi_snapshot =
+        wifi_service.provisioningSnapshot();
+    if(wifi_snapshot.status != last_wifi_status) {
+        last_wifi_status = wifi_snapshot.status;
+        uint8_t wire_status = 0;
+        const char * title = nullptr;
+        const char * detail = nullptr;
+        bool success = false;
+        switch(wifi_snapshot.status) {
+            case firefly::WifiProvisioningStatus::Connecting:
+                wire_status = 1;
+                break;
+            case firefly::WifiProvisioningStatus::Success:
+                wire_status = 2;
+                title = "Wi-Fi connected";
+                detail = "The credential was saved securely.";
+                success = true;
+                wifi_service.request(firefly::WifiPurpose::Ntp, millis());
+                break;
+            case firefly::WifiProvisioningStatus::AuthFailed:
+                wire_status = 3;
+                title = "Authentication failed";
+                detail = "Check the password on the phone and send it again.";
+                break;
+            case firefly::WifiProvisioningStatus::NotFound:
+                wire_status = 4;
+                title = "Network not found";
+                detail = "Check the network name and signal coverage.";
+                break;
+            case firefly::WifiProvisioningStatus::Timeout:
+                wire_status = 5;
+                title = "Connection timed out";
+                detail = "FireflyOS will not retry indefinitely.";
+                break;
+            case firefly::WifiProvisioningStatus::Forgotten:
+                wire_status = 6;
+                title = "Network forgotten";
+                detail = "The saved credential was cleared.";
+                success = true;
+                break;
+            case firefly::WifiProvisioningStatus::Denied:
+                wire_status = 7;
+                title = "Request cancelled";
+                detail = "No Wi-Fi credential was changed.";
+                break;
+            case firefly::WifiProvisioningStatus::PersistenceFailed:
+                wire_status = 8;
+                title = "Credential update failed";
+                detail = "Saved network data may be unchanged. Try again.";
+                break;
+            case firefly::WifiProvisioningStatus::Busy:
+                wire_status = 9;
+                title = "Wi-Fi is busy";
+                detail = "Finish the active network task, then send the request again.";
                 break;
             default:
                 break;
         }
+        if(wire_status != 0 && connectivity_service.connected()) {
+            firefly::protocol::Frame response{};
+            response.type = firefly::protocol::MessageType::WifiProvision;
+            response.sequence =
+                connectivity_service.allocateOutgoingSequence();
+            response.payload[0] = 1;
+            response.payload[1] = wire_status;
+            response.payload_length = 2;
+            connectivity_service.send(response, millis());
+        }
+        if(title) {
+            wifi_provision_overlay.showResult(title, detail, success);
+            ui_shell.showOverlay(
+                firefly::SystemOverlayHost::kPairingPriority,
+                wifi_provision_overlay.root());
+        }
+    }
+
+    static uint32_t last_bulk_result_generation = 0;
+    static uint32_t last_bulk_overlay_generation = 0;
+    const firefly::BulkTransferSnapshot bulk = bulk_transfer_service.snapshot();
+    if(bulk.result_generation != last_bulk_result_generation &&
+       connectivity_service.connected()) {
+        firefly::protocol::Frame response{};
+        response.type = firefly::protocol::MessageType::BulkTransfer;
+        response.sequence = connectivity_service.allocateOutgoingSequence();
+        if(bulk.result_state == firefly::BulkTransferState::Ready &&
+           bulk.state == firefly::BulkTransferState::Ready &&
+           bulk.result_request_id == bulk.request_id) {
+            uint16_t offset = 0;
+            response.payload[offset++] = 2;
+            response.payload[offset++] = 2;
+            response.payload[offset++] = static_cast<uint8_t>(
+                bulk.result_request_id & 0xFF);
+            response.payload[offset++] = static_cast<uint8_t>(
+                bulk.result_request_id >> 8);
+            const bool soft_ap = wifi_service.mode() == firefly::WifiMode::SoftAp;
+            response.payload[offset++] = soft_ap ? 2 : 1;
+            const int32_t remaining = static_cast<int32_t>(
+                bulk.expires_at_ms - millis());
+            const uint64_t expires = remaining > 0
+                ? static_cast<uint32_t>(remaining) : 0;
+            for(uint8_t index = 0; index < 8; ++index) {
+                response.payload[offset++] = static_cast<uint8_t>(
+                    (expires >> (index * 8)) & 0xFF);
+            }
+            const uint8_t endpoint_length = static_cast<uint8_t>(
+                strnlen(bulk.endpoint, sizeof(bulk.endpoint)));
+            response.payload[offset++] = endpoint_length;
+            memcpy(response.payload + offset, bulk.endpoint, endpoint_length);
+            offset += endpoint_length;
+            memcpy(response.payload + offset, bulk.token_hex, 32);
+            offset += 32;
+            if(soft_ap) {
+                char ssid[24]{};
+                char password[13]{};
+                snprintf(ssid, sizeof(ssid), "Firefly-%c%c%c%c",
+                         bulk.token_hex[0], bulk.token_hex[1],
+                         bulk.token_hex[2], bulk.token_hex[3]);
+                memcpy(password, bulk.token_hex + 16, 12);
+                const uint8_t ssid_length = strlen(ssid);
+                response.payload[offset++] = ssid_length;
+                memcpy(response.payload + offset, ssid, ssid_length);
+                offset += ssid_length;
+                response.payload[offset++] = 12;
+                memcpy(response.payload + offset, password, 12);
+                offset += 12;
+                memset(password, 0, sizeof(password));
+            } else {
+                response.payload[offset++] = 0;
+                response.payload[offset++] = 0;
+            }
+            response.payload_length = offset;
+        } else {
+            response.payload[0] = 2;
+            response.payload[1] = 3;
+            response.payload[2] = static_cast<uint8_t>(
+                bulk.result_request_id & 0xFF);
+            response.payload[3] = static_cast<uint8_t>(
+                bulk.result_request_id >> 8);
+            response.payload[4] = static_cast<uint8_t>(bulk.result_state);
+            response.payload[5] = static_cast<uint8_t>(bulk.result_failure);
+            response.payload_length = 6;
+        }
+        if(connectivity_service.send(response, millis())) {
+            last_bulk_result_generation = bulk.result_generation;
+        }
+    }
+    const bool terminal_active_result =
+        bulk.result_generation != last_bulk_overlay_generation &&
+        bulk.result_request_id == bulk.request_id &&
+        bulk.result_state == bulk.state &&
+        (bulk.state == firefly::BulkTransferState::Completed ||
+         bulk.state == firefly::BulkTransferState::Cancelled ||
+         bulk.state == firefly::BulkTransferState::Error);
+    if(terminal_active_result) {
+            last_bulk_overlay_generation = bulk.result_generation;
+            const bool complete = bulk.state ==
+                firefly::BulkTransferState::Completed;
+            const char * transfer_detail =
+                "The transfer ended safely; no part file remains.";
+            switch(bulk.result_failure) {
+                case firefly::BulkTransferFailure::LowPower:
+                    transfer_detail = "Battery level no longer permits transfer.";
+                    break;
+                case firefly::BulkTransferFailure::SdUnavailable:
+                    transfer_detail = "The SD card is unavailable.";
+                    break;
+                case firefly::BulkTransferFailure::HashMismatch:
+                    transfer_detail = "SHA-256 verification failed.";
+                    break;
+                case firefly::BulkTransferFailure::SizeMismatch:
+                    transfer_detail = "The received size did not match.";
+                    break;
+                case firefly::BulkTransferFailure::Timeout:
+                    transfer_detail = "The five-minute idle limit expired.";
+                    break;
+                case firefly::BulkTransferFailure::Disconnected:
+                    transfer_detail = "The authenticated phone disconnected.";
+                    break;
+                case firefly::BulkTransferFailure::AudioBusy:
+                    transfer_detail = "Audio or an alarm needs the SD resource.";
+                    break;
+                case firefly::BulkTransferFailure::NetworkUnavailable:
+                    transfer_detail = "No shared LAN or temporary SoftAP was available.";
+                    break;
+                default:
+                    break;
+            }
+            wifi_provision_overlay.showResult(
+                complete ? "Transfer complete" : "Transfer stopped",
+                complete ? "File size and SHA-256 were verified."
+                         : transfer_detail,
+                complete);
+            ui_shell.showOverlay(
+                firefly::SystemOverlayHost::kPairingPriority,
+                wifi_provision_overlay.root());
+    }
+}
+
+void factory_reset_worker(void *) {
+    for(;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        vTaskDelay(pdMS_TO_TICKS(25));
+        const bool completed = factory_reset_service.execute(
+            factory_reset_worker_erase_sd.load(std::memory_order_acquire));
+        factory_reset_worker_completed.store(completed,
+                                             std::memory_order_release);
+        factory_reset_worker_finished.store(true, std::memory_order_release);
+    }
+}
+
+bool firefly_factory_reset_active() {
+    return factory_reset_worker_active.load(std::memory_order_acquire);
+}
+
+void firefly_process_factory_reset() {
+    static uint32_t reboot_ready_at = 0;
+    const int8_t request = factory_reset_execute_request.exchange(
+        -1, std::memory_order_acq_rel);
+    if(request >= 0 && !firefly_factory_reset_active()) {
+        if(settings_reset_title) lv_label_set_text(settings_reset_title, "Resetting...");
+        if(settings_reset_detail) {
+            lv_label_set_text(settings_reset_detail,
+                              "Clearing owned data. Do not power off.");
+        }
+        if(settings_reset_notice) lv_label_set_text(settings_reset_notice, "Working");
+        if(settings_reset_keep_button) lv_obj_add_flag(settings_reset_keep_button, LV_OBJ_FLAG_HIDDEN);
+        if(settings_reset_sd_button) lv_obj_add_flag(settings_reset_sd_button, LV_OBJ_FLAG_HIDDEN);
+        if(settings_reset_cancel_button) lv_obj_add_flag(settings_reset_cancel_button, LV_OBJ_FLAG_HIDDEN);
+
+        audio_service.stop();
+        factory_reset_worker_erase_sd.store(
+            request == 1, std::memory_order_release);
+        factory_reset_worker_completed.store(false, std::memory_order_release);
+        factory_reset_worker_finished.store(false, std::memory_order_release);
+        factory_reset_worker_active.store(true, std::memory_order_release);
+#if defined(CONFIG_FREERTOS_UNICORE) && CONFIG_FREERTOS_UNICORE
+        const BaseType_t reset_core = 0;
+#else
+        const BaseType_t reset_core = xPortGetCoreID() == 0 ? 1 : 0;
+#endif
+        if(!factory_reset_task_handle) {
+            factory_reset_task_handle = xTaskCreateStaticPinnedToCore(
+                factory_reset_worker,
+                "factory_reset",
+                kFactoryResetTaskStackWords,
+                nullptr,
+                1,
+                factory_reset_task_stack,
+                &factory_reset_task_storage,
+                reset_core);
+        }
+        if(!factory_reset_task_handle) {
+            factory_reset_worker_active.store(false, std::memory_order_release);
+            if(settings_reset_title) lv_label_set_text(settings_reset_title, "Reset failed");
+            if(settings_reset_detail) lv_label_set_text(settings_reset_detail, "Cleanup task could not start. Device was not restarted.");
+            if(settings_reset_notice) lv_label_set_text(settings_reset_notice, "Error: task start");
+            if(settings_reset_cancel_button) lv_obj_clear_flag(settings_reset_cancel_button, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            xTaskNotifyGive(factory_reset_task_handle);
+        }
+    }
+
+    if(factory_reset_worker_finished.exchange(false,
+                                               std::memory_order_acq_rel)) {
+        const bool completed = factory_reset_worker_completed.load(
+            std::memory_order_acquire);
+        factory_reset_worker_active.store(false, std::memory_order_release);
+        notification_center.clear();
+        const firefly::FactoryResetSnapshot state = factory_reset_service.snapshot();
+        if(!completed) {
+            if(settings_reset_title) lv_label_set_text(settings_reset_title, "Reset failed");
+            if(settings_reset_detail) {
+                lv_label_set_text(settings_reset_detail,
+                                  "Data cleanup was incomplete. Device was not restarted.");
+            }
+            if(settings_reset_notice) {
+                lv_label_set_text_fmt(settings_reset_notice, "Error %u",
+                    static_cast<unsigned>(state.failure));
+            }
+            if(settings_reset_cancel_button) {
+                lv_obj_clear_flag(settings_reset_cancel_button, LV_OBJ_FLAG_HIDDEN);
+            }
+        } else {
+            if(settings_reset_title) lv_label_set_text(settings_reset_title, "Reset complete");
+            if(settings_reset_detail) lv_label_set_text(settings_reset_detail, "Restarting with defaults...");
+            reboot_ready_at = millis() + 500UL;
+        }
+    }
+
+    if(factory_reset_reboot_pending.load(std::memory_order_acquire) &&
+       reboot_ready_at != 0 &&
+       static_cast<int32_t>(millis() - reboot_ready_at) >= 0) {
+        ESP.restart();
     }
 }
 
@@ -1708,19 +2409,29 @@ void firefly_process_sd_card() {
     static uint32_t last_mount_attempt_at = 0;
     const uint32_t now = millis();
 
+    finishSdRemovalCleanup();
+    if(sd_removal_cleanup_pending) return;
+
+    if(sd_card.takeRemovedEvent()) {
+        system_capabilities.set(firefly::Capability::Sd, false);
+        hardware_capabilities.set(
+            firefly::HardwareDevice::Sd,
+            firefly::HardwareAvailability::Unavailable,
+            firefly::HardwareFailure::IoFailure);
+        requestSdRemovalCleanup();
+        post_background_system_event({
+            firefly::EventType::SdRemoved,
+            0,
+            now,
+            firefly::EventPriority::Critical
+        });
+        return;
+    }
+
     if(sd_card.mounted()) {
         if(last_check_at == 0 || now - last_check_at >= 1000UL) {
             last_check_at = now;
             storage_service.validateSdSession();
-        }
-        if(sd_card.takeRemovedEvent()) {
-            system_capabilities.set(firefly::Capability::Sd, false);
-            post_background_system_event({
-                firefly::EventType::SdRemoved,
-                0,
-                now,
-                firefly::EventPriority::Critical
-            });
         }
         return;
     }
@@ -1731,14 +2442,21 @@ void firefly_process_sd_card() {
             storage_service.attachSd(sd_card.filesystem(), sd_card);
             const uint16_t removed =
                 firefly::AudioService::cleanupTemporaryRecordings(storage_service);
+            const uint16_t removed_bulk_parts =
+                storage_service.cleanupBulkPartFiles();
             system_capabilities.set(firefly::Capability::Sd, true);
+            hardware_capabilities.set(
+                firefly::HardwareDevice::Sd,
+                firefly::HardwareAvailability::Available,
+                firefly::HardwareFailure::None);
             post_background_system_event({
                 firefly::EventType::CapabilityChanged,
                 firefly::capabilityBit(firefly::Capability::Sd),
                 now
             });
             Serial.printf("SD card mounted at /FireflyOS; removed %u "
-                          "incomplete recording(s).\n", removed);
+                          "incomplete recording(s) and %u incomplete "
+                          "bulk transfer(s).\n", removed, removed_bulk_parts);
         }
     }
 }
@@ -1921,19 +2639,14 @@ void firefly_refresh_companion_weather_ui() {
         return;
     }
     last_refresh_at = now_ms;
-    firefly::CompanionWeather weather{};
     const bool connected = connectivity_service.connected();
     const firefly::WeatherFreshness freshness =
-        companion_sync_service.weatherAt(
-            static_cast<int64_t>(time(nullptr)),
-            connected,
-            weather
-        );
-    app_shell_screen.showWeather(
-        firefly::CompanionWeatherPresenter::build(
-            weather, freshness, connected
-        )
-    );
+        weather_service.freshness(static_cast<int64_t>(time(nullptr)));
+    weather_app.refresh(
+        weather_service.snapshot(static_cast<int64_t>(time(nullptr))),
+        freshness,
+        weather_service.state(),
+        connected);
 }
 
 void firefly_report_gate_a_diagnostics() {
@@ -1965,4 +2678,113 @@ void firefly_report_gate_a_diagnostics() {
         static_cast<unsigned long>(motion.wrist_events),
         static_cast<unsigned long>(storage.failures)
     );
+}
+
+firefly::DiagnosticSample capture_diagnostic_sample() {
+    firefly::DiagnosticSample sample{};
+    sample.internal_free = ESP.getFreeHeap();
+    sample.internal_minimum = ESP.getMinFreeHeap();
+    sample.internal_largest = heap_caps_get_largest_free_block(
+        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    sample.psram_free = ESP.getFreePsram();
+    const UBaseType_t ui_words = uxTaskGetStackHighWaterMark(nullptr);
+    const UBaseType_t background_words = firefly_background_task_handle
+        ? uxTaskGetStackHighWaterMark(firefly_background_task_handle) : 0;
+    sample.ui_stack_words = ui_words > UINT16_MAX
+        ? UINT16_MAX : static_cast<uint16_t>(ui_words);
+    sample.background_stack_words = background_words > UINT16_MAX
+        ? UINT16_MAX : static_cast<uint16_t>(background_words);
+    sample.event_drops = system_event_bus.droppedCount();
+    sample.event_size = system_event_bus.size();
+    sample.event_peak = system_event_bus.peakSize();
+    sample.power_mode = runtime_power_mode;
+    sample.restart_reason = static_cast<uint8_t>(esp_reset_reason());
+    return sample;
+}
+
+void firefly_sample_diagnostics() {
+    const uint32_t now = millis();
+    const firefly::DiagnosticSample sample = capture_diagnostic_sample();
+    diagnostic_service.sampleMinute(now, sample);
+
+    static bool initialized = false;
+    static bool wifi_active = false;
+    static bool bulk_active = false;
+    static bool ota_active = false;
+    static bool audio_active = false;
+    static bool recorder_active = false;
+    static bool sd_active = false;
+    static bool boot_active = false;
+
+    const bool wifi_now = wifi_service.mode() != firefly::WifiMode::Off;
+    const firefly::BulkTransferState bulk_state =
+        bulk_transfer_service.snapshot().state;
+    const bool bulk_now = bulk_state == firefly::BulkTransferState::WaitingForNetwork ||
+        bulk_state == firefly::BulkTransferState::Ready ||
+        bulk_state == firefly::BulkTransferState::Receiving;
+    const firefly::UpdateState update_state = update_service.snapshot().state;
+    const bool ota_now = update_state == firefly::UpdateState::Available ||
+        update_state == firefly::UpdateState::Downloading ||
+        update_state == firefly::UpdateState::Verifying ||
+        update_state == firefly::UpdateState::Writing;
+    const firefly::AudioUse audio_use = audio_service.activeUse();
+    const bool audio_now = audio_use != firefly::AudioUse::None;
+    const bool recorder_now = audio_use == firefly::AudioUse::Recorder;
+    const bool sd_now = storage_service.sdAvailable();
+    const bool boot_now = boot_validation_service.snapshot().state ==
+        firefly::BootValidationState::Checking;
+
+    if(!initialized) {
+        initialized = true;
+        wifi_active = wifi_now;
+        bulk_active = bulk_now;
+        ota_active = ota_now;
+        audio_active = audio_now;
+        recorder_active = recorder_now;
+        sd_active = sd_now;
+        boot_active = boot_now;
+        if(sd_now) diagnostic_service.record(
+            now, firefly::DiagnosticReason::SdMounted, sample);
+        if(boot_now) diagnostic_service.record(
+            now, firefly::DiagnosticReason::BootValidationStart, sample);
+        return;
+    }
+
+    auto note = [&](bool before, bool after,
+                    firefly::DiagnosticReason started,
+                    firefly::DiagnosticReason ended) {
+        if(before != after) diagnostic_service.record(
+            now, after ? started : ended, sample);
+    };
+    note(wifi_active, wifi_now, firefly::DiagnosticReason::WifiStart,
+         firefly::DiagnosticReason::WifiEnd);
+    note(bulk_active, bulk_now, firefly::DiagnosticReason::BulkStart,
+         firefly::DiagnosticReason::BulkEnd);
+    note(ota_active, ota_now, firefly::DiagnosticReason::OtaStart,
+         firefly::DiagnosticReason::OtaEnd);
+    note(audio_active, audio_now, firefly::DiagnosticReason::AudioStart,
+         firefly::DiagnosticReason::AudioEnd);
+    note(recorder_active, recorder_now, firefly::DiagnosticReason::RecorderStart,
+         firefly::DiagnosticReason::RecorderEnd);
+    note(sd_active, sd_now, firefly::DiagnosticReason::SdMounted,
+         firefly::DiagnosticReason::SdRemoved);
+    note(boot_active, boot_now, firefly::DiagnosticReason::BootValidationStart,
+         firefly::DiagnosticReason::BootValidationEnd);
+    wifi_active = wifi_now;
+    bulk_active = bulk_now;
+    ota_active = ota_now;
+    audio_active = audio_now;
+    recorder_active = recorder_now;
+    sd_active = sd_now;
+    boot_active = boot_now;
+}
+
+void firefly_export_diagnostics() {
+    const firefly::DiagnosticSample sample = capture_diagnostic_sample();
+    diagnostic_service.record(
+        millis(), firefly::DiagnosticReason::Manual, sample);
+    diagnostic_service.exportTo(serial_diagnostic_export);
+    if(!diagnostic_service.exportTo(sd_diagnostic_export)) {
+        Serial.println("FIREFLY_DIAGNOSTICS_SD_EXPORT_FAILED");
+    }
 }

@@ -1,0 +1,91 @@
+<style>
+  .cards { grid-template-columns: repeat(3, minmax(250px, 1fr)); align-items: stretch; }
+  .card { display: flex; flex-direction: column; }
+  .card-image { padding: 18px; background: #0a0d18; min-height: 470px; display: flex; align-items: center; justify-content: center; }
+  .watch { width: 246px; height: 301px; border-radius: 34px; background: radial-gradient(circle at 50% 5%, #202744, #0a0d18 58%); border: 1px solid #374066; color: #f5f7ff; position: relative; overflow: hidden; box-shadow: inset 0 0 28px rgba(96,112,190,.16); font-family: system-ui, sans-serif; }
+  .safe { position:absolute; inset:16px 20px 24px; border:1px dashed rgba(170,181,228,.16); border-radius:22px; pointer-events:none; }
+  .top { display:flex; justify-content:space-between; padding:18px 25px 0; font-size:10px; color:#98a3c8; }
+  .center { text-align:center; padding:31px 24px 0; }
+  .glyph { width:42px; height:42px; margin:0 auto 15px; border:3px solid #8fa4ff; border-radius:50%; display:grid; place-items:center; font-size:18px; color:#b8c4ff; }
+  .title { font-weight:700; font-size:17px; margin-bottom:7px; }
+  .sub { font-size:10px; color:#9ba5c8; line-height:1.5; }
+  .bar { height:7px; border-radius:9px; background:#252b43; overflow:hidden; margin:22px 12px 10px; }
+  .bar > i { display:block; width:64%; height:100%; background:linear-gradient(90deg,#8499ff,#d099ff); }
+  .pct { color:#b7c2ff; font-size:13px; font-weight:700; }
+  .btn { margin:23px 17px 0; border:1px solid #53608e; border-radius:18px; padding:10px; font-size:11px; }
+  .timeline { padding:22px 25px 0; }
+  .step { display:flex; gap:12px; margin:0 0 15px; align-items:flex-start; font-size:11px; color:#9ba5c8; }
+  .dot { width:18px; height:18px; flex:0 0 18px; border-radius:50%; background:#28304d; display:grid; place-items:center; color:#92a5ff; font-size:9px; }
+  .step.active { color:#f5f7ff; }
+  .step.active .dot { background:#7289ff; color:white; box-shadow:0 0 18px #7289ff66; }
+  .metric-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:20px 22px 0; }
+  .metric { border:1px solid #303958; border-radius:12px; padding:10px; text-align:left; }
+  .metric b { display:block; font-size:12px; }
+  .metric span { font-size:9px; color:#929cc0; }
+  .states { display:flex; gap:5px; justify-content:center; flex-wrap:wrap; margin-top:17px; }
+  .chip { border:1px solid #343d5e; color:#939ec5; border-radius:12px; padding:4px 7px; font-size:8px; }
+  .recommended { color:#a9b8ff; font-size:11px; font-weight:700; letter-spacing:.04em; }
+</style>
+
+<h2>系统更新页面采用哪种信息层级？</h2>
+<p class="subtitle">三种方案均遵守 410×502 圆角安全区、至少 48px 触摸区、固定容量和 SAM 不可中断写入提示。请选择一种作为正式 UI 基线。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="watch">
+        <div class="safe"></div><div class="top"><span>09:43</span><span>84%</span></div>
+        <div class="center">
+          <div class="glyph">↥</div><div class="title">正在写入系统</div>
+          <div class="sub">请勿关机，完成后自动重启</div>
+          <div class="bar"><i></i></div><div class="pct">64%</div>
+          <div class="states"><span class="chip">下载</span><span class="chip">校验</span><span class="chip">写入</span><span class="chip">自检</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="recommended">A · 推荐</div><h3>状态聚焦</h3>
+      <p>一次只突出当前阶段和唯一动作；正常用户最容易理解，失败时切换为明确原因与恢复结果。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="watch">
+        <div class="safe"></div><div class="top"><span>09:43</span><span>84%</span></div>
+        <div class="timeline">
+          <div class="title" style="margin-bottom:20px">安装 FireflyOS 0.3.0</div>
+          <div class="step"><span class="dot">✓</span><span><b>下载安装包</b><br>18.6 MB 已完成</span></div>
+          <div class="step"><span class="dot">✓</span><span><b>校验签名</b><br>来源与完整性有效</span></div>
+          <div class="step active"><span class="dot">3</span><span><b>写入备用系统</b><br>64% · 请勿关机</span></div>
+          <div class="step"><span class="dot">4</span><span><b>重启并自检</b><br>等待开始</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · 阶段时间线</h3>
+      <p>完整展示更新生命周期，过程透明；但小屏信息较密，长中文和失败文案需要更多滚动处理。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="watch">
+        <div class="safe"></div><div class="top"><span>09:43</span><span>84%</span></div>
+        <div class="center" style="padding-top:20px">
+          <div class="title">更新诊断</div><div class="sub">备用槽 app1 · Build 300</div>
+        </div>
+        <div class="metric-grid">
+          <div class="metric"><b>64%</b><span>写入进度</span></div><div class="metric"><b>11 MB</b><span>槽位容量</span></div>
+          <div class="metric"><b>ECDSA</b><span>签名有效</span></div><div class="metric"><b>84%</b><span>当前电量</span></div>
+          <div class="metric"><b>SHA-256</b><span>流式校验</span></div><div class="metric"><b>30 秒</b><span>启动自检</span></div>
+        </div>
+        <div class="btn" style="text-align:center">查看详细日志</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C · 诊断面板</h3>
+      <p>技术信息充分，适合开发验收；普通用户认知负担高，也容易诱导用户在关键阶段操作。</p>
+    </div>
+  </div>
+</div>

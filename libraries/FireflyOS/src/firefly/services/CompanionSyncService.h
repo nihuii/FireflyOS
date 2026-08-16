@@ -68,6 +68,7 @@ struct CompanionWeather {
 enum class WeatherFreshness : uint8_t {
     Fresh,
     Stale,
+    Old,
     Expired,
 };
 

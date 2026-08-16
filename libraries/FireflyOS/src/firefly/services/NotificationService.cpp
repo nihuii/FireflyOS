@@ -130,6 +130,13 @@ void NotificationService::clearLocal() {
     count_ = 0;
 }
 
+bool NotificationService::clearSensitiveState() {
+    clearLocal();
+    phone_connected_ = false;
+    lock_screen_body_hidden_ = true;
+    return true;
+}
+
 void NotificationService::setPhoneConnected(bool connected) {
     phone_connected_ = connected;
 }

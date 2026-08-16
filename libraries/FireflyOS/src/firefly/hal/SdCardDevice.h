@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <FS.h>
+#include <atomic>
 
 namespace firefly {
 
@@ -25,7 +26,9 @@ public:
 
     bool begin();
     void end();
-    bool mounted() const { return mounted_; }
+    bool mounted() const {
+        return mounted_.load(std::memory_order_acquire);
+    }
     uint64_t totalBytes() const;
     uint64_t usedBytes() const;
     bool ensureFireflyDirectories();
@@ -41,8 +44,8 @@ private:
     static bool makeManagedPath(const char * relative_path,
                                 char * out,
                                 size_t out_size);
-    mutable bool mounted_ = false;
-    mutable bool removed_event_pending_ = false;
+    mutable std::atomic<bool> mounted_{false};
+    mutable std::atomic<bool> removed_event_pending_{false};
     mutable SdFailureMonitor failure_monitor_{};
 };
 

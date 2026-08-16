@@ -17,6 +17,7 @@ enum class Route : uint8_t {
     Files,
     Themes,
     Tools,
+    Update,
     Diagnostics
 };
 

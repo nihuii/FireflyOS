@@ -188,3 +188,8 @@ bool touch_touched()
   return false;
 }
 
+bool touch_ready()
+{
+  return touch_max_x > 0 && touch_max_y > 0;
+}
+

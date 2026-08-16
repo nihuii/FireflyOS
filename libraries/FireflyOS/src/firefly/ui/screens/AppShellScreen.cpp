@@ -92,6 +92,10 @@ void AppShellScreen::setTitle(const char * title) {
     if(!title || strcmp(title, "Weather") != 0) setWeatherVisible(false);
 }
 
+void AppShellScreen::setStatus(const char * status) {
+    if(status_) lv_label_set_text(status_, status ? status : "");
+}
+
 void AppShellScreen::showWeather(const CompanionWeatherView & weather) {
     if(weather_city_) lv_label_set_text(weather_city_, weather.city);
     if(weather_temperature_) {
